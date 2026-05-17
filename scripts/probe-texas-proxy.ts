@@ -16,9 +16,7 @@ function loadEnv(path: string) {
 loadEnv(resolve(__dirname, "../.env.local"));
 
 async function main() {
-  const { texasBrowserFetch, parseTexasJsonBody } = await import(
-    "../src/lib/texas/texas-browser-fetch"
-  );
+  const { parseTexasJsonBody } = await import("../src/lib/texas/texas-browser-fetch");
   const { isTexasSignInSuccess } = await import("../src/lib/texas/texas-api-config");
   const { isTexasProxyEnabled, getTexasProxyLogLabel } = await import(
     "../src/lib/texas/texas-proxy"
@@ -35,11 +33,10 @@ async function main() {
     })
   );
 
-  const r = await texasBrowserFetch({
-    url: "https://agents.texas4win.com/global/api/User/signIn",
-    method: "POST",
+  const { texasSignInWithWarmUp } = await import("../src/lib/texas/texas-browser-fetch");
+  const r = await texasSignInWithWarmUp({
+    signInUrls: ["https://agents.texas4win.com/global/api/User/signIn"],
     body: JSON.stringify({ username: user, password: pass }),
-    skipWarmUp: true,
   });
 
   const data = parseTexasJsonBody(r.bodyText);

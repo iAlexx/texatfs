@@ -21,6 +21,7 @@ import {
   parseTexasJsonBody,
   TexasCookieJar,
   texasBrowserFetch,
+  texasSignInWithWarmUp,
 } from "@/lib/texas/texas-browser-fetch";
 import type { TexasCredentials } from "@/lib/texas/types";
 
@@ -30,8 +31,7 @@ interface TexasApiEnvelope<T = unknown> {
 }
 
 /**
- * Multi-tenant Texas authentication — caller-supplied credentials only.
- * Sign-in uses browser-mimicking fetch (not axios) for Cloudflare compatibility.
+ * Multi-tenant Texas authentication with full portal warm-up before sign-in.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -44,58 +44,52 @@ export class TexasSessionService {
     const baseUrl = getTexasApiBaseUrl();
     const bodyJson = JSON.stringify(buildTexasSignInBody(username, password));
     const urls = buildTexasSignInUrls(baseUrl);
-    const jar = new TexasCookieJar();
 
     let lastError = "unknown";
 
-    for (const url of urls) {
-      try {
-        const result = await texasBrowserFetch({
-          url,
-          method: "POST",
-          body: bodyJson,
-          jar,
-        });
+    try {
+      const { status, bodyText, jar } = await texasSignInWithWarmUp({
+        signInUrls: urls,
+        body: bodyJson,
+      });
 
-        const data = parseTexasJsonBody<TexasSignInEnvelope>(result.bodyText);
-        const setCookies =
-          result.setCookies.length > 0
-            ? result.setCookies
-            : jar.toSetCookieLines();
+      const data = parseTexasJsonBody<TexasSignInEnvelope>(bodyText);
+      const setCookies = jar.allSetCookieLines();
 
-        if (
-          result.status >= 200 &&
-          result.status < 300 &&
-          isTexasSignInSuccess(data) &&
-          setCookies.length > 0
-        ) {
-          return storeTexasSession(username, password, setCookies);
-        }
-
-        const texasMessage = getTexasSignInErrorMessage(data, result.status);
-        lastError = `HTTP ${result.status}, texas=${texasMessage}, cookies=${setCookies.length}`;
-
-        logTexasSignInFailure({
+      if (
+        status >= 200 &&
+        status < 300 &&
+        isTexasSignInSuccess(data) &&
+        setCookies.length > 0
+      ) {
+        console.info("[TexasSessionService] signIn success after warm-up", {
           username,
-          url,
-          httpStatus: result.status,
           cookieCount: setCookies.length,
-          texasMessage,
-          bodyPreview: result.bodyText || JSON.stringify(data ?? ""),
         });
-
-        if (result.status === 403) {
-          lastError = `HTTP 403 Forbidden (Cloudflare/WAF)`;
-          break;
-        }
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : String(e);
-        console.error("[TexasSessionService] signIn transport error", {
-          username,
-          url,
-          error: lastError,
-        });
+        return storeTexasSession(username, password, setCookies);
       }
+
+      const texasMessage = getTexasSignInErrorMessage(data, status);
+      lastError = `HTTP ${status}, texas=${texasMessage}, cookies=${setCookies.length}`;
+
+      logTexasSignInFailure({
+        username,
+        url: urls[0] ?? baseUrl,
+        httpStatus: status,
+        cookieCount: setCookies.length,
+        texasMessage,
+        bodyPreview: bodyText || JSON.stringify(data ?? ""),
+      });
+
+      if (status === 403) {
+        lastError = `HTTP 403 Forbidden (Cloudflare/WAF)`;
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      console.error("[TexasSessionService] signIn transport error", {
+        username,
+        error: lastError,
+      });
     }
 
     throw new Error(

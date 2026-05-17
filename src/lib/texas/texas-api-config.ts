@@ -7,17 +7,80 @@ export const TEXAS_AGENTS_API_DEFAULT = `${TEXAS_AGENTS_ORIGIN}/global/api`;
 
 export const TEXAS_SIGN_IN_PATH = "/User/signIn";
 
-/** Current Chrome on Windows — update periodically for WAF reputation. */
+/** Current Chrome on Windows — frozen for entire warm-up + sign-in flow. */
 export const CHROME_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+export const TEXAS_SEC_CH_UA =
+  '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"';
+export const TEXAS_SEC_CH_UA_MOBILE = "?0";
+export const TEXAS_SEC_CH_UA_PLATFORM = '"Windows"';
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Phase 3: human pause between landing GET and sign-in POST (2–4s). */
+export function humanWarmUpDelayMs(): number {
+  return 2000 + Math.floor(Math.random() * 2000);
+}
+
 /** Random 1–3s delay before retry after 403/429. */
 export function texasRetryDelayMs(): number {
   return 1000 + Math.floor(Math.random() * 2000);
+}
+
+/** Phase 1 — browser lands on home page (navigation request). */
+export function buildTexasLandingHeaders(cookie?: string): [string, string][] {
+  const pairs: [string, string][] = [
+    ["Host", "agents.texas4win.com"],
+    ["Connection", "keep-alive"],
+    ["sec-ch-ua", TEXAS_SEC_CH_UA],
+    ["sec-ch-ua-mobile", TEXAS_SEC_CH_UA_MOBILE],
+    ["sec-ch-ua-platform", TEXAS_SEC_CH_UA_PLATFORM],
+    [
+      "Accept",
+      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    ],
+    ["User-Agent", CHROME_USER_AGENT],
+    ["Upgrade-Insecure-Requests", "1"],
+    ["Sec-Fetch-Site", "none"],
+    ["Sec-Fetch-Mode", "navigate"],
+    ["Sec-Fetch-User", "?1"],
+    ["Sec-Fetch-Dest", "document"],
+    ["Accept-Encoding", "gzip, deflate, br"],
+    ["Accept-Language", "en-US,en;q=0.9"],
+  ];
+  if (cookie) pairs.push(["Cookie", cookie]);
+  return pairs;
+}
+
+/** Phase 4 — API POST (same UA / sec-ch-ua as landing). */
+export function buildTexasApiPostHeaders(
+  host: string,
+  contentLength: number,
+  cookie?: string
+): [string, string][] {
+  const pairs: [string, string][] = [
+    ["Host", host],
+    ["Connection", "keep-alive"],
+    ["Content-Length", String(contentLength)],
+    ["sec-ch-ua", TEXAS_SEC_CH_UA],
+    ["sec-ch-ua-mobile", TEXAS_SEC_CH_UA_MOBILE],
+    ["sec-ch-ua-platform", TEXAS_SEC_CH_UA_PLATFORM],
+    ["Accept", "application/json, text/plain, */*"],
+    ["Content-Type", "application/json"],
+    ["User-Agent", CHROME_USER_AGENT],
+    ["Origin", TEXAS_AGENTS_ORIGIN],
+    ["Referer", `${TEXAS_AGENTS_ORIGIN}/`],
+    ["Sec-Fetch-Site", "same-origin"],
+    ["Sec-Fetch-Mode", "cors"],
+    ["Sec-Fetch-Dest", "empty"],
+    ["Accept-Encoding", "gzip, deflate, br"],
+    ["Accept-Language", "en-US,en;q=0.9"],
+  ];
+  if (cookie) pairs.push(["Cookie", cookie]);
+  return pairs;
 }
 
 export function normalizeTexasApiBaseUrl(raw?: string): string | undefined {
@@ -71,9 +134,9 @@ export function buildOrderedTexasHeaders(options: {
   }
 
   pairs.push(
-    ["sec-ch-ua", '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'],
-    ["sec-ch-ua-mobile", "?0"],
-    ["sec-ch-ua-platform", '"Windows"'],
+    ["sec-ch-ua", TEXAS_SEC_CH_UA],
+    ["sec-ch-ua-mobile", TEXAS_SEC_CH_UA_MOBILE],
+    ["sec-ch-ua-platform", TEXAS_SEC_CH_UA_PLATFORM],
     ["Accept", "application/json, text/plain, */*"],
     ["User-Agent", CHROME_USER_AGENT]
   );
@@ -112,9 +175,9 @@ export function buildTexasBrowserHeaders(cookie?: string): Record<string, string
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
-    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
+    "sec-ch-ua": TEXAS_SEC_CH_UA,
+    "sec-ch-ua-mobile": TEXAS_SEC_CH_UA_MOBILE,
+    "sec-ch-ua-platform": TEXAS_SEC_CH_UA_PLATFORM,
   };
   if (cookie) h.Cookie = cookie;
   return h;
