@@ -260,9 +260,16 @@ export async function handleOnboardingMessage(
         return;
       }
       if (msg.includes("Texas sign-in failed")) {
+        const texasDetail = msg.includes("Invalid username or password")
+          ? "\n\nTexas says: Invalid username or password."
+          : msg.includes("HTTP 403")
+            ? "\n\nBlocked by Texas/Cloudflare (403). Try again in a few minutes."
+            : msg.includes("HTTP 401")
+              ? "\n\nSession rejected (401)."
+              : "";
         await sendTelegramMessage(
           chatId,
-          "Texas login failed. Use the exact username/email and password from agents.texas4win.com (case-sensitive). Send /start to try again."
+          `Texas login failed. Use the exact username and password from agents.texas4win.com (case-sensitive).${texasDetail}\n\nSend /start to try again.`
         );
         await supabase
           .from("telegram_onboarding_sessions")

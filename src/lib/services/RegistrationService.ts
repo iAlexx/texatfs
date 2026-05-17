@@ -59,9 +59,10 @@ export class RegistrationService {
    * POST /User/signIn (result.type === 0) + POST /Agent/getAgentAllWallets.
    */
   async verifyTexasCredentials(login: string, password: string): Promise<void> {
-    const username = login.trim();
-    const pass = password.trim();
-    await this.texasSession.verifyAgentAccount({ username, password: pass });
+    await this.texasSession.verifyAgentAccount({
+      username: login.trim(),
+      password,
+    });
   }
 
   async completeRegistration(
@@ -69,7 +70,7 @@ export class RegistrationService {
   ): Promise<CompleteRegistrationResult> {
     const licenseKey = input.licenseKey.trim().toUpperCase();
     const texasLogin = input.texasLogin.trim();
-    const texasPassword = input.texasPassword.trim();
+    const texasPassword = input.texasPassword;
 
     // 1) Texas credentials must work (user-specific — not env defaults)
     await this.verifyTexasCredentials(texasLogin, texasPassword);

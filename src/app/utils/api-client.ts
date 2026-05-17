@@ -1,8 +1,8 @@
 import axios, { type AxiosInstance } from "axios";
 import { cookiesToHeader, fromToken } from "@/app/utils/token-manager";
 import {
+  buildTexasBrowserHeaders,
   resolveTexasApiBaseUrl,
-  TEXAS_API_DEFAULT_HEADERS,
 } from "@/lib/texas/texas-api-config";
 
 export function getTexasApiBaseUrl(): string {
@@ -12,7 +12,7 @@ export function getTexasApiBaseUrl(): string {
 function createTexasAxios(extraHeaders?: Record<string, string>): AxiosInstance {
   return axios.create({
     baseURL: getTexasApiBaseUrl(),
-    headers: { ...TEXAS_API_DEFAULT_HEADERS, ...extraHeaders },
+    headers: { ...buildTexasBrowserHeaders(), ...extraHeaders },
     withCredentials: true,
     validateStatus: (status) => status >= 200 && status < 300,
   });

@@ -8,34 +8,27 @@ import {
 } from "@/app/utils/token-cache";
 import { toToken } from "@/app/utils/token-manager";
 import {
+  buildTexasBrowserHeaders,
+  buildTexasSignInBody,
+  buildTexasSignInUrls,
   extractSetCookieHeaders,
+  getTexasSignInErrorMessage,
+  isTexasSignInSuccess,
+  logTexasSignInFailure,
   normalizeTexasPassword,
   normalizeTexasUsername,
-  TEXAS_API_DEFAULT_HEADERS,
+  type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
 import type { TexasCredentials } from "@/lib/texas/types";
-
-interface SignInEnvelope {
-  status?: boolean;
-  result?: {
-    type?: number;
-    message?: string;
-  };
-}
 
 interface TexasApiEnvelope<T = unknown> {
   status?: boolean;
   result?: T;
 }
 
-/** Texas sign-in success: result.type === 0 (dashboard access granted). */
-export function isTexasSignInSuccess(data: SignInEnvelope | null | undefined): boolean {
-  return data?.result?.type === 0;
-}
-
 /**
- * Multi-tenant Texas authentication — always uses the caller-supplied credentials.
- * Never reads TEXAS_SYNC_* or other global env credentials.
+ * Multi-tenant Texas authentication — always uses caller-supplied credentials.
+ * Never reads TEXAS_SYNC_* env vars.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -46,65 +39,54 @@ export class TexasSessionService {
     if (cached) return cached;
 
     const baseUrl = getTexasApiBaseUrl();
-    const url = `${baseUrl.replace(/\/$/, "")}/User/signIn`;
-    const body = { username, password };
+    const body = buildTexasSignInBody(username, password);
+    const headers = buildTexasBrowserHeaders();
+    const urls = buildTexasSignInUrls(baseUrl);
 
     let lastError = "unknown";
 
-    try {
-      const axiosRes = await axios.post<SignInEnvelope>(url, body, {
-        headers: TEXAS_API_DEFAULT_HEADERS,
-        validateStatus: () => true,
-        maxRedirects: 5,
-      });
+    for (const url of urls) {
+      try {
+        const axiosRes = await axios.post<TexasSignInEnvelope>(url, body, {
+          headers,
+          validateStatus: () => true,
+          maxRedirects: 5,
+          timeout: 30_000,
+        });
 
-      const setCookie = extractSetCookieHeaders(
-        axiosRes.headers as Record<string, unknown>
-      );
-      const data = axiosRes.data;
+        const setCookie = extractSetCookieHeaders(
+          axiosRes.headers as Record<string, unknown>
+        );
+        const data = axiosRes.data;
 
-      if (
-        axiosRes.status >= 200 &&
-        axiosRes.status < 300 &&
-        isTexasSignInSuccess(data) &&
-        setCookie.length > 0
-      ) {
-        return storeTexasSession(username, password, setCookie);
-      }
-
-      lastError = `signIn HTTP ${axiosRes.status}, type=${data?.result?.type ?? "n/a"}, message=${data?.result?.message ?? "n/a"}`;
-    } catch (e) {
-      lastError = e instanceof Error ? e.message : String(e);
-    }
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: TEXAS_API_DEFAULT_HEADERS,
-        body: JSON.stringify(body),
-        redirect: "follow",
-      });
-
-      const setCookie = extractSetCookieHeaders(response.headers);
-      const contentType = response.headers.get("content-type") ?? "";
-      const rawBody = await response.text();
-
-      let data: SignInEnvelope | null = null;
-      if (contentType.includes("application/json") && rawBody.trim()) {
-        try {
-          data = JSON.parse(rawBody) as SignInEnvelope;
-        } catch {
-          data = null;
+        if (
+          axiosRes.status >= 200 &&
+          axiosRes.status < 300 &&
+          isTexasSignInSuccess(data) &&
+          setCookie.length > 0
+        ) {
+          return storeTexasSession(username, password, setCookie);
         }
-      }
 
-      if (response.ok && isTexasSignInSuccess(data) && setCookie.length > 0) {
-        return storeTexasSession(username, password, setCookie);
-      }
+        const texasMessage = getTexasSignInErrorMessage(data);
+        lastError = `HTTP ${axiosRes.status}, texas=${texasMessage}, cookies=${setCookie.length}`;
 
-      lastError = `signIn fetch HTTP ${response.status}, type=${data?.result?.type ?? "n/a"}`;
-    } catch (e) {
-      lastError = e instanceof Error ? e.message : String(e);
+        logTexasSignInFailure({
+          username,
+          url,
+          httpStatus: axiosRes.status,
+          cookieCount: setCookie.length,
+          texasMessage,
+          bodyPreview: JSON.stringify(data ?? ""),
+        });
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        console.error("[TexasSessionService] signIn transport error", {
+          username,
+          url,
+          error: lastError,
+        });
+      }
     }
 
     throw new Error(
@@ -134,8 +116,7 @@ export class TexasSessionService {
   }
 
   /**
-   * Full agent validation for onboarding:
-   * POST /User/signIn (type === 0) then POST /Agent/getAgentAllWallets.
+   * Onboarding validation: POST /User/signIn (type === 0) + POST /Agent/getAgentAllWallets.
    */
   async verifyAgentAccount(credentials: TexasCredentials): Promise<void> {
     const username = normalizeTexasUsername(credentials.username);
@@ -145,12 +126,29 @@ export class TexasSessionService {
 
     const walletsRes = await client.post<TexasApiEnvelope<unknown[]>>(
       "/Agent/getAgentAllWallets",
-      {}
+      {},
+      { validateStatus: () => true }
     );
 
-    if (!walletsRes.data?.status) {
+    if (walletsRes.status === 401 || walletsRes.status === 403) {
+      console.error("[TexasSessionService] wallets rejected", {
+        username,
+        httpStatus: walletsRes.status,
+        bodyPreview: JSON.stringify(walletsRes.data ?? "").slice(0, 300),
+      });
       throw new Error(
-        "Texas sign-in failed: agent wallet access denied (account may not be an active agent)"
+        `Texas sign-in failed: wallet API returned HTTP ${walletsRes.status} (session not accepted)`
+      );
+    }
+
+    if (!walletsRes.data?.status) {
+      console.error("[TexasSessionService] wallets invalid", {
+        username,
+        httpStatus: walletsRes.status,
+        bodyPreview: JSON.stringify(walletsRes.data ?? "").slice(0, 300),
+      });
+      throw new Error(
+        "Texas sign-in failed: agent wallet access denied (not an active agent account)"
       );
     }
   }
