@@ -1,0 +1,26 @@
+{
+  "status": true,
+  "html": "",
+  "result": [
+    {
+      "currencyName": "New Syrian Pound",
+      "currencyCode": "NSP",
+      "availableWallet": "0.00",
+      "mainCurrency": "NSP",
+      "creditLine": "0",
+      "credit": "0",
+      "availability": "10000",
+      "balance": "10000",
+      "bonus": "0",
+      "frozenBalance": "0",
+      "withAmount": "0.00/0.00",
+      "currentWallet": "0.00"
+    }
+  ],
+  "notification": [],
+  "_mapping": {
+    "api_snapshots.balance": "result[0].balance",
+    "api_snapshots.currency_code": "result[0].currencyCode",
+    "api_snapshots.raw_wallets": "result[0] (entire wallet object)"
+  }
+}

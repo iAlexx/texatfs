@@ -1,0 +1,67 @@
+{
+  "_schema_version": "1.0.0",
+  "_source": "Inferred from Texas dashboard list endpoints (getChildren, getPlayersStatisticsPro) + iGaming affiliate grid conventions",
+  "_validation": "REPLACE field names with live POST /Statistics/getSubAgentStatistics response before production cron",
+  "_request": {
+    "start": 0,
+    "limit": 1000,
+    "filter": {
+      "currency": {
+        "action": "=",
+        "value": "multi",
+        "valueLabel": "multi"
+      }
+    }
+  },
+  "status": true,
+  "html": "",
+  "result": {
+    "records": [
+      {
+        "affiliateId": "2633181",
+        "username": "master@agent.nsp",
+        "affiliateUsername": "master@agent.nsp",
+        "mainCurrency": "NSP",
+        "totalDeposit": "125000.00",
+        "totalWithdraw": "98000.00",
+        "ngr": "-4200.00",
+        "balance": "22800.00"
+      },
+      {
+        "affiliateId": "375997748",
+        "username": "player@dashboard.test",
+        "affiliateUsername": "player@dashboard.test",
+        "mainCurrency": "NSP",
+        "totalDeposit": "15000.00",
+        "totalWithdraw": "12000.00",
+        "ngr": "-800.00",
+        "balance": "2200.00"
+      }
+    ],
+    "totalRecordsCount": "2",
+    "titles": [
+      { "key": "affiliateId", "label": "Agent ID" },
+      { "key": "totalDeposit", "label": "Total Deposits" },
+      { "key": "totalWithdraw", "label": "Total Withdrawals" },
+      { "key": "ngr", "label": "NGR" }
+    ],
+    "total": {
+      "totalDeposit": "140000.00",
+      "totalWithdraw": "110000.00",
+      "ngr": "-5000.00"
+    }
+  },
+  "notification": [],
+  "_mapping": {
+    "api_snapshots.total_deposit": "result.records[].totalDeposit OR result.total.totalDeposit (super_master)",
+    "api_snapshots.total_withdraw": "result.records[].totalWithdraw OR result.total.totalWithdraw",
+    "api_snapshots.ngr": "result.records[].ngr OR result.total.ngr",
+    "api_snapshots.raw_statistics": "entire result object after pagination merge",
+    "per_user_row_match": "users.texas_affiliate_id = record.affiliateId"
+  },
+  "_alternate_field_names_to_check_live": {
+    "deposits": ["totalDeposit", "depositsTotal", "depositTotal", "total_deposit"],
+    "withdrawals": ["totalWithdraw", "withdrawTotal", "withdrawalsTotal", "total_withdraw"],
+    "ngr": ["ngr", "NGR", "netGamingRevenue", "burn", "netRevenue"]
+  }
+}

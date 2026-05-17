@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #0a0e17;
+  --bg-panel: #0f1623;
+  --border-steel: #2a3544;
+  --text-primary: #e8ecf1;
+  --text-muted: #7d8b9a;
+  --text-metallic: #c8d0dc;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Flat institutional — no gradients on surfaces */
+@layer components {
+  .panel-steel {
+    @apply border border-steel-border bg-navy-800 shadow-panel;
+  }
+
+  .value-metallic {
+    @apply font-mono text-lg tabular-nums tracking-tight text-accent-highlight;
+  }
+
+  .label-ar {
+    @apply text-sm text-steel-400;
+  }
+}
