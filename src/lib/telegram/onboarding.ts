@@ -57,12 +57,31 @@ export async function handleOnboardingMessage(
       return;
     }
 
-    await supabase.from("telegram_onboarding_sessions").upsert({
-      telegram_id: telegramId,
-      step: "login",
-      texas_email_encrypted: null,
-      texas_password_encrypted: null,
-    });
+    const { error: sessionUpsertError } = await supabase
+      .from("telegram_onboarding_sessions")
+      .upsert(
+        {
+          telegram_id: telegramId,
+          // DB CHECK allows 'email' | 'password' | 'license' (not 'login')
+          step: "email",
+          texas_email_encrypted: null,
+          texas_password_encrypted: null,
+        },
+        { onConflict: "telegram_id" }
+      );
+
+    if (sessionUpsertError) {
+      console.error("[onboarding] session upsert failed", {
+        telegramId,
+        error: sessionUpsertError.message,
+        code: sessionUpsertError.code,
+      });
+      await sendTelegramMessage(
+        chatId,
+        "Could not start registration (database error). Contact support or try again later."
+      );
+      return;
+    }
 
     await sendTelegramMessage(
       chatId,
@@ -71,11 +90,23 @@ export async function handleOnboardingMessage(
     return;
   }
 
-  const { data: session } = await supabase
+  const { data: session, error: sessionFetchError } = await supabase
     .from("telegram_onboarding_sessions")
     .select("*")
     .eq("telegram_id", telegramId)
     .maybeSingle();
+
+  if (sessionFetchError) {
+    console.error("[onboarding] session fetch failed", {
+      telegramId,
+      error: sessionFetchError.message,
+    });
+    await sendTelegramMessage(
+      chatId,
+      "Registration session error. Send /start to try again."
+    );
+    return;
+  }
 
   if (!session) {
     await sendTelegramMessage(chatId, "Send /start to begin registration.");
@@ -99,13 +130,25 @@ export async function handleOnboardingMessage(
       return;
     }
 
-    await supabase
+    const { error: loginSaveError } = await supabase
       .from("telegram_onboarding_sessions")
       .update({
         step: "password",
         texas_email_encrypted: vault.encrypt(text),
       })
       .eq("telegram_id", telegramId);
+
+    if (loginSaveError) {
+      console.error("[onboarding] login save failed", {
+        telegramId,
+        error: loginSaveError.message,
+      });
+      await sendTelegramMessage(
+        chatId,
+        "Could not save your login. Send /start and try again."
+      );
+      return;
+    }
 
     await sendTelegramMessage(
       chatId,
@@ -120,13 +163,25 @@ export async function handleOnboardingMessage(
       return;
     }
 
-    await supabase
+    const { error: passwordSaveError } = await supabase
       .from("telegram_onboarding_sessions")
       .update({
         step: "license",
         texas_password_encrypted: vault.encrypt(text),
       })
       .eq("telegram_id", telegramId);
+
+    if (passwordSaveError) {
+      console.error("[onboarding] password save failed", {
+        telegramId,
+        error: passwordSaveError.message,
+      });
+      await sendTelegramMessage(
+        chatId,
+        "Could not save your password. Send /start and try again."
+      );
+      return;
+    }
 
     await sendTelegramMessage(
       chatId,

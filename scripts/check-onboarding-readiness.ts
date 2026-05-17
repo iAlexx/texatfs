@@ -63,13 +63,40 @@ async function main() {
         .from("telegram_onboarding_sessions")
         .select("telegram_id")
         .limit(1);
+      const probeId = 999999999999;
+      const { error: upsertErr } = await sb
+        .from("telegram_onboarding_sessions")
+        .upsert(
+          {
+            telegram_id: probeId,
+            step: "email",
+            texas_email_encrypted: null,
+            texas_password_encrypted: null,
+          },
+          { onConflict: "telegram_id" }
+        );
+      if (upsertErr) {
+        await sb
+          .from("telegram_onboarding_sessions")
+          .delete()
+          .eq("telegram_id", probeId);
+      } else {
+        await sb
+          .from("telegram_onboarding_sessions")
+          .delete()
+          .eq("telegram_id", probeId);
+      }
       if (lk?.message?.includes("does not exist") || os?.message?.includes("does not exist")) {
         supabaseDetail = "Migrations missing: license_keys or telegram_onboarding_sessions";
-      } else if (lk || os) {
-        supabaseDetail = lk?.message ?? os?.message ?? "unknown";
+      } else if (upsertErr?.message?.includes("violates check constraint")) {
+        supabaseDetail =
+          "onboarding step CHECK failed — use step 'email' not 'login', or run migration 20260517140000";
+      } else if (lk || os || upsertErr) {
+        supabaseDetail =
+          lk?.message ?? os?.message ?? upsertErr?.message ?? "unknown";
       } else {
         supabaseOk = true;
-        supabaseDetail = "Tables reachable";
+        supabaseDetail = "Tables reachable; session upsert OK";
       }
     } catch (e) {
       supabaseDetail = e instanceof Error ? e.message : "Supabase check failed";
