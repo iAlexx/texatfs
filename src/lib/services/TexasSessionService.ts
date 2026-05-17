@@ -23,14 +23,19 @@ interface SignInEnvelope {
   };
 }
 
-function isDashboardSignIn(data: SignInEnvelope | null): boolean {
-  return data?.result?.type === 0 && data?.result?.message === "dashboard";
+interface TexasApiEnvelope<T = unknown> {
+  status?: boolean;
+  result?: T;
+}
+
+/** Texas sign-in success: result.type === 0 (dashboard access granted). */
+export function isTexasSignInSuccess(data: SignInEnvelope | null | undefined): boolean {
+  return data?.result?.type === 0;
 }
 
 /**
- * Authenticates against the Texas agent dashboard.
- *
- * Uses axios for sign-in (reliable `set-cookie` array in Node) with fetch fallback.
+ * Multi-tenant Texas authentication — always uses the caller-supplied credentials.
+ * Never reads TEXAS_SYNC_* or other global env credentials.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -61,13 +66,13 @@ export class TexasSessionService {
       if (
         axiosRes.status >= 200 &&
         axiosRes.status < 300 &&
-        isDashboardSignIn(data) &&
+        isTexasSignInSuccess(data) &&
         setCookie.length > 0
       ) {
         return storeTexasSession(username, password, setCookie);
       }
 
-      lastError = `axios HTTP ${axiosRes.status}, message=${data?.result?.message ?? "no result"}`;
+      lastError = `signIn HTTP ${axiosRes.status}, type=${data?.result?.type ?? "n/a"}, message=${data?.result?.message ?? "n/a"}`;
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
     }
@@ -93,11 +98,11 @@ export class TexasSessionService {
         }
       }
 
-      if (response.ok && isDashboardSignIn(data) && setCookie.length > 0) {
+      if (response.ok && isTexasSignInSuccess(data) && setCookie.length > 0) {
         return storeTexasSession(username, password, setCookie);
       }
 
-      lastError = `fetch HTTP ${response.status}, message=${data?.result?.message ?? "non-JSON"}`;
+      lastError = `signIn fetch HTTP ${response.status}, type=${data?.result?.type ?? "n/a"}`;
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
     }
@@ -128,13 +133,31 @@ export class TexasSessionService {
     return this.signIn(credentials);
   }
 
-  /** Confirm session works against a protected endpoint. */
-  async verifySession(credentials: TexasCredentials): Promise<void> {
-    const client = await this.getClient(credentials);
-    const res = await client.post("/Agent/getAgentAllWallets", {});
-    if (!res.data?.status) {
-      throw new Error("Texas session invalid after sign-in (wallets check failed)");
+  /**
+   * Full agent validation for onboarding:
+   * POST /User/signIn (type === 0) then POST /Agent/getAgentAllWallets.
+   */
+  async verifyAgentAccount(credentials: TexasCredentials): Promise<void> {
+    const username = normalizeTexasUsername(credentials.username);
+    const password = normalizeTexasPassword(credentials.password);
+
+    const client = await this.getClient({ username, password });
+
+    const walletsRes = await client.post<TexasApiEnvelope<unknown[]>>(
+      "/Agent/getAgentAllWallets",
+      {}
+    );
+
+    if (!walletsRes.data?.status) {
+      throw new Error(
+        "Texas sign-in failed: agent wallet access denied (account may not be an active agent)"
+      );
     }
+  }
+
+  /** @deprecated Use verifyAgentAccount */
+  async verifySession(credentials: TexasCredentials): Promise<void> {
+    return this.verifyAgentAccount(credentials);
   }
 
   static tokenFromCookies(setCookieHeaders: string[]): string {

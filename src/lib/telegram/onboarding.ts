@@ -5,9 +5,10 @@ import { sendTelegramMessage } from "@/lib/telegram/bot-api";
 import type { TelegramMessage } from "@/lib/telegram/bot-api";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
 
-type OnboardingStep = "email" | "password" | "license";
+type OnboardingStep = "login" | "password" | "license";
 
-const LOGIN_RE = /^[^\s@]{3,128}$/;
+/** Texas logins like Alitest@Regional.Nsp — allow @ and preserve case. */
+const TEXAS_LOGIN_RE = /^[^\s]{3,128}$/;
 
 function displayName(msg: TelegramMessage): string {
   const from = msg.from;
@@ -20,6 +21,12 @@ function miniAppHint(): string {
   return url
     ? `\n\nOpen your dashboard: ${url}`
     : "\n\nOpen TEXAS FUNDS from the bot menu.";
+}
+
+function normalizeStep(raw: string): OnboardingStep | null {
+  if (raw === "login" || raw === "email") return "login";
+  if (raw === "password" || raw === "license") return raw;
+  return null;
 }
 
 export async function handleOnboardingMessage(
@@ -52,14 +59,14 @@ export async function handleOnboardingMessage(
 
     await supabase.from("telegram_onboarding_sessions").upsert({
       telegram_id: telegramId,
-      step: "email",
+      step: "login",
       texas_email_encrypted: null,
       texas_password_encrypted: null,
     });
 
     await sendTelegramMessage(
       chatId,
-      "Welcome to TEXAS FUNDS calculate.\n\nStep 1/3 — Send your Texas dashboard username or email (same as agents.texas4win.com login):"
+      "Welcome to TEXAS FUNDS calculate.\n\nStep 1/3 — Send your Texas agents.texas4win.com username or email exactly as shown on the login page (case matters, e.g. Alitest@Regional.Nsp):"
     );
     return;
   }
@@ -71,21 +78,23 @@ export async function handleOnboardingMessage(
     .maybeSingle();
 
   if (!session) {
-    await sendTelegramMessage(
-      chatId,
-      "Send /start to begin registration."
-    );
+    await sendTelegramMessage(chatId, "Send /start to begin registration.");
     return;
   }
 
   const vault = getCredentialVault();
-  const step = session.step as OnboardingStep;
+  const step = normalizeStep(session.step as string);
 
-  if (step === "email") {
-    if (!LOGIN_RE.test(text)) {
+  if (!step) {
+    await sendTelegramMessage(chatId, "Session invalid. Send /start to begin again.");
+    return;
+  }
+
+  if (step === "login") {
+    if (!TEXAS_LOGIN_RE.test(text)) {
       await sendTelegramMessage(
         chatId,
-        "Please send your Texas username or email (at least 3 characters, no spaces)."
+        "Invalid login. Send your Texas username or email (3–128 characters, no spaces). Example: Alitest@Regional.Nsp"
       );
       return;
     }
@@ -134,22 +143,34 @@ export async function handleOnboardingMessage(
       .eq("telegram_id", telegramId)
       .single();
 
-    if (sessionError || !freshSession?.texas_email_encrypted || !freshSession?.texas_password_encrypted) {
-      await sendTelegramMessage(chatId, "Session expired. Send /start to register again.");
+    if (
+      sessionError ||
+      !freshSession?.texas_email_encrypted ||
+      !freshSession?.texas_password_encrypted
+    ) {
+      await sendTelegramMessage(
+        chatId,
+        "Session expired. Send /start to register again."
+      );
       return;
     }
 
-    const login = vault.decrypt(freshSession.texas_email_encrypted).trim();
-    const password = vault.decrypt(freshSession.texas_password_encrypted).trim();
+    const texasLogin = vault.decrypt(freshSession.texas_email_encrypted).trim();
+    const texasPassword = vault
+      .decrypt(freshSession.texas_password_encrypted)
+      .trim();
 
-    await sendTelegramMessage(chatId, "Validating Texas credentials and license…");
+    await sendTelegramMessage(
+      chatId,
+      "Validating your Texas agent account and license key…"
+    );
 
     try {
       const result = await registration.completeRegistration({
         telegramId,
         displayName: displayName(message),
-        texasEmail: login,
-        texasPassword: password,
+        texasLogin,
+        texasPassword,
         licenseKey,
       });
 
@@ -164,6 +185,10 @@ export async function handleOnboardingMessage(
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Registration failed";
+      console.error("[onboarding] registration failed", {
+        telegramId,
+        error: msg,
+      });
 
       if (msg.includes("LICENSE_KEY_INVALID")) {
         await sendTelegramMessage(
@@ -182,7 +207,7 @@ export async function handleOnboardingMessage(
       if (msg.includes("Texas sign-in failed")) {
         await sendTelegramMessage(
           chatId,
-          "Texas login failed. Check your email and password, then send /start to try again."
+          "Texas login failed. Use the exact username/email and password from agents.texas4win.com (case-sensitive). Send /start to try again."
         );
         await supabase
           .from("telegram_onboarding_sessions")

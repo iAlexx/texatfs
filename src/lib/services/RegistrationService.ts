@@ -6,7 +6,8 @@ import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
 export interface CompleteRegistrationInput {
   telegramId: number;
   displayName: string;
-  texasEmail: string;
+  /** Texas dashboard username or email — stored as-is (case-sensitive). */
+  texasLogin: string;
   texasPassword: string;
   licenseKey: string;
 }
@@ -17,6 +18,10 @@ export interface CompleteRegistrationResult {
   licenseKey: string;
 }
 
+/**
+ * Multi-tenant SaaS registration: each Master uses their own Texas credentials.
+ * Never uses TEXAS_SYNC_* env vars — only the credentials passed from onboarding.
+ */
 export class RegistrationService {
   private readonly vault = getCredentialVault();
   private readonly texasSession = new TexasSessionService();
@@ -49,26 +54,35 @@ export class RegistrationService {
     return Boolean(data);
   }
 
+  /**
+   * Validates Texas agent account using the user's own credentials only.
+   * POST /User/signIn (result.type === 0) + POST /Agent/getAgentAllWallets.
+   */
   async verifyTexasCredentials(login: string, password: string): Promise<void> {
     const username = login.trim();
     const pass = password.trim();
-    await this.texasSession.verifySession({ username, password: pass });
+    await this.texasSession.verifyAgentAccount({ username, password: pass });
   }
 
   async completeRegistration(
     input: CompleteRegistrationInput
   ): Promise<CompleteRegistrationResult> {
     const licenseKey = input.licenseKey.trim().toUpperCase();
+    const texasLogin = input.texasLogin.trim();
+    const texasPassword = input.texasPassword.trim();
 
+    // 1) Texas credentials must work (user-specific — not env defaults)
+    await this.verifyTexasCredentials(texasLogin, texasPassword);
+
+    // 2) License key must be valid and unused
     const available = await this.licenseKeyAvailable(licenseKey);
     if (!available) {
       throw new Error("LICENSE_KEY_INVALID_OR_USED");
     }
 
-    await this.verifyTexasCredentials(input.texasEmail, input.texasPassword);
-
-    const emailEnc = this.vault.encrypt(input.texasEmail.trim());
-    const passEnc = this.vault.encrypt(input.texasPassword);
+    // 3) Persist encrypted per-tenant credentials
+    const loginEnc = this.vault.encrypt(texasLogin);
+    const passEnc = this.vault.encrypt(texasPassword);
 
     const { data: user, error: insertError } = await this.supabase
       .from("users")
@@ -77,10 +91,10 @@ export class RegistrationService {
         role: "master",
         parent_id: null,
         display_name: input.displayName,
-        texas_username: input.texasEmail.trim(),
-        texas_email_encrypted: emailEnc,
+        texas_username: texasLogin,
+        texas_email_encrypted: loginEnc,
         texas_password_encrypted: passEnc,
-        registered_via: "admin",
+        registered_via: "telegram_bot",
         is_active: true,
       })
       .select("id")
@@ -93,6 +107,7 @@ export class RegistrationService {
       throw insertError;
     }
 
+    // 4) Redeem license → sets subscription_end_date from key duration
     const { data: endDate, error: redeemError } = await this.supabase.rpc(
       "redeem_license_key",
       { p_key: licenseKey, p_user_id: user.id }
@@ -100,13 +115,14 @@ export class RegistrationService {
 
     if (redeemError) {
       await this.supabase.from("users").delete().eq("id", user.id);
+      if (
+        redeemError.message?.includes("LICENSE_KEY_INVALID") ||
+        redeemError.code === "P0001"
+      ) {
+        throw new Error("LICENSE_KEY_INVALID_OR_USED");
+      }
       throw redeemError;
     }
-
-    await this.supabase
-      .from("users")
-      .update({ registered_via: "telegram_bot" })
-      .eq("id", user.id);
 
     const ledgerDate = new Date().toISOString().slice(0, 10);
     await this.supabase.from("daily_ledgers").upsert(
@@ -136,6 +152,7 @@ export class RegistrationService {
     return this.subscription.isActive(userId);
   }
 
+  /** Load this tenant's Texas credentials for sync jobs (never global env). */
   async loadTexasCredentials(userId: string): Promise<{
     username: string;
     password: string;
@@ -152,8 +169,8 @@ export class RegistrationService {
     }
 
     return {
-      username: this.vault.decrypt(data.texas_email_encrypted),
-      password: this.vault.decrypt(data.texas_password_encrypted),
+      username: this.vault.decrypt(data.texas_email_encrypted).trim(),
+      password: this.vault.decrypt(data.texas_password_encrypted).trim(),
     };
   }
 }
