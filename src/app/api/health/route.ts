@@ -5,5 +5,9 @@ export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json({ status: "ok" });
+  return NextResponse.json({
+    status: "ok",
+    service: "texas-funds-calculate",
+    timestamp: new Date().toISOString(),
+  });
 }

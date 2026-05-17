@@ -58,11 +58,13 @@ RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs
 
 RUN mkdir -p public
+COPY scripts/railway-start.sh ./railway-start.sh
+RUN chmod +x ./railway-start.sh
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+RUN chown nextjs:nodejs ./railway-start.sh
 
 USER nextjs
 EXPOSE 3000
-# Railway injects PORT at runtime; HOSTNAME=0.0.0.0 avoids localhost-only binding (SIGTERM)
-CMD ["sh", "-c", "exec node server.js"]
+CMD ["./railway-start.sh"]
