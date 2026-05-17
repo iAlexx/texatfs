@@ -13,6 +13,8 @@
     "test:vault": "node --import tsx --test src/lib/security/CredentialVault.test.ts",
     "live:texas-sync": "tsx scripts/live-texas-sync.ts",
     "telegram:webhook": "tsx scripts/set-telegram-webhook.ts",
+    "telegram:check": "tsx scripts/check-telegram-webhook.ts",
+    "onboarding:check": "tsx scripts/check-onboarding-readiness.ts",
     "db:validate": "node scripts/validate-migration.mjs",
     "db:push": "supabase db push",
     "db:seed": "supabase db seed",

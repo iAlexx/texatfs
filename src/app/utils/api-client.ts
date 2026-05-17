@@ -1,22 +1,40 @@
 import axios, { type AxiosInstance } from "axios";
 import { cookiesToHeader, fromToken } from "@/app/utils/token-manager";
+import {
+  normalizeTexasApiBaseUrl,
+  TEXAS_API_DEFAULT_HEADERS,
+} from "@/lib/texas/texas-api-config";
 
-const TEXAS_API_BASE_URL =
-  process.env.TEXAS_API_BASE_URL ?? process.env.NEXT_PUBLIC_TEXAS_API_BASE_URL;
-
-if (!TEXAS_API_BASE_URL) {
-  console.warn(
-    "[api-client] TEXAS_API_BASE_URL is not set — Texas API calls will fail at runtime."
+function resolveTexasApiBaseUrl(): string | undefined {
+  return normalizeTexasApiBaseUrl(
+    process.env.TEXAS_API_BASE_URL ?? process.env.NEXT_PUBLIC_TEXAS_API_BASE_URL
   );
 }
 
+export function getTexasApiBaseUrl(): string {
+  const base = resolveTexasApiBaseUrl();
+  if (!base) {
+    throw new Error(
+      "TEXAS_API_BASE_URL is not configured (use https://agents.texas4win.com/global/api)"
+    );
+  }
+  return base;
+}
+
+function createTexasAxios(extraHeaders?: Record<string, string>): AxiosInstance {
+  return axios.create({
+    baseURL: getTexasApiBaseUrl(),
+    headers: { ...TEXAS_API_DEFAULT_HEADERS, ...extraHeaders },
+    withCredentials: true,
+    validateStatus: (status) => status >= 200 && status < 300,
+  });
+}
+
 /** Unauthenticated client — used only for /User/signIn. */
-export const api = axios.create({
-  baseURL: TEXAS_API_BASE_URL,
-  headers: { "Content-Type": "application/json" },
-  withCredentials: true,
-  validateStatus: (status) => status < 500,
-});
+export const api = {
+  post: <T>(url: string, data?: unknown) =>
+    createTexasAxios().post<T>(url, data),
+};
 
 /**
  * Request-scoped client for Next.js route handlers.
@@ -36,13 +54,5 @@ export function getServerApiClient(request: Request): AxiosInstance {
  */
 export function getApiClientFromToken(token: string): AxiosInstance {
   const cookies = fromToken(token);
-  return axios.create({
-    baseURL: TEXAS_API_BASE_URL,
-    headers: {
-      "Content-Type": "application/json",
-      Cookie: cookiesToHeader(cookies),
-    },
-    withCredentials: true,
-    validateStatus: (status) => status < 500,
-  });
+  return createTexasAxios({ Cookie: cookiesToHeader(cookies) });
 }

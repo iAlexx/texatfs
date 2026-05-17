@@ -27,7 +27,7 @@ const client = await session.getClient({ username, password });
 
 | Variable | Purpose |
 |----------|---------|
-| `TEXAS_API_BASE_URL` | Texas dashboard API origin |
+| `TEXAS_API_BASE_URL` | Texas agent API root, e.g. `https://agents.texas4win.com/global/api` (not the bare `agents` host — that returns 405/HTML) |
 | `TEXAS_SYNC_USERNAME` / `TEXAS_SYNC_PASSWORD` | Default cron credentials (optional) |
 
 ## Security
