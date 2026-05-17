@@ -1,7 +1,8 @@
 /**
  * Browser-mimicking HTTP for Texas agent API (Cloudflare / WAF bypass attempts).
- * Uses native fetch with ordered headers — no axios on sign-in path.
+ * Uses undici fetch when a proxy is configured, otherwise global fetch.
  */
+import { fetch as undiciFetch } from "undici";
 import {
   buildOrderedTexasHeaders,
   extractSetCookieHeaders,
@@ -9,6 +10,10 @@ import {
   texasRetryDelayMs,
   TEXAS_AGENTS_ORIGIN,
 } from "@/lib/texas/texas-api-config";
+import {
+  getTexasFetchDispatcher,
+  getTexasProxyLogLabel,
+} from "@/lib/texas/texas-proxy";
 
 const MAX_ATTEMPTS = 3;
 const RETRYABLE_STATUS = new Set([403, 429, 502, 503, 504]);
@@ -97,7 +102,8 @@ export async function texasBrowserFetch(
   const body = options.body;
   const jar = options.jar ?? new TexasCookieJar();
 
-  if (!options.skipWarmUp && method === "POST") {
+  // Portal warm-up often triggers extra Cloudflare checks via proxy; skip when proxied.
+  if (!options.skipWarmUp && method === "POST" && !getTexasFetchDispatcher()) {
     try {
       await warmUpTexasPortal(jar);
       await sleep(200 + Math.floor(Math.random() * 300));
@@ -128,19 +134,30 @@ export async function texasBrowserFetch(
       await sleep(delay);
     }
 
-    const headers = buildOrderedTexasHeaders({
+    const headerPairs: [string, string][] = [];
+    const built = buildOrderedTexasHeaders({
       host: parsed.host,
       contentLength: body ? Buffer.byteLength(body, "utf8") : 0,
       cookie,
       method,
     });
+    built.forEach((value, key) => headerPairs.push([key, value]));
 
-    const response = await fetch(options.url, {
+    const dispatcher = getTexasFetchDispatcher();
+    if (attempt === 1 && dispatcher) {
+      console.info("[texas-browser-fetch] using proxy", {
+        proxy: getTexasProxyLogLabel(),
+        url: options.url,
+      });
+    }
+
+    const fetchImpl = dispatcher ? undiciFetch : globalThis.fetch.bind(globalThis);
+    const response = await fetchImpl(options.url, {
       method,
-      headers,
+      headers: headerPairs,
       body: method === "POST" ? body : undefined,
       redirect: "follow",
-      cache: "no-store",
+      ...(dispatcher ? { dispatcher } : { cache: "no-store" }),
     });
 
     const bodyText = await response.text();

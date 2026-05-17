@@ -5,6 +5,11 @@ import {
   CHROME_USER_AGENT,
   resolveTexasApiBaseUrl,
 } from "@/lib/texas/texas-api-config";
+import {
+  getTexasHttpsProxyAgent,
+  getTexasProxyLogLabel,
+  isTexasProxyEnabled,
+} from "@/lib/texas/texas-proxy";
 
 export function getTexasApiBaseUrl(): string {
   return resolveTexasApiBaseUrl();
@@ -24,12 +29,17 @@ function stripAxiosFingerprint(
 }
 
 function createTexasAxios(extraHeaders?: Record<string, string>): AxiosInstance {
+  const proxyAgent = getTexasHttpsProxyAgent();
   const instance = axios.create({
     baseURL: getTexasApiBaseUrl(),
     withCredentials: true,
     validateStatus: (status) => status >= 200 && status < 300,
     maxRedirects: 5,
     timeout: 30_000,
+    proxy: false,
+    ...(proxyAgent
+      ? { httpAgent: proxyAgent, httpsAgent: proxyAgent }
+      : {}),
   });
 
   instance.defaults.headers.common = {};
@@ -37,6 +47,12 @@ function createTexasAxios(extraHeaders?: Record<string, string>): AxiosInstance 
   instance.defaults.headers.get = {};
 
   instance.interceptors.request.use((config) => {
+    if (isTexasProxyEnabled() && config.url?.includes("agents.texas4win")) {
+      console.info("[api-client] using proxy", {
+        proxy: getTexasProxyLogLabel(),
+        path: config.url,
+      });
+    }
     const cookie = extraHeaders?.Cookie;
     const merged = stripAxiosFingerprint({
       ...buildTexasBrowserHeaders(cookie),

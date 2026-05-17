@@ -28,6 +28,7 @@ const RECOMMENDED = [
   "TELEGRAM_ADMIN_IDS",
   "TELEGRAM_MINI_APP_URL",
   "LEDGER_TIMEZONE",
+  "TEXAS_HTTP_PROXY",
 ] as const;
 
 async function main() {
