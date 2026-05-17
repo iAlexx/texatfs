@@ -38,6 +38,36 @@ export function isTexasProxyEnabled(): boolean {
   return Boolean(resolveTexasProxyUrl());
 }
 
+/** Puppeteer `--proxy-server` arg (credentials applied via page.authenticate). */
+export function getTexasProxyLaunchArgs(): string[] {
+  const url = resolveTexasProxyUrl();
+  if (!url) return [];
+  try {
+    const parsed = new URL(url);
+    const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+    return [`--proxy-server=${parsed.protocol}//${parsed.hostname}:${port}`];
+  } catch {
+    return [];
+  }
+}
+
+export function getTexasProxyAuth():
+  | { username: string; password: string }
+  | undefined {
+  const url = resolveTexasProxyUrl();
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.username) return undefined;
+    return {
+      username: decodeURIComponent(parsed.username),
+      password: decodeURIComponent(parsed.password),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 let lastProxyLogAt = 0;
 
 /** Confirm Texas traffic is routed through TEXAS_HTTP_PROXY (throttled per flow). */

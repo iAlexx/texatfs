@@ -23,6 +23,11 @@ import {
   texasBrowserFetch,
   texasSignInWithWarmUp,
 } from "@/lib/texas/texas-browser-fetch";
+import {
+  isTexasBrowserLoginEnabled,
+  isTexasBrowserLoginFallbackEnabled,
+  texasBrowserSignIn,
+} from "@/lib/texas/texas-puppeteer-login";
 import type { TexasCredentials } from "@/lib/texas/types";
 
 interface TexasApiEnvelope<T = unknown> {
@@ -31,7 +36,7 @@ interface TexasApiEnvelope<T = unknown> {
 }
 
 /**
- * Multi-tenant Texas authentication with full portal warm-up before sign-in.
+ * Multi-tenant Texas authentication via Puppeteer (Railway) with optional HTTP fallback.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -42,10 +47,55 @@ export class TexasSessionService {
     if (cached) return cached;
 
     const baseUrl = getTexasApiBaseUrl();
+    let lastError = "unknown";
+
+    if (isTexasBrowserLoginEnabled()) {
+      try {
+        const browserResult = await texasBrowserSignIn({ username, password });
+        const { setCookies, signInData, httpStatus } = browserResult;
+
+        if (isTexasSignInSuccess(signInData) && setCookies.length > 0) {
+          console.info("[TexasSessionService] signIn success via Puppeteer UI", {
+            username,
+            cookieCount: setCookies.length,
+          });
+          return storeTexasSession(username, password, setCookies);
+        }
+
+        const texasMessage = getTexasSignInErrorMessage(signInData, httpStatus);
+        lastError = `browser: HTTP ${httpStatus}, texas=${texasMessage}, cookies=${setCookies.length}`;
+
+        logTexasSignInFailure({
+          username,
+          url: `${baseUrl}/User/signIn`,
+          httpStatus,
+          cookieCount: setCookies.length,
+          texasMessage,
+          bodyPreview: signInData ? JSON.stringify(signInData) : "",
+          attempt: 1,
+        });
+      } catch (e) {
+        lastError = `browser: ${e instanceof Error ? e.message : String(e)}`;
+        console.error("[TexasSessionService] Puppeteer signIn error", {
+          username,
+          error: lastError,
+        });
+      }
+
+      if (!isTexasBrowserLoginFallbackEnabled()) {
+        throw new Error(
+          `Texas sign-in failed for ${username}: ${lastError} (api=${baseUrl})`
+        );
+      }
+
+      console.warn("[TexasSessionService] falling back to HTTP warm-up", {
+        username,
+        lastError,
+      });
+    }
+
     const bodyJson = JSON.stringify(buildTexasSignInBody(username, password));
     const urls = buildTexasSignInUrls(baseUrl);
-
-    let lastError = "unknown";
 
     try {
       const { status, bodyText, jar } = await texasSignInWithWarmUp({
@@ -62,7 +112,7 @@ export class TexasSessionService {
         isTexasSignInSuccess(data) &&
         setCookies.length > 0
       ) {
-        console.info("[TexasSessionService] signIn success after warm-up", {
+        console.info("[TexasSessionService] signIn success after HTTP warm-up", {
           username,
           cookieCount: setCookies.length,
         });
