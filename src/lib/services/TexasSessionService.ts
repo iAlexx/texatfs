@@ -1,4 +1,3 @@
-import axios from "axios";
 import type { AxiosInstance } from "axios";
 import { getApiClientFromToken, getTexasApiBaseUrl } from "@/app/utils/api-client";
 import {
@@ -6,19 +5,23 @@ import {
   invalidateToken,
   storeTexasSession,
 } from "@/app/utils/token-cache";
-import { toToken } from "@/app/utils/token-manager";
+import { cookiesToHeader, fromToken, toToken } from "@/app/utils/token-manager";
 import {
-  buildTexasBrowserHeaders,
   buildTexasSignInBody,
   buildTexasSignInUrls,
-  extractSetCookieHeaders,
   getTexasSignInErrorMessage,
   isTexasSignInSuccess,
   logTexasSignInFailure,
   normalizeTexasPassword,
   normalizeTexasUsername,
+  resolveTexasApiBaseUrl,
   type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
+import {
+  parseTexasJsonBody,
+  TexasCookieJar,
+  texasBrowserFetch,
+} from "@/lib/texas/texas-browser-fetch";
 import type { TexasCredentials } from "@/lib/texas/types";
 
 interface TexasApiEnvelope<T = unknown> {
@@ -27,8 +30,8 @@ interface TexasApiEnvelope<T = unknown> {
 }
 
 /**
- * Multi-tenant Texas authentication — always uses caller-supplied credentials.
- * Never reads TEXAS_SYNC_* env vars.
+ * Multi-tenant Texas authentication — caller-supplied credentials only.
+ * Sign-in uses browser-mimicking fetch (not axios) for Cloudflare compatibility.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -39,46 +42,52 @@ export class TexasSessionService {
     if (cached) return cached;
 
     const baseUrl = getTexasApiBaseUrl();
-    const body = buildTexasSignInBody(username, password);
-    const headers = buildTexasBrowserHeaders();
+    const bodyJson = JSON.stringify(buildTexasSignInBody(username, password));
     const urls = buildTexasSignInUrls(baseUrl);
+    const jar = new TexasCookieJar();
 
     let lastError = "unknown";
 
     for (const url of urls) {
       try {
-        const axiosRes = await axios.post<TexasSignInEnvelope>(url, body, {
-          headers,
-          validateStatus: () => true,
-          maxRedirects: 5,
-          timeout: 30_000,
+        const result = await texasBrowserFetch({
+          url,
+          method: "POST",
+          body: bodyJson,
+          jar,
         });
 
-        const setCookie = extractSetCookieHeaders(
-          axiosRes.headers as Record<string, unknown>
-        );
-        const data = axiosRes.data;
+        const data = parseTexasJsonBody<TexasSignInEnvelope>(result.bodyText);
+        const setCookies =
+          result.setCookies.length > 0
+            ? result.setCookies
+            : jar.toSetCookieLines();
 
         if (
-          axiosRes.status >= 200 &&
-          axiosRes.status < 300 &&
+          result.status >= 200 &&
+          result.status < 300 &&
           isTexasSignInSuccess(data) &&
-          setCookie.length > 0
+          setCookies.length > 0
         ) {
-          return storeTexasSession(username, password, setCookie);
+          return storeTexasSession(username, password, setCookies);
         }
 
-        const texasMessage = getTexasSignInErrorMessage(data);
-        lastError = `HTTP ${axiosRes.status}, texas=${texasMessage}, cookies=${setCookie.length}`;
+        const texasMessage = getTexasSignInErrorMessage(data, result.status);
+        lastError = `HTTP ${result.status}, texas=${texasMessage}, cookies=${setCookies.length}`;
 
         logTexasSignInFailure({
           username,
           url,
-          httpStatus: axiosRes.status,
-          cookieCount: setCookie.length,
+          httpStatus: result.status,
+          cookieCount: setCookies.length,
           texasMessage,
-          bodyPreview: JSON.stringify(data ?? ""),
+          bodyPreview: result.bodyText || JSON.stringify(data ?? ""),
         });
+
+        if (result.status === 403) {
+          lastError = `HTTP 403 Forbidden (Cloudflare/WAF)`;
+          break;
+        }
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
         console.error("[TexasSessionService] signIn transport error", {
@@ -115,37 +124,44 @@ export class TexasSessionService {
     return this.signIn(credentials);
   }
 
-  /**
-   * Onboarding validation: POST /User/signIn (type === 0) + POST /Agent/getAgentAllWallets.
-   */
   async verifyAgentAccount(credentials: TexasCredentials): Promise<void> {
     const username = normalizeTexasUsername(credentials.username);
     const password = normalizeTexasPassword(credentials.password);
 
-    const client = await this.getClient({ username, password });
+    const token = await this.signIn({ username, password });
+    const jar = new TexasCookieJar();
+    const cookieHeader = cookiesToHeader(fromToken(token));
 
-    const walletsRes = await client.post<TexasApiEnvelope<unknown[]>>(
-      "/Agent/getAgentAllWallets",
-      {},
-      { validateStatus: () => true }
-    );
+    const base = resolveTexasApiBaseUrl().replace(/\/$/, "");
+    const walletsUrl = `${base}/Agent/getAgentAllWallets`;
 
-    if (walletsRes.status === 401 || walletsRes.status === 403) {
+    const result = await texasBrowserFetch({
+      url: walletsUrl,
+      method: "POST",
+      body: "{}",
+      jar,
+      cookieHeader,
+      skipWarmUp: true,
+    });
+
+    const data = parseTexasJsonBody<TexasApiEnvelope<unknown[]>>(result.bodyText);
+
+    if (result.status === 401 || result.status === 403) {
       console.error("[TexasSessionService] wallets rejected", {
         username,
-        httpStatus: walletsRes.status,
-        bodyPreview: JSON.stringify(walletsRes.data ?? "").slice(0, 300),
+        httpStatus: result.status,
+        bodyPreview: result.bodyText.slice(0, 300),
       });
       throw new Error(
-        `Texas sign-in failed: wallet API returned HTTP ${walletsRes.status} (session not accepted)`
+        `Texas sign-in failed: wallet API returned HTTP ${result.status} (session not accepted)`
       );
     }
 
-    if (!walletsRes.data?.status) {
+    if (!data?.status) {
       console.error("[TexasSessionService] wallets invalid", {
         username,
-        httpStatus: walletsRes.status,
-        bodyPreview: JSON.stringify(walletsRes.data ?? "").slice(0, 300),
+        httpStatus: result.status,
+        bodyPreview: result.bodyText.slice(0, 300),
       });
       throw new Error(
         "Texas sign-in failed: agent wallet access denied (not an active agent account)"

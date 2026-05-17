@@ -1,11 +1,24 @@
 /**
  * Texas agent dashboard API lives under `/global/api` on agents.texas4win.com
- * (see affiliates-front-end bundle: `const apiRoot = "/global/api/"`).
  */
-export const TEXAS_AGENTS_API_DEFAULT =
-  "https://agents.texas4win.com/global/api";
+export const TEXAS_AGENTS_ORIGIN = "https://agents.texas4win.com";
+
+export const TEXAS_AGENTS_API_DEFAULT = `${TEXAS_AGENTS_ORIGIN}/global/api`;
 
 export const TEXAS_SIGN_IN_PATH = "/User/signIn";
+
+/** Current Chrome on Windows — update periodically for WAF reputation. */
+export const CHROME_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Random 1–3s delay before retry after 403/429. */
+export function texasRetryDelayMs(): number {
+  return 1000 + Math.floor(Math.random() * 2000);
+}
 
 export function normalizeTexasApiBaseUrl(raw?: string): string | undefined {
   const input = raw?.trim();
@@ -38,26 +51,75 @@ export function resolveTexasApiBaseUrl(): string {
   return fromEnv ?? TEXAS_AGENTS_API_DEFAULT;
 }
 
-/** Browser-like headers for Texas agent portal (Cloudflare/WAF-friendly). */
-export function buildTexasBrowserHeaders(): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
+/**
+ * Chrome header order (Cloudflare often checks ordering).
+ * Passed as [name, value][] to preserve insertion order in undici/fetch.
+ */
+export function buildOrderedTexasHeaders(options: {
+  host: string;
+  contentLength: number;
+  cookie?: string;
+  method?: "GET" | "POST";
+}): Headers {
+  const pairs: [string, string][] = [
+    ["Host", options.host],
+    ["Connection", "keep-alive"],
+  ];
+
+  if (options.method === "POST") {
+    pairs.push(["Content-Length", String(options.contentLength)]);
+  }
+
+  pairs.push(
+    ["sec-ch-ua", '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'],
+    ["sec-ch-ua-mobile", "?0"],
+    ["sec-ch-ua-platform", '"Windows"'],
+    ["Accept", "application/json, text/plain, */*"],
+    ["User-Agent", CHROME_USER_AGENT]
+  );
+
+  if (options.method === "POST") {
+    pairs.push(["Content-Type", "application/json"]);
+  }
+
+  pairs.push(
+    ["Origin", TEXAS_AGENTS_ORIGIN],
+    ["Referer", `${TEXAS_AGENTS_ORIGIN}/`],
+    ["Accept-Encoding", "gzip, deflate, br"],
+    ["Accept-Language", "en-US,en;q=0.9"],
+    ["Sec-Fetch-Site", "same-origin"],
+    ["Sec-Fetch-Mode", options.method === "GET" ? "navigate" : "cors"],
+    ["Sec-Fetch-Dest", options.method === "GET" ? "document" : "empty"]
+  );
+
+  if (options.cookie) {
+    pairs.push(["Cookie", options.cookie]);
+  }
+
+  return new Headers(pairs);
+}
+
+/** Plain object for axios (order not guaranteed — prefer texasBrowserFetch). */
+export function buildTexasBrowserHeaders(cookie?: string): Record<string, string> {
+  const h: Record<string, string> = {
     Accept: "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    Origin: "https://agents.texas4win.com",
-    Referer: "https://agents.texas4win.com/",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Content-Type": "application/json",
+    "User-Agent": CHROME_USER_AGENT,
+    Origin: TEXAS_AGENTS_ORIGIN,
+    Referer: `${TEXAS_AGENTS_ORIGIN}/`,
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
   };
+  if (cookie) h.Cookie = cookie;
+  return h;
 }
 
-/** @deprecated use buildTexasBrowserHeaders */
-export const TEXAS_API_DEFAULT_HEADERS = buildTexasBrowserHeaders();
-
-/** Texas sign-in body — confirmed from portal proxy: { username, password }. */
 export function buildTexasSignInBody(username: string, password: string) {
   return { username, password };
 }
@@ -75,7 +137,6 @@ export interface TexasSignInEnvelope {
   notification?: Array<{ content?: string; title?: string; status?: string }>;
 }
 
-/** Success when result is an object with type === 0 (not boolean `false`). */
 export function isTexasSignInSuccess(data: unknown): boolean {
   if (!data || typeof data !== "object") return false;
   const result = (data as TexasSignInEnvelope).result;
@@ -87,8 +148,20 @@ export function isTexasSignInSuccess(data: unknown): boolean {
   );
 }
 
-export function getTexasSignInErrorMessage(data: unknown): string {
-  if (!data || typeof data !== "object") return "empty or non-JSON response";
+export function getTexasSignInErrorMessage(
+  data: unknown,
+  httpStatus?: number
+): string {
+  if (httpStatus === 403) {
+    return "Blocked by Texas/Cloudflare (HTTP 403)";
+  }
+  if (httpStatus === 401) {
+    return "Unauthorized (HTTP 401)";
+  }
+  if (!data || typeof data !== "object") {
+    if (httpStatus) return `HTTP ${httpStatus} non-JSON response`;
+    return "empty or non-JSON response";
+  }
   const envelope = data as TexasSignInEnvelope;
   if (envelope.result === false) {
     return (
@@ -105,7 +178,6 @@ export function getTexasSignInErrorMessage(data: unknown): string {
   return "unexpected sign-in response shape";
 }
 
-/** Read Set-Cookie from fetch Headers or axios-style header objects. */
 export function extractSetCookieHeaders(
   headers: Headers | Record<string, unknown>
 ): string[] {
@@ -142,7 +214,6 @@ function splitCombinedSetCookie(value: string): string[] {
   return parts.filter(Boolean);
 }
 
-/** Trim login only — passwords may contain intentional leading/trailing spaces. */
 export function normalizeTexasUsername(value: string): string {
   return value.trim();
 }
@@ -158,6 +229,7 @@ export function logTexasSignInFailure(details: {
   cookieCount: number;
   texasMessage: string;
   bodyPreview: string;
+  attempt?: number;
 }): void {
   console.error("[TexasSessionService] signIn failed", {
     username: details.username,
@@ -165,6 +237,7 @@ export function logTexasSignInFailure(details: {
     httpStatus: details.httpStatus,
     cookieCount: details.cookieCount,
     texasMessage: details.texasMessage,
+    attempt: details.attempt,
     bodyPreview: details.bodyPreview.slice(0, 500),
   });
 }
