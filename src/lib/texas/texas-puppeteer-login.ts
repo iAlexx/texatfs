@@ -93,19 +93,38 @@ type PuppeteerExtra = {
 
 let puppeteerExtraPromise: Promise<PuppeteerExtra> | null = null;
 
-/** Lazy-load Puppeteer so Next.js build does not evaluate native bindings. */
+/** Lazy-load Puppeteer + stealth (CJS require resolves evasions/* submodules). */
 async function loadPuppeteer(): Promise<PuppeteerExtra> {
   if (!puppeteerExtraPromise) {
     puppeteerExtraPromise = (async () => {
-      const [{ addExtra }, StealthPlugin, puppeteerCore] = await Promise.all([
-        import("puppeteer-extra"),
-        import("puppeteer-extra-plugin-stealth"),
-        import("puppeteer-core"),
-      ]);
-      const instance = addExtra(
-        puppeteerCore.default as unknown as Parameters<typeof addExtra>[0]
+      const { createRequire } = await import("node:module");
+      const { pathToFileURL } = await import("node:url");
+      const require = createRequire(
+        pathToFileURL(`${process.cwd()}/package.json`).href
       );
-      instance.use(StealthPlugin.default());
+
+      const { addExtra } = require("puppeteer-extra") as typeof import("puppeteer-extra");
+      const puppeteerCore = require("puppeteer-core") as typeof import("puppeteer-core");
+      const stealthModule = require("puppeteer-extra-plugin-stealth") as
+        | (() => import("puppeteer-extra-plugin").PuppeteerExtraPlugin)
+        | { default: () => import("puppeteer-extra-plugin").PuppeteerExtraPlugin };
+
+      const StealthPlugin =
+        typeof stealthModule === "function"
+          ? stealthModule
+          : stealthModule.default;
+
+      if (typeof StealthPlugin !== "function") {
+        throw new Error(
+          "puppeteer-extra-plugin-stealth did not export a factory function"
+        );
+      }
+
+      const instance = addExtra(
+        puppeteerCore as unknown as Parameters<typeof addExtra>[0]
+      );
+      instance.use(StealthPlugin());
+      console.info("[texas-browser] stealth plugin loaded");
       return instance as PuppeteerExtra;
     })();
   }

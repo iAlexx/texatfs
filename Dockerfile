@@ -42,6 +42,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+FROM base AS prod-deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -65,6 +70,13 @@ RUN chmod +x ./railway-start.sh
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Merge full production puppeteer tree (standalone trace misses stealth/evasions/*)
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-core ./node_modules/puppeteer-core
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra ./node_modules/puppeteer-extra
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin ./node_modules/puppeteer-extra-plugin
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin-stealth ./node_modules/puppeteer-extra-plugin-stealth
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin-user-preferences ./node_modules/puppeteer-extra-plugin-user-preferences
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin-user-data-dir ./node_modules/puppeteer-extra-plugin-user-data-dir
 RUN chown nextjs:nodejs ./railway-start.sh
 
 USER nextjs
