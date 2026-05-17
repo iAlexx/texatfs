@@ -91,44 +91,36 @@ type PuppeteerExtra = {
   }) => Promise<Browser>;
 };
 
-let puppeteerExtraPromise: Promise<PuppeteerExtra> | null = null;
+let cachedPuppeteer: PuppeteerExtra | null = null;
 
-/** Lazy-load Puppeteer + stealth (CJS require resolves evasions/* submodules). */
-async function loadPuppeteer(): Promise<PuppeteerExtra> {
-  if (!puppeteerExtraPromise) {
-    puppeteerExtraPromise = (async () => {
-      const { createRequire } = await import("node:module");
-      const { pathToFileURL } = await import("node:url");
-      const require = createRequire(
-        pathToFileURL(`${process.cwd()}/package.json`).href
-      );
+type StealthPluginFactory = () => { name: string };
 
-      const { addExtra } = require("puppeteer-extra") as typeof import("puppeteer-extra");
-      const puppeteerCore = require("puppeteer-core") as typeof import("puppeteer-core");
-      const stealthModule = require("puppeteer-extra-plugin-stealth") as
-        | (() => import("puppeteer-extra-plugin").PuppeteerExtraPlugin)
-        | { default: () => import("puppeteer-extra-plugin").PuppeteerExtraPlugin };
+/**
+ * Load puppeteer-extra + stealth via CJS require (standalone-safe).
+ * executablePath is set at launch time (Railway: /usr/bin/chromium).
+ */
+function loadPuppeteer(): PuppeteerExtra {
+  if (cachedPuppeteer) return cachedPuppeteer;
 
-      const StealthPlugin =
-        typeof stealthModule === "function"
-          ? stealthModule
-          : stealthModule.default;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const puppeteer = require("puppeteer-extra") as PuppeteerExtra & {
+    use: (plugin: unknown) => void;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const StealthPlugin = require(
+    "puppeteer-extra-plugin-stealth"
+  ) as StealthPluginFactory;
 
-      if (typeof StealthPlugin !== "function") {
-        throw new Error(
-          "puppeteer-extra-plugin-stealth did not export a factory function"
-        );
-      }
-
-      const instance = addExtra(
-        puppeteerCore as unknown as Parameters<typeof addExtra>[0]
-      );
-      instance.use(StealthPlugin());
-      console.info("[texas-browser] stealth plugin loaded");
-      return instance as PuppeteerExtra;
-    })();
+  if (typeof StealthPlugin !== "function") {
+    throw new Error(
+      "[texas-browser] puppeteer-extra-plugin-stealth is not a function"
+    );
   }
-  return puppeteerExtraPromise;
+
+  puppeteer.use(StealthPlugin());
+  cachedPuppeteer = puppeteer;
+  console.info("[texas-browser] stealth plugin loaded");
+  return cachedPuppeteer;
 }
 
 /** Convert Puppeteer cookies into Set-Cookie-style lines for token-manager. */
@@ -261,7 +253,7 @@ function buildBrowserlessEndpoint(): string | undefined {
 }
 
 async function launchBrowser(): Promise<Browser> {
-  const puppeteer = await loadPuppeteer();
+  const puppeteer = loadPuppeteer();
   const browserless = buildBrowserlessEndpoint();
 
   if (browserless) {
