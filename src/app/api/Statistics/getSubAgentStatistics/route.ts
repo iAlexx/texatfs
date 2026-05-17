@@ -1,5 +1,4 @@
 import type { TexasFilterMap } from "@/lib/texas/types";
-import { getServerApiClient } from "@/app/utils/api-client";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -14,16 +13,18 @@ type RouteBody = {
 
 /**
  * Proxy route — same contract as the Texas dashboard bundle.
- * Set `paginate: true` to use TexasSyncService merged pagination.
+ * Set `paginate: true` to merge all pages server-side.
  */
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as RouteBody;
+  const { getServerApiClient } = await import("@/app/utils/api-client");
   const client = getServerApiClient(request);
-  const { TexasSyncService } = await import("@/lib/services/TexasSyncService");
-  const sync = new TexasSyncService();
 
   if (body.paginate) {
-    const result = await sync.fetchAllSubAgentStatistics(client, {
+    const { fetchAllSubAgentStatistics } = await import(
+      "@/lib/texas/fetch-sub-agent-statistics"
+    );
+    const result = await fetchAllSubAgentStatistics(client, {
       pageSize: body.limit,
       extraFilter: body.filter,
       paginate: true,

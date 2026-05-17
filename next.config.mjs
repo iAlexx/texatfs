@@ -1,4 +1,14 @@
 /** @type {import('next').NextConfig} */
+const serverExternals = [
+  "puppeteer-core",
+  "puppeteer-extra",
+  "puppeteer-extra-plugin-stealth",
+  "puppeteer",
+  "undici",
+  "@puppeteer/browsers",
+  "chromium-bidi",
+];
+
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
@@ -9,11 +19,13 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   experimental: {
-    serverComponentsExternalPackages: [
-      "puppeteer-core",
-      "puppeteer-extra",
-      "puppeteer-extra-plugin-stealth",
-    ],
+    serverComponentsExternalPackages: serverExternals,
+  },
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = [...(config.externals ?? []), ...serverExternals];
+    }
+    return config;
   },
 };
 

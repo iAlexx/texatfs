@@ -1,9 +1,10 @@
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { ProxyAgent, type Dispatcher } from "undici";
+import type { Dispatcher } from "undici";
 
 let cachedProxyUrl: string | undefined;
 let cachedHttpsAgent: HttpsProxyAgent<string> | undefined;
 let cachedFetchDispatcher: Dispatcher | undefined;
+let fetchDispatcherPromise: Promise<Dispatcher | undefined> | undefined;
 
 /**
  * Premium residential proxy for Texas API (bypasses Cloudflare on Vercel/datacenter IPs).
@@ -16,11 +17,31 @@ export function resolveTexasProxyUrl(): string | undefined {
   return `http://${raw}`;
 }
 
-function ensureProxyAgents(url: string): void {
-  if (cachedProxyUrl === url && cachedHttpsAgent && cachedFetchDispatcher) return;
+function ensureHttpsAgent(url: string): HttpsProxyAgent<string> {
+  if (cachedProxyUrl === url && cachedHttpsAgent) return cachedHttpsAgent;
   cachedProxyUrl = url;
   cachedHttpsAgent = new HttpsProxyAgent(url);
-  cachedFetchDispatcher = new ProxyAgent(url);
+  cachedFetchDispatcher = undefined;
+  fetchDispatcherPromise = undefined;
+  return cachedHttpsAgent;
+}
+
+/** Lazy-load undici ProxyAgent (avoids bundling undici into Next.js route chunks). */
+async function ensureFetchDispatcher(url: string): Promise<Dispatcher> {
+  if (cachedProxyUrl === url && cachedFetchDispatcher) {
+    return cachedFetchDispatcher;
+  }
+  if (!fetchDispatcherPromise || cachedProxyUrl !== url) {
+    fetchDispatcherPromise = (async () => {
+      const { ProxyAgent } = await import("undici");
+      cachedProxyUrl = url;
+      cachedFetchDispatcher = new ProxyAgent(url);
+      return cachedFetchDispatcher;
+    })();
+  }
+  const dispatcher = await fetchDispatcherPromise;
+  if (!dispatcher) throw new Error("Failed to initialize proxy dispatcher");
+  return dispatcher;
 }
 
 export function getTexasProxyLogLabel(): string | null {
@@ -89,16 +110,15 @@ export function getTexasHttpsProxyAgent(): HttpsProxyAgent<string> | undefined {
     cachedProxyUrl = undefined;
     cachedHttpsAgent = undefined;
     cachedFetchDispatcher = undefined;
+    fetchDispatcherPromise = undefined;
     return undefined;
   }
-  ensureProxyAgents(url);
-  return cachedHttpsAgent;
+  return ensureHttpsAgent(url);
 }
 
-/** For undici fetch — ProxyAgent (same TEXAS_HTTP_PROXY URL). */
-export function getTexasFetchDispatcher(): Dispatcher | undefined {
+/** For undici fetch — ProxyAgent (lazy import). */
+export async function getTexasFetchDispatcher(): Promise<Dispatcher | undefined> {
   const url = resolveTexasProxyUrl();
   if (!url) return undefined;
-  ensureProxyAgents(url);
-  return cachedFetchDispatcher;
+  return ensureFetchDispatcher(url);
 }

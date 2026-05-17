@@ -18,12 +18,6 @@ import {
   type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
 import {
-  parseTexasJsonBody,
-  TexasCookieJar,
-  texasBrowserFetch,
-  texasSignInWithWarmUp,
-} from "@/lib/texas/texas-browser-fetch";
-import {
   isTexasBrowserLoginEnabled,
   isTexasBrowserLoginFallbackEnabled,
 } from "@/lib/texas/texas-browser-config";
@@ -100,6 +94,9 @@ export class TexasSessionService {
     const urls = buildTexasSignInUrls(baseUrl);
 
     try {
+      const { texasSignInWithWarmUp, parseTexasJsonBody } = await import(
+        "@/lib/texas/texas-browser-fetch"
+      );
       const { status, bodyText, jar } = await texasSignInWithWarmUp({
         signInUrls: urls,
         body: bodyJson,
@@ -175,6 +172,8 @@ export class TexasSessionService {
     const password = normalizeTexasPassword(credentials.password);
 
     const token = await this.signIn({ username, password });
+    const { TexasCookieJar, texasBrowserFetch, parseTexasJsonBody } =
+      await import("@/lib/texas/texas-browser-fetch");
     const jar = new TexasCookieJar();
     const cookieHeader = cookiesToHeader(fromToken(token));
 

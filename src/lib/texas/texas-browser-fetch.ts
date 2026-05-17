@@ -93,7 +93,7 @@ async function texasRawFetch(
 ): Promise<TexasBrowserFetchResult> {
   await throttleTexasRequests();
 
-  const dispatcher = getTexasFetchDispatcher();
+  const dispatcher = await getTexasFetchDispatcher();
   const fetchImpl = dispatcher ? undiciFetch : globalThis.fetch.bind(globalThis);
 
   const response = await fetchImpl(url, {
