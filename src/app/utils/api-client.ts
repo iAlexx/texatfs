@@ -7,8 +7,8 @@ import {
 } from "@/lib/texas/texas-api-config";
 import {
   getTexasHttpsProxyAgent,
-  getTexasProxyLogLabel,
   isTexasProxyEnabled,
+  logProxyCheck,
 } from "@/lib/texas/texas-proxy";
 
 export function getTexasApiBaseUrl(): string {
@@ -47,11 +47,12 @@ function createTexasAxios(extraHeaders?: Record<string, string>): AxiosInstance 
   instance.defaults.headers.get = {};
 
   instance.interceptors.request.use((config) => {
-    if (isTexasProxyEnabled() && config.url?.includes("agents.texas4win")) {
-      console.info("[api-client] using proxy", {
-        proxy: getTexasProxyLogLabel(),
-        path: config.url,
-      });
+    if (isTexasProxyEnabled()) {
+      const path = config.url ?? "";
+      const target = path.startsWith("http")
+        ? path
+        : `${getTexasApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+      logProxyCheck(target);
     }
     const cookie = extraHeaders?.Cookie;
     const merged = stripAxiosFingerprint({

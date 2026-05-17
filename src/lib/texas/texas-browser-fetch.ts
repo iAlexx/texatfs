@@ -12,7 +12,7 @@ import {
 } from "@/lib/texas/texas-api-config";
 import {
   getTexasFetchDispatcher,
-  getTexasProxyLogLabel,
+  logProxyCheck,
 } from "@/lib/texas/texas-proxy";
 
 const MAX_ATTEMPTS = 3;
@@ -145,10 +145,7 @@ export async function texasBrowserFetch(
 
     const dispatcher = getTexasFetchDispatcher();
     if (attempt === 1 && dispatcher) {
-      console.info("[texas-browser-fetch] using proxy", {
-        proxy: getTexasProxyLogLabel(),
-        url: options.url,
-      });
+      logProxyCheck(options.url);
     }
 
     const fetchImpl = dispatcher ? undiciFetch : globalThis.fetch.bind(globalThis);
