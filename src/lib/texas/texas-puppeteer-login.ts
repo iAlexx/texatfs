@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import type {
   Browser,
   Cookie,
@@ -95,31 +97,44 @@ let cachedPuppeteer: PuppeteerExtra | null = null;
 
 type StealthPluginFactory = () => { name: string };
 
+/** Runtime require from project root — never webpack-bundled (see serverExternalPackages). */
+const runtimeRequire = createRequire(
+  path.join(process.cwd(), "package.json")
+);
+
 /**
- * Load puppeteer-extra + stealth via CJS require (standalone-safe).
- * executablePath is set at launch time (Railway: /usr/bin/chromium).
+ * Load puppeteer-extra + stealth from real node_modules (not the Next.js bundle).
+ * executablePath is set at launch (Railway: /usr/bin/chromium).
  */
 function loadPuppeteer(): PuppeteerExtra {
   if (cachedPuppeteer) return cachedPuppeteer;
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const puppeteer = require("puppeteer-extra") as PuppeteerExtra & {
-    use: (plugin: unknown) => void;
+  const puppeteerCore = runtimeRequire("puppeteer-core") as typeof import("puppeteer-core");
+  const puppeteerExtraPkg = runtimeRequire("puppeteer-extra") as {
+    addExtra: (core: typeof puppeteerCore) => PuppeteerExtra & {
+      use: (plugin: unknown) => void;
+    };
   };
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const StealthPlugin = require(
+  const StealthPlugin = runtimeRequire(
     "puppeteer-extra-plugin-stealth"
   ) as StealthPluginFactory;
 
+  const addExtra = puppeteerExtraPkg.addExtra;
+  if (typeof addExtra !== "function") {
+    throw new Error(
+      "[texas-browser] puppeteer-extra.addExtra is not a function (check serverExternalPackages)"
+    );
+  }
   if (typeof StealthPlugin !== "function") {
     throw new Error(
       "[texas-browser] puppeteer-extra-plugin-stealth is not a function"
     );
   }
 
+  const puppeteer = addExtra(puppeteerCore);
   puppeteer.use(StealthPlugin());
   cachedPuppeteer = puppeteer;
-  console.info("[texas-browser] stealth plugin loaded");
+  console.info("[texas-browser] stealth plugin loaded via runtime require");
   return cachedPuppeteer;
 }
 

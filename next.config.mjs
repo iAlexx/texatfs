@@ -1,13 +1,14 @@
 /** @type {import('next').NextConfig} */
-const serverExternals = [
+
+/** Never bundle these — load from node_modules at runtime (avoids minified e.use errors). */
+const puppeteerExternals = [
+  "puppeteer-extra",
+  "puppeteer-extra-plugin-stealth",
   "puppeteer-core",
+  "puppeteer",
   "puppeteer-extra-plugin",
   "puppeteer-extra-plugin-user-preferences",
   "puppeteer-extra-plugin-user-data-dir",
-  "puppeteer",
-  "undici",
-  "@puppeteer/browsers",
-  "chromium-bidi",
 ];
 
 const puppeteerTraceIncludes = [
@@ -29,18 +30,15 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   experimental: {
-    serverComponentsExternalPackages: serverExternals,
+    // Next.js 14 — keeps puppeteer-* out of the webpack server bundle
+    serverComponentsExternalPackages: puppeteerExternals,
     outputFileTracingIncludes: {
       "/api/*": puppeteerTraceIncludes,
       "/api/**/*": puppeteerTraceIncludes,
     },
   },
-  webpack: (config, { isServer }) => {
-    if (isServer) {
-      config.externals = [...(config.externals ?? []), ...serverExternals];
-    }
-    return config;
-  },
+  // Next.js 15+ (harmless if ignored on 14.x)
+  serverExternalPackages: puppeteerExternals,
 };
 
 export default nextConfig;
