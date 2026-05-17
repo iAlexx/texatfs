@@ -29,8 +29,24 @@ export {
 } from "@/lib/texas/texas-browser-config";
 
 const CF_CLEAR_TIMEOUT_MS = 120_000;
-const NAVIGATION_TIMEOUT_MS = 120_000;
+/** Navigation / goto timeout — proxy + Cloudflare can be slow on Railway. */
+const NAVIGATION_TIMEOUT_MS = 60_000;
 const LOGIN_TIMEOUT_MS = 90_000;
+const BROWSER_PROTOCOL_TIMEOUT_MS = 120_000;
+
+const RAILWAY_CHROMIUM_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--single-process",
+  "--no-zygote",
+  "--disable-software-rasterizer",
+  "--disable-extensions",
+  "--no-first-run",
+  "--disable-blink-features=AutomationControlled",
+  "--window-size=1366,768",
+] as const;
 
 const USERNAME_SELECTORS = [
   'input[name="username"]',
@@ -133,43 +149,78 @@ async function resolveBundledChromiumPath(): Promise<string | undefined> {
   }
 }
 
+function isTargetClosedError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.includes("Target closed") ||
+    msg.includes("Protocol error") ||
+    msg.includes("Session closed") ||
+    msg.includes("Browser closed")
+  );
+}
+
 async function resolveExecutablePath(): Promise<string> {
-  const fromEnv =
-    process.env.PUPPETEER_EXECUTABLE_PATH?.trim() ||
-    process.env.CHROME_PATH?.trim();
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
+  const chromePath = process.env.CHROME_PATH?.trim();
+
+  if (envPath) {
+    if (existsSync(envPath)) {
+      console.info("[texas-browser] Using PUPPETEER_EXECUTABLE_PATH", {
+        path: envPath,
+      });
+      return envPath;
+    }
+    console.warn("[texas-browser] PUPPETEER_EXECUTABLE_PATH missing on disk", {
+      path: envPath,
+    });
+  }
+
+  if (chromePath && existsSync(chromePath)) {
+    console.info("[texas-browser] Using CHROME_PATH", { path: chromePath });
+    return chromePath;
+  }
 
   for (const candidate of linuxChromiumCandidates()) {
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) {
+      console.info("[texas-browser] Using system Chromium", { path: candidate });
+      return candidate;
+    }
   }
 
   const bundled = await resolveBundledChromiumPath();
-  if (bundled) return bundled;
+  if (bundled) {
+    console.info("[texas-browser] Using bundled Chromium", { path: bundled });
+    return bundled;
+  }
 
   throw new Error(
-    "Chromium not found. On Railway, set PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium in Docker."
+    "Chromium not found. Set PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium (Railway Docker)."
   );
 }
 
 async function buildLaunchOptions(): Promise<LaunchOptions> {
   const proxyArgs = getTexasProxyLaunchArgs();
   const headed = process.env.TEXAS_BROWSER_HEADED === "true";
+  const executablePath = await resolveExecutablePath();
 
   return {
-    executablePath: await resolveExecutablePath(),
+    executablePath,
     headless: headed ? false : true,
     defaultViewport: { width: 1366, height: 768 },
     ignoreDefaultArgs: ["--enable-automation"],
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-blink-features=AutomationControlled",
-      "--window-size=1366,768",
-      ...proxyArgs,
-    ],
+    protocolTimeout: BROWSER_PROTOCOL_TIMEOUT_MS,
+    timeout: BROWSER_PROTOCOL_TIMEOUT_MS,
+    dumpio: process.env.TEXAS_BROWSER_DUMPIO === "true",
+    args: [...RAILWAY_CHROMIUM_ARGS, ...proxyArgs],
   };
+}
+
+function attachBrowserDiagnostics(browser: Browser): void {
+  browser.on("disconnected", () => {
+    console.error(
+      "[texas-browser] Chromium process disconnected (OOM/SIGKILL or crash in container)"
+    );
+  });
 }
 
 function buildBrowserlessEndpoint(): string | undefined {
@@ -214,7 +265,71 @@ async function launchBrowser(): Promise<Browser> {
     headless: launchOptions.headless,
   });
 
-  return puppeteer.launch(launchOptions);
+  const browser = await puppeteer.launch(launchOptions);
+  attachBrowserDiagnostics(browser);
+  return browser;
+}
+
+async function safeGoto(
+  page: Page,
+  url: string,
+  label: string
+): Promise<void> {
+  try {
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: NAVIGATION_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (isTargetClosedError(error)) {
+      throw new Error(
+        `[texas-browser] Chromium crashed during ${label} (Target closed). ` +
+          "Railway may be OOM — ensure --disable-dev-shm-usage and --single-process are set."
+      );
+    }
+    throw new Error(
+      `[texas-browser] Navigation failed during ${label}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+async function safeReload(page: Page, label: string): Promise<void> {
+  try {
+    await page.reload({
+      waitUntil: "domcontentloaded",
+      timeout: NAVIGATION_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (isTargetClosedError(error)) {
+      throw new Error(
+        `[texas-browser] Chromium crashed during ${label} (Target closed).`
+      );
+    }
+    throw error;
+  }
+}
+
+async function openTexasPage(browser: Browser): Promise<Page> {
+  try {
+    const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+    page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
+    return page;
+  } catch (error) {
+    if (isTargetClosedError(error)) {
+      throw new Error(
+        "[texas-browser] Chromium crashed before newPage() (Target closed). " +
+          "Check PUPPETEER_EXECUTABLE_PATH and Railway memory limits."
+      );
+    }
+    throw new Error(
+      `[texas-browser] browser.newPage() failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }
 
 async function applyProxyAuth(page: Page): Promise<void> {
@@ -266,11 +381,10 @@ async function tryDismissCloudflareWidget(page: Page): Promise<void> {
 }
 
 async function waitForCloudflareClear(page: Page): Promise<void> {
-  console.info("[texas-browser] Phase 1: navigate to Texas agents portal");
-  await page.goto(`${TEXAS_AGENTS_ORIGIN}/`, {
-    waitUntil: "networkidle2",
-    timeout: NAVIGATION_TIMEOUT_MS,
+  console.info("[texas-browser] Phase 1: navigate to Texas agents portal", {
+    timeoutMs: NAVIGATION_TIMEOUT_MS,
   });
+  await safeGoto(page, `${TEXAS_AGENTS_ORIGIN}/`, "portal landing");
 
   console.info("[texas-browser] Phase 2: waiting for Cloudflare to clear");
   const deadline = Date.now() + CF_CLEAR_TIMEOUT_MS;
@@ -307,7 +421,7 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
     ) {
       reloadAttempted = true;
       console.info("[texas-browser] reloading after stalled Cloudflare challenge");
-      await page.reload({ waitUntil: "networkidle2", timeout: NAVIGATION_TIMEOUT_MS });
+      await safeReload(page, "portal reload after stalled CF");
     }
 
     await sleep(1500);
@@ -354,10 +468,7 @@ async function waitForLoginForm(page: Page): Promise<void> {
   const loginRoutes = ["/login", "/user/login", "/#/login"];
   for (const route of loginRoutes) {
     console.info("[texas-browser] trying login route", { route });
-    await page.goto(`${TEXAS_AGENTS_ORIGIN}${route}`, {
-      waitUntil: "networkidle2",
-      timeout: NAVIGATION_TIMEOUT_MS,
-    });
+    await safeGoto(page, `${TEXAS_AGENTS_ORIGIN}${route}`, `login route ${route}`);
     const usernameField = await findVisibleField(page, USERNAME_SELECTORS);
     const passwordField = await findVisibleField(page, PASSWORD_SELECTORS);
     if (usernameField && passwordField) {
@@ -452,14 +563,24 @@ export async function texasBrowserSignIn(options: {
 
   try {
     browser = await launchBrowser();
-    const page = await browser.newPage();
-    await applyProxyAuth(page);
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    );
-    await page.setExtraHTTPHeaders({
-      "Accept-Language": "en-US,en;q=0.9",
-    });
+
+    let page: Page;
+    try {
+      page = await openTexasPage(browser);
+      await applyProxyAuth(page);
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+      );
+      await page.setExtraHTTPHeaders({
+        "Accept-Language": "en-US,en;q=0.9",
+      });
+    } catch (error) {
+      console.error("[texas-browser] Failed to open page before navigation", {
+        username,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     await waitForCloudflareClear(page);
 
