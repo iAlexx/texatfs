@@ -68,4 +68,15 @@ if (!fs.existsSync(evasionsDir)) {
   process.exit(1);
 }
 
+const scriptsDir = path.join(root, ".next/standalone/scripts");
+fs.mkdirSync(scriptsDir, { recursive: true });
+const runtimeSrc = path.join(root, "scripts", "puppeteer-runtime.cjs");
+const runtimeDest = path.join(scriptsDir, "puppeteer-runtime.cjs");
+if (!fs.existsSync(runtimeSrc)) {
+  console.error("[copy-puppeteer] FATAL: scripts/puppeteer-runtime.cjs missing");
+  process.exit(1);
+}
+fs.cpSync(runtimeSrc, runtimeDest, { force: true });
+console.info("[copy-puppeteer] copied puppeteer-runtime.cjs");
+
 console.info("[copy-puppeteer] stealth evasions OK");

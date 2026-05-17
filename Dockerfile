@@ -66,6 +66,7 @@ RUN addgroup --system --gid 1001 nodejs \
 
 RUN mkdir -p public
 COPY scripts/railway-start.sh ./railway-start.sh
+COPY scripts/puppeteer-runtime.cjs ./scripts/puppeteer-runtime.cjs
 RUN chmod +x ./railway-start.sh
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

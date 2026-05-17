@@ -278,7 +278,10 @@ function splitCombinedSetCookie(value: string): string[] {
 }
 
 export function normalizeTexasUsername(value: string): string {
-  return value.trim();
+  let u = value.trim();
+  const mdLink = /^\[([^\]]+)\]\(mailto:[^)]+\)$/i.exec(u);
+  if (mdLink) u = mdLink[1];
+  return u.trim();
 }
 
 export function normalizeTexasPassword(value: string): string {

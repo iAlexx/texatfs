@@ -86,6 +86,7 @@ export interface TexasBrowserSignInResult {
 }
 
 type PuppeteerExtra = {
+  use: (plugin: unknown) => void;
   launch: (options?: LaunchOptions) => Promise<Browser>;
   connect: (options: {
     browserWSEndpoint: string;
@@ -95,46 +96,55 @@ type PuppeteerExtra = {
 
 let cachedPuppeteer: PuppeteerExtra | null = null;
 
-type StealthPluginFactory = () => { name: string };
-
-/** Runtime require from project root — never webpack-bundled (see serverExternalPackages). */
+/** Runtime require from project root (external packages only). */
 const runtimeRequire = createRequire(
   path.join(process.cwd(), "package.json")
 );
 
+function resolvePuppeteerRuntimePath(): string {
+  const candidates = [
+    path.join(process.cwd(), "scripts", "puppeteer-runtime.cjs"),
+    path.join(process.cwd(), "..", "scripts", "puppeteer-runtime.cjs"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(
+    "[texas-browser] scripts/puppeteer-runtime.cjs not found (required for Railway runtime)"
+  );
+}
+
 /**
- * Load puppeteer-extra + stealth from real node_modules (not the Next.js bundle).
- * executablePath is set at launch (Railway: /usr/bin/chromium).
+ * Load puppeteer via pure CJS loader — webpack must never touch puppeteer-extra/stealth.
  */
 function loadPuppeteer(): PuppeteerExtra {
   if (cachedPuppeteer) return cachedPuppeteer;
 
-  const puppeteerCore = runtimeRequire("puppeteer-core") as typeof import("puppeteer-core");
-  const puppeteerExtraPkg = runtimeRequire("puppeteer-extra") as {
-    addExtra: (core: typeof puppeteerCore) => PuppeteerExtra & {
-      use: (plugin: unknown) => void;
+  const loaderPath = resolvePuppeteerRuntimePath();
+  const { loadPuppeteerWithDiagnostics } = runtimeRequire(loaderPath) as {
+    loadPuppeteerWithDiagnostics: () => {
+      puppeteer: PuppeteerExtra;
+      types: Record<string, string>;
     };
   };
-  const StealthPlugin = runtimeRequire(
-    "puppeteer-extra-plugin-stealth"
-  ) as StealthPluginFactory;
 
-  const addExtra = puppeteerExtraPkg.addExtra;
-  if (typeof addExtra !== "function") {
+  const { puppeteer, types } = loadPuppeteerWithDiagnostics();
+
+  console.info("[texas-browser] puppeteer runtime types", types);
+
+  if (typeof puppeteer.use !== "function") {
     throw new Error(
-      "[texas-browser] puppeteer-extra.addExtra is not a function (check serverExternalPackages)"
+      `[texas-browser] puppeteer.use is not a function (typeof=${typeof puppeteer.use})`
     );
   }
-  if (typeof StealthPlugin !== "function") {
+  if (typeof puppeteer.launch !== "function") {
     throw new Error(
-      "[texas-browser] puppeteer-extra-plugin-stealth is not a function"
+      `[texas-browser] puppeteer.launch is not a function (typeof=${typeof puppeteer.launch})`
     );
   }
 
-  const puppeteer = addExtra(puppeteerCore);
-  puppeteer.use(StealthPlugin());
   cachedPuppeteer = puppeteer;
-  console.info("[texas-browser] stealth plugin loaded via runtime require");
+  console.info("[texas-browser] stealth plugin loaded", { loaderPath });
   return cachedPuppeteer;
 }
 

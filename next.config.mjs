@@ -39,6 +39,17 @@ const nextConfig = {
   },
   // Next.js 15+ (harmless if ignored on 14.x)
   serverExternalPackages: puppeteerExternals,
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externalsPresets = { ...config.externalsPresets, node: true };
+      const prev = config.externals;
+      config.externals = [
+        ...(Array.isArray(prev) ? prev : prev ? [prev] : []),
+        ...puppeteerExternals,
+      ];
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
