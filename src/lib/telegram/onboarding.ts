@@ -7,7 +7,7 @@ import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
 
 type OnboardingStep = "email" | "password" | "license";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const LOGIN_RE = /^[^\s@]{3,128}$/;
 
 function displayName(msg: TelegramMessage): string {
   const from = msg.from;
@@ -59,7 +59,7 @@ export async function handleOnboardingMessage(
 
     await sendTelegramMessage(
       chatId,
-      "Welcome to TEXAS FUNDS calculate.\n\nStep 1/3 — Send your Texas dashboard login email:"
+      "Welcome to TEXAS FUNDS calculate.\n\nStep 1/3 — Send your Texas dashboard username or email (same as agents.texas4win.com login):"
     );
     return;
   }
@@ -82,8 +82,11 @@ export async function handleOnboardingMessage(
   const step = session.step as OnboardingStep;
 
   if (step === "email") {
-    if (!EMAIL_RE.test(text)) {
-      await sendTelegramMessage(chatId, "Please send a valid email address.");
+    if (!LOGIN_RE.test(text)) {
+      await sendTelegramMessage(
+        chatId,
+        "Please send your Texas username or email (at least 3 characters, no spaces)."
+      );
       return;
     }
 
@@ -125,8 +128,19 @@ export async function handleOnboardingMessage(
 
   if (step === "license") {
     const licenseKey = text.toUpperCase();
-    const email = vault.decrypt(session.texas_email_encrypted!);
-    const password = vault.decrypt(session.texas_password_encrypted!);
+    const { data: freshSession, error: sessionError } = await supabase
+      .from("telegram_onboarding_sessions")
+      .select("texas_email_encrypted, texas_password_encrypted")
+      .eq("telegram_id", telegramId)
+      .single();
+
+    if (sessionError || !freshSession?.texas_email_encrypted || !freshSession?.texas_password_encrypted) {
+      await sendTelegramMessage(chatId, "Session expired. Send /start to register again.");
+      return;
+    }
+
+    const login = vault.decrypt(freshSession.texas_email_encrypted).trim();
+    const password = vault.decrypt(freshSession.texas_password_encrypted).trim();
 
     await sendTelegramMessage(chatId, "Validating Texas credentials and license…");
 
@@ -134,7 +148,7 @@ export async function handleOnboardingMessage(
       const result = await registration.completeRegistration({
         telegramId,
         displayName: displayName(message),
-        texasEmail: email,
+        texasEmail: login,
         texasPassword: password,
         licenseKey,
       });

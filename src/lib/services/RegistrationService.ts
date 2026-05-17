@@ -49,8 +49,10 @@ export class RegistrationService {
     return Boolean(data);
   }
 
-  async verifyTexasCredentials(email: string, password: string): Promise<void> {
-    await this.texasSession.getClient({ username: email, password });
+  async verifyTexasCredentials(login: string, password: string): Promise<void> {
+    const username = login.trim();
+    const pass = password.trim();
+    await this.texasSession.verifySession({ username, password: pass });
   }
 
   async completeRegistration(

@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Webhook error";
-    console.error("[telegram/webhook]", msg);
+    console.error("[telegram/webhook]", msg, e);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
