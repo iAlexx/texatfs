@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs";
 import { mapLedgerRow } from "@/lib/supabase/client";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import type { AppUser, DailyLedger, LedgerSessionResponse } from "@/lib/supabase/database.types";

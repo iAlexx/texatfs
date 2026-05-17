@@ -1,6 +1,9 @@
-import { TexasSyncService } from "@/lib/services/TexasSyncService";
 import type { TexasFilterMap } from "@/lib/texas/types";
 import { getServerApiClient } from "@/app/utils/api-client";
+
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs";
 
 type RouteBody = {
   start?: number;
@@ -16,6 +19,7 @@ type RouteBody = {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as RouteBody;
   const client = getServerApiClient(request);
+  const { TexasSyncService } = await import("@/lib/services/TexasSyncService");
   const sync = new TexasSyncService();
 
   if (body.paginate) {

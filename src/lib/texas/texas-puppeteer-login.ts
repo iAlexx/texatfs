@@ -1,8 +1,12 @@
 import { existsSync } from "node:fs";
-import type { Browser, Cookie, ElementHandle, HTTPResponse, Page } from "puppeteer-core";
-import { addExtra } from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import puppeteerCore from "puppeteer-core";
+import type {
+  Browser,
+  Cookie,
+  ElementHandle,
+  HTTPResponse,
+  LaunchOptions,
+  Page,
+} from "puppeteer-core";
 import {
   getTexasSignInErrorMessage,
   isTexasSignInSuccess,
@@ -10,6 +14,7 @@ import {
   TEXAS_AGENTS_ORIGIN,
   type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
+import { isRailwayRuntime } from "@/lib/texas/texas-browser-config";
 import {
   getTexasProxyAuth,
   getTexasProxyLaunchArgs,
@@ -17,11 +22,11 @@ import {
   resolveTexasProxyUrl,
 } from "@/lib/texas/texas-proxy";
 
-// puppeteer-extra@3 types target older Puppeteer; core v25 is compatible at runtime.
-const puppeteer = addExtra(
-  puppeteerCore as unknown as Parameters<typeof addExtra>[0]
-);
-puppeteer.use(StealthPlugin());
+export {
+  isTexasBrowserLoginEnabled,
+  isTexasBrowserLoginFallbackEnabled,
+  isRailwayRuntime,
+} from "@/lib/texas/texas-browser-config";
 
 const CF_CLEAR_TIMEOUT_MS = 120_000;
 const NAVIGATION_TIMEOUT_MS = 120_000;
@@ -62,20 +67,33 @@ export interface TexasBrowserSignInResult {
   httpStatus: number;
 }
 
-export function isTexasBrowserLoginEnabled(): boolean {
-  return process.env.TEXAS_BROWSER_LOGIN !== "false";
-}
+type PuppeteerExtra = {
+  launch: (options?: LaunchOptions) => Promise<Browser>;
+  connect: (options: {
+    browserWSEndpoint: string;
+    defaultViewport?: { width: number; height: number } | null;
+  }) => Promise<Browser>;
+};
 
-export function isTexasBrowserLoginFallbackEnabled(): boolean {
-  return process.env.TEXAS_BROWSER_LOGIN_FALLBACK === "true";
-}
+let puppeteerExtraPromise: Promise<PuppeteerExtra> | null = null;
 
-export function isRailwayRuntime(): boolean {
-  return Boolean(
-    process.env.RAILWAY_ENVIRONMENT ||
-      process.env.RAILWAY_SERVICE_ID ||
-      process.env.RAILWAY_PROJECT_ID
-  );
+/** Lazy-load Puppeteer so Next.js build does not evaluate native bindings. */
+async function loadPuppeteer(): Promise<PuppeteerExtra> {
+  if (!puppeteerExtraPromise) {
+    puppeteerExtraPromise = (async () => {
+      const [{ addExtra }, StealthPlugin, puppeteerCore] = await Promise.all([
+        import("puppeteer-extra"),
+        import("puppeteer-extra-plugin-stealth"),
+        import("puppeteer-core"),
+      ]);
+      const instance = addExtra(
+        puppeteerCore.default as unknown as Parameters<typeof addExtra>[0]
+      );
+      instance.use(StealthPlugin.default());
+      return instance as PuppeteerExtra;
+    })();
+  }
+  return puppeteerExtraPromise;
 }
 
 /** Convert Puppeteer cookies into Set-Cookie-style lines for token-manager. */
@@ -133,7 +151,7 @@ async function resolveExecutablePath(): Promise<string> {
   );
 }
 
-async function buildLaunchOptions(): Promise<import("puppeteer-core").LaunchOptions> {
+async function buildLaunchOptions(): Promise<LaunchOptions> {
   const proxyArgs = getTexasProxyLaunchArgs();
   const headed = process.env.TEXAS_BROWSER_HEADED === "true";
 
@@ -173,7 +191,9 @@ function buildBrowserlessEndpoint(): string | undefined {
 }
 
 async function launchBrowser(): Promise<Browser> {
+  const puppeteer = await loadPuppeteer();
   const browserless = buildBrowserlessEndpoint();
+
   if (browserless) {
     console.info("[texas-browser] Connecting to remote browser", {
       endpoint: browserless.replace(/token=[^&]+/i, "token=***"),

@@ -5,7 +5,10 @@ import {
   isAdmin,
   type TelegramUpdate,
 } from "@/lib/telegram/bot-api";
-import { handleOnboardingMessage } from "@/lib/telegram/onboarding";
+
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
@@ -35,6 +38,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    const { handleOnboardingMessage } = await import("@/lib/telegram/onboarding");
     await handleOnboardingMessage(supabase, message);
     return NextResponse.json({ ok: true });
   } catch (e) {

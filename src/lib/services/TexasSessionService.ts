@@ -26,8 +26,7 @@ import {
 import {
   isTexasBrowserLoginEnabled,
   isTexasBrowserLoginFallbackEnabled,
-  texasBrowserSignIn,
-} from "@/lib/texas/texas-puppeteer-login";
+} from "@/lib/texas/texas-browser-config";
 import type { TexasCredentials } from "@/lib/texas/types";
 
 interface TexasApiEnvelope<T = unknown> {
@@ -51,6 +50,9 @@ export class TexasSessionService {
 
     if (isTexasBrowserLoginEnabled()) {
       try {
+        const { texasBrowserSignIn } = await import(
+          "@/lib/texas/texas-puppeteer-login"
+        );
         const browserResult = await texasBrowserSignIn({ username, password });
         const { setCookies, signInData, httpStatus } = browserResult;
 
