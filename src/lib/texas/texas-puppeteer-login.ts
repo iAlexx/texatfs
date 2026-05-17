@@ -17,7 +17,10 @@ import {
   resolveTexasProxyUrl,
 } from "@/lib/texas/texas-proxy";
 
-const puppeteer = addExtra(puppeteerCore);
+// puppeteer-extra@3 types target older Puppeteer; core v25 is compatible at runtime.
+const puppeteer = addExtra(
+  puppeteerCore as unknown as Parameters<typeof addExtra>[0]
+);
 puppeteer.use(StealthPlugin());
 
 const CF_CLEAR_TIMEOUT_MS = 120_000;
@@ -102,26 +105,32 @@ function linuxChromiumCandidates(): string[] {
   ];
 }
 
+async function resolveBundledChromiumPath(): Promise<string | undefined> {
+  if (process.platform === "linux") return undefined;
+  try {
+    const bundled = await import("puppeteer");
+    return bundled.default.executablePath();
+  } catch {
+    return undefined;
+  }
+}
+
 async function resolveExecutablePath(): Promise<string> {
   const fromEnv =
     process.env.PUPPETEER_EXECUTABLE_PATH?.trim() ||
     process.env.CHROME_PATH?.trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
 
-  if (process.platform === "linux") {
-    for (const candidate of linuxChromiumCandidates()) {
-      if (existsSync(candidate)) return candidate;
-    }
+  for (const candidate of linuxChromiumCandidates()) {
+    if (existsSync(candidate)) return candidate;
   }
 
-  try {
-    const bundled = await import("puppeteer");
-    return bundled.default.executablePath();
-  } catch {
-    throw new Error(
-      "Chromium not found. On Railway, set PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium in Docker."
-    );
-  }
+  const bundled = await resolveBundledChromiumPath();
+  if (bundled) return bundled;
+
+  throw new Error(
+    "Chromium not found. On Railway, set PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium in Docker."
+  );
 }
 
 async function buildLaunchOptions(): Promise<import("puppeteer-core").LaunchOptions> {
@@ -294,7 +303,7 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
 async function findVisibleField(
   page: Page,
   selectors: string[]
-): Promise<ElementHandle<Element> | null> {
+): Promise<ElementHandle | null> {
   for (const selector of selectors) {
     const handles = await page.$$(selector);
     for (const handle of handles) {
@@ -437,14 +446,16 @@ export async function texasBrowserSignIn(options: {
     const signInResult = await signInViaUi(page, username, password);
     const { httpStatus, data: signInData } = signInResult;
 
-    if (!isTexasSignInSuccess(signInData)) {
-      const texasMessage = getTexasSignInErrorMessage(signInData, httpStatus);
+    const envelope: TexasSignInEnvelope | null = signInData;
+
+    if (!isTexasSignInSuccess(envelope)) {
+      const texasMessage = getTexasSignInErrorMessage(envelope, httpStatus);
       console.error("[texas-browser] UI signIn rejected", {
         username,
         httpStatus,
         texasMessage,
       });
-      return { setCookies: [], signInData, httpStatus };
+      return { setCookies: [], signInData: envelope, httpStatus };
     }
 
     const cookies = await page.cookies(TEXAS_AGENTS_ORIGIN);
@@ -456,7 +467,7 @@ export async function texasBrowserSignIn(options: {
       httpStatus,
     });
 
-    return { setCookies, signInData, httpStatus };
+    return { setCookies, signInData: envelope, httpStatus };
   } finally {
     if (browser) {
       try {
