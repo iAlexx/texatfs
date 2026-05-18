@@ -34,11 +34,17 @@ export async function resolveLedgerUser(
       throw new LedgerAuthError("TELEGRAM_BOT_TOKEN not configured", 500);
     }
     if (!validateTelegramInitData(input.initData, botToken)) {
-      throw new LedgerAuthError("Invalid Telegram initData", 401);
+      throw new LedgerAuthError(
+        "بيانات تيليغرام غير صالحة. تأكد من فتح التطبيق من نفس البوت المسجّل.",
+        401
+      );
     }
     telegramId = parseTelegramUserId(input.initData) ?? telegramId;
   } else if (!isDev) {
-    throw new LedgerAuthError("Telegram authentication required", 401);
+    throw new LedgerAuthError(
+      "مطلوب تسجيل الدخول عبر تيليغرام. افتح التطبيق من البوت.",
+      401
+    );
   }
 
   if (!telegramId && process.env.NEXT_PUBLIC_DEV_TELEGRAM_ID) {

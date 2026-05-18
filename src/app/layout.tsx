@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import Script from "next/script";
 import { AppProviders } from "@/components/providers/AppProviders";
 import { cairo } from "@/lib/fonts";
+import { TelegramScript } from "@/components/providers/TelegramScript";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -26,10 +26,7 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" className={`h-full ${cairo.variable}`}>
       <body className={`${cairo.className} min-h-full bg-background font-sans antialiased`}>
-        <Script
-          src="https://telegram.org/js/telegram-web-app.js"
-          strategy="beforeInteractive"
-        />
+        <TelegramScript />
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

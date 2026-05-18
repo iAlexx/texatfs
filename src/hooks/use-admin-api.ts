@@ -26,11 +26,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 export function useAdminSession() {
-  const { initData, telegramUserId, isReady } = useTelegram();
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
   return useQuery({
     queryKey: ["admin", "me", telegramUserId],
-    enabled: isReady,
+    enabled: isReady && canAuthenticate,
     queryFn: () =>
       postJson<{ ok: boolean; telegramUserId: number }>("/api/admin/me", {
         ...authBody(initData, telegramUserId),
@@ -40,11 +40,11 @@ export function useAdminSession() {
 }
 
 export function useAdminUsers() {
-  const { initData, telegramUserId, isReady } = useTelegram();
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
   return useQuery({
     queryKey: ["admin", "users"],
-    enabled: isReady,
+    enabled: isReady && canAuthenticate,
     queryFn: () =>
       postJson<AdminUsersResponse>("/api/admin/users", {
         ...authBody(initData, telegramUserId),

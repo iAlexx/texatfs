@@ -32,11 +32,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 export function useLedgerHistory() {
-  const { initData, telegramUserId, isReady } = useTelegram();
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
   return useQuery({
     queryKey: ["ledger", "history"],
-    enabled: isReady,
+    enabled: isReady && canAuthenticate,
     queryFn: () =>
       postJson<LedgerHistoryResponse>("/api/ledger/history", {
         ...authBody(initData, telegramUserId),
@@ -49,13 +49,13 @@ export function useLedgerSession(
   ledgerDate: string,
   viewUserId?: string | null
 ) {
-  const { initData, telegramUserId, isReady } = useTelegram();
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
   const queryClient = useQueryClient();
   const isToday = ledgerDate === todayIsoDate();
 
   const query = useQuery({
     queryKey: ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
-    enabled: isReady && !!ledgerDate,
+    enabled: isReady && canAuthenticate && !!ledgerDate,
     queryFn: async () => {
       const res = await fetch("/api/ledger/daily", {
         method: "POST",

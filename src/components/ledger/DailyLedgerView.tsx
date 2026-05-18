@@ -9,6 +9,7 @@ import { SubAgentsBreakdown } from "@/components/ledger/SubAgentsBreakdown";
 import { SubscriptionExpiredOverlay } from "@/components/ledger/SubscriptionExpiredOverlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useTelegram } from "@/components/providers/TelegramProvider";
 import {
   useLedgerHistory,
   useLedgerSession,
@@ -21,8 +22,43 @@ import { cn } from "@/lib/utils/cn";
 export function DailyLedgerView() {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const telegram = useTelegram();
   const history = useLedgerHistory();
   const session = useLedgerSession(selectedDate, viewUserId);
+
+  if (!telegram.isReady) {
+    return (
+      <ExecutiveShell title={ar.loading}>
+        <motion.div
+          className="flex items-center justify-center gap-2 py-20 text-steel-500"
+          animate={{ opacity: [0.5, 1, 0.5] }}
+          transition={{ repeat: Infinity, duration: 1.6 }}
+        >
+          <Loader2 className="h-5 w-5 animate-spin text-gold" strokeWidth={1.5} />
+          <span className="text-sm">{ar.loadingLedger}</span>
+        </motion.div>
+      </ExecutiveShell>
+    );
+  }
+
+  if (!telegram.canAuthenticate) {
+    return (
+      <ExecutiveShell title="خطأ">
+        <p className="text-accent-negative">
+          {telegram.authError ?? ar.errorGeneric}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-4 border-steel-border"
+          onClick={() => window.location.reload()}
+        >
+          <RefreshCw className="h-4 w-4" strokeWidth={1.5} />
+          {ar.retry}
+        </Button>
+      </ExecutiveShell>
+    );
+  }
 
   if (session.isLoading && !session.data) {
     return (
