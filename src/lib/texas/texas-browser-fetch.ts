@@ -15,6 +15,7 @@ import {
   getTexasFetchDispatcher,
   logProxyCheck,
 } from "@/lib/texas/texas-proxy";
+import { logFetchFailure } from "@/lib/utils/fetch-trace";
 
 const MAX_ATTEMPTS = 3;
 const RETRYABLE_STATUS = new Set([403, 429, 502, 503, 504]);
@@ -95,24 +96,45 @@ async function texasRawFetch(
 
   const dispatcher = await getTexasFetchDispatcher();
   const fetchImpl = dispatcher ? undiciFetch : globalThis.fetch.bind(globalThis);
+  const via = dispatcher ? "undici+proxy" : "global-fetch";
 
-  const response = await fetchImpl(url, {
+  console.info("[fetch-trace] texasRawFetch start", {
+    url,
     method,
-    headers: headerPairs,
-    body: method === "POST" ? body : undefined,
-    redirect: "follow",
-    ...(dispatcher ? { dispatcher } : { cache: "no-store" }),
+    via,
+    hasBody: Boolean(body),
   });
 
-  const bodyText = await response.text();
-  const setCookies = extractSetCookieHeaders(response.headers);
+  try {
+    const response = await fetchImpl(url, {
+      method,
+      headers: headerPairs,
+      body: method === "POST" ? body : undefined,
+      redirect: "follow",
+      ...(dispatcher ? { dispatcher } : { cache: "no-store" }),
+    });
 
-  return {
-    status: response.status,
-    headers: response.headers,
-    bodyText,
-    setCookies,
-  };
+    const bodyText = await response.text();
+    const setCookies = extractSetCookieHeaders(response.headers);
+
+    console.info("[fetch-trace] texasRawFetch done", {
+      url,
+      method,
+      status: response.status,
+      bodyPreview: bodyText.slice(0, 120),
+      setCookieCount: setCookies.length,
+    });
+
+    return {
+      status: response.status,
+      headers: response.headers,
+      bodyText,
+      setCookies,
+    };
+  } catch (error) {
+    logFetchFailure("texasRawFetch", url, error);
+    throw error;
+  }
 }
 
 export interface TexasWarmUpResult {

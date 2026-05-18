@@ -26,8 +26,11 @@ async function main() {
   const pass = process.env.TEXAS_SYNC_PASSWORD;
   if (!user || !pass) throw new Error("Set TEXAS_SYNC_USERNAME and TEXAS_SYNC_PASSWORD in .env.local");
 
+  const { isLocalDebugMode } = await import("../src/lib/texas/texas-browser-config");
+
   console.log(
     JSON.stringify({
+      localDebug: isLocalDebugMode(),
       proxyEnabled: isTexasProxyEnabled(),
       proxy: getTexasProxyLogLabel(),
       browserless: Boolean(process.env.BROWSERLESS_WS_ENDPOINT),

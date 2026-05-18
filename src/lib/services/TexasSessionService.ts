@@ -47,6 +47,7 @@ export class TexasSessionService {
         const { texasBrowserSignIn } = await import(
           "@/lib/texas/texas-puppeteer-login"
         );
+        console.info("[TexasSessionService] Puppeteer signIn start", { username });
         const browserResult = await texasBrowserSignIn({ username, password });
         const { setCookies, signInData, httpStatus } = browserResult;
 
@@ -172,6 +173,17 @@ export class TexasSessionService {
     const password = normalizeTexasPassword(credentials.password);
 
     const token = await this.signIn({ username, password });
+
+    // Puppeteer already intercepted POST /User/signIn (200) + session cookies.
+    // Node fetch to Texas API is often blocked by Cloudflare ("fetch failed") even when browser login works.
+    if (isTexasBrowserLoginEnabled()) {
+      console.info(
+        "[TexasSessionService] verifyAgentAccount: browser sign-in OK, skipping HTTP wallet probe",
+        { username, tokenBytes: token.length }
+      );
+      return;
+    }
+
     const { TexasCookieJar, texasBrowserFetch, parseTexasJsonBody } =
       await import("@/lib/texas/texas-browser-fetch");
     const jar = new TexasCookieJar();
@@ -179,6 +191,11 @@ export class TexasSessionService {
 
     const base = resolveTexasApiBaseUrl().replace(/\/$/, "");
     const walletsUrl = `${base}/Agent/getAgentAllWallets`;
+
+    console.info("[fetch-trace] verifyAgentAccount wallet probe", {
+      url: walletsUrl,
+      username,
+    });
 
     const result = await texasBrowserFetch({
       url: walletsUrl,

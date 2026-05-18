@@ -1,5 +1,6 @@
 import { HttpsProxyAgent } from "https-proxy-agent";
 import type { Dispatcher } from "undici";
+import { isLocalDebugMode } from "@/lib/texas/texas-browser-config";
 
 let cachedProxyUrl: string | undefined;
 let cachedHttpsAgent: HttpsProxyAgent<string> | undefined;
@@ -11,6 +12,7 @@ let fetchDispatcherPromise: Promise<Dispatcher | undefined> | undefined;
  * Set TEXAS_HTTP_PROXY=http://username:password@host:port
  */
 export function resolveTexasProxyUrl(): string | undefined {
+  if (isLocalDebugMode()) return undefined;
   const raw = process.env.TEXAS_HTTP_PROXY?.trim();
   if (!raw) return undefined;
   if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
@@ -93,6 +95,7 @@ let lastProxyLogAt = 0;
 
 /** Confirm Texas traffic is routed through TEXAS_HTTP_PROXY (throttled per flow). */
 export function logProxyCheck(targetUrl: string): void {
+  if (isLocalDebugMode()) return;
   if (!isTexasProxyEnabled()) return;
   const now = Date.now();
   if (now - lastProxyLogAt < 3000) return;

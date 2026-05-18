@@ -2,7 +2,8 @@
 
 /**
  * Pure CJS Puppeteer loader — NOT compiled by Next.js/webpack.
- * Loaded via createRequire(absolute path) from texas-puppeteer-login.ts.
+ * Loaded from texas-puppeteer-login.ts via dynamic import(pathToFileURL(...).href, { webpackIgnore: true }).
+ * All require() for puppeteer-* must stay in this file only.
  */
 const { createRequire } = require("module");
 const path = require("path");

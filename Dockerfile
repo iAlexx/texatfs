@@ -58,8 +58,11 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV TEXAS_BROWSER_LOGIN=true
+ENV TEXAS_BROWSER_LOGIN_FALLBACK=false
 
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs
@@ -67,7 +70,8 @@ RUN addgroup --system --gid 1001 nodejs \
 RUN mkdir -p public
 COPY scripts/railway-start.sh ./railway-start.sh
 COPY scripts/puppeteer-runtime.cjs ./scripts/puppeteer-runtime.cjs
-RUN chmod +x ./railway-start.sh
+RUN chmod +x ./railway-start.sh \
+  && test -x /usr/bin/chromium || test -f /usr/bin/chromium
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

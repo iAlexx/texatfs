@@ -27,6 +27,12 @@ async function main() {
     process.exit(1);
   }
 
+  const expectedProduction =
+    process.env.TELEGRAM_PRODUCTION_WEBHOOK_URL?.trim() ??
+    (process.env.NEXT_PUBLIC_APP_URL
+      ? `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/api/telegram/webhook`
+      : null);
+
   const res = await fetch(
     `https://api.telegram.org/bot${token}/getWebhookInfo`
   );
@@ -34,29 +40,45 @@ async function main() {
     ok: boolean;
     result?: {
       url?: string;
-      has_custom_certificate?: boolean;
       pending_update_count?: number;
       last_error_date?: number;
       last_error_message?: string;
-      max_connections?: number;
-      ip_address?: string;
     };
   };
 
   const r = json.result ?? {};
+  let localWebhookReachable: boolean | null = null;
+  const localUrl =
+    process.env.TELEGRAM_DEV_WEBHOOK_URL?.trim() ??
+    "http://127.0.0.1:3000/api/telegram/webhook";
+
+  try {
+    const probe = await fetch(localUrl, { method: "GET" });
+    localWebhookReachable = probe.ok;
+  } catch {
+    localWebhookReachable = false;
+  }
+
   console.log(
     JSON.stringify(
       {
         ok: json.ok,
         webhook_url: r.url ?? null,
+        webhook_empty: !r.url,
         pending_updates: r.pending_update_count ?? 0,
         last_error: r.last_error_message ?? null,
         last_error_date: r.last_error_date
           ? new Date(r.last_error_date * 1000).toISOString()
           : null,
-        expected_url: "https://texatfs.vercel.app/api/telegram/webhook",
-        url_matches:
-          r.url === "https://texatfs.vercel.app/api/telegram/webhook",
+        expected_production_url: expectedProduction,
+        url_matches_production:
+          expectedProduction != null && r.url === expectedProduction,
+        local_dev_webhook_url: localUrl,
+        local_webhook_get_ok: localWebhookReachable,
+        local_dev_hint:
+          !r.url || localWebhookReachable
+            ? "Run: npm run dev (terminal 1) + npm run telegram:poll (terminal 2)"
+            : "Webhook points to remote host — use telegram:poll for localhost OR re-register webhook",
       },
       null,
       2

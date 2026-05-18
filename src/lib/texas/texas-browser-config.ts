@@ -1,5 +1,9 @@
 /** Env flags for Texas browser login — no Puppeteer imports. */
 
+export function isLocalDebugMode(): boolean {
+  return process.env.LOCAL_DEBUG === "true";
+}
+
 export function isTexasBrowserLoginEnabled(): boolean {
   return process.env.TEXAS_BROWSER_LOGIN !== "false";
 }

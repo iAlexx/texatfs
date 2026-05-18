@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistrationService } from "@/lib/services/RegistrationService";
 import { getCredentialVault } from "@/lib/security/CredentialVault";
+import { normalizeTexasUsername } from "@/lib/texas/texas-api-config";
 import { sendTelegramMessage } from "@/lib/telegram/bot-api";
 import type { TelegramMessage } from "@/lib/telegram/bot-api";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
@@ -122,7 +123,8 @@ export async function handleOnboardingMessage(
   }
 
   if (step === "login") {
-    if (!TEXAS_LOGIN_RE.test(text)) {
+    const texasLogin = normalizeTexasUsername(text);
+    if (!TEXAS_LOGIN_RE.test(texasLogin)) {
       await sendTelegramMessage(
         chatId,
         "Invalid login. Send your Texas username or email (3–128 characters, no spaces). Example: Alitest@Regional.Nsp"
@@ -134,7 +136,7 @@ export async function handleOnboardingMessage(
       .from("telegram_onboarding_sessions")
       .update({
         step: "password",
-        texas_email_encrypted: vault.encrypt(text),
+        texas_email_encrypted: vault.encrypt(texasLogin),
       })
       .eq("telegram_id", telegramId);
 
@@ -239,10 +241,19 @@ export async function handleOnboardingMessage(
         `Registration complete.\n\nSubscription active until: ${end}${miniAppHint()}`
       );
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Registration failed";
+      const err = e instanceof Error ? e : new Error(String(e));
+      const msg = err.message || "Registration failed";
+      const cause =
+        err.cause instanceof Error
+          ? err.cause.message
+          : err.cause != null
+            ? String(err.cause)
+            : undefined;
       console.error("[onboarding] registration failed", {
         telegramId,
         error: msg,
+        cause,
+        stack: err.stack?.split("\n").slice(0, 8).join("\n"),
       });
 
       if (msg.includes("LICENSE_KEY_INVALID")) {

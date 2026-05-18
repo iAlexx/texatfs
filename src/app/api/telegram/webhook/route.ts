@@ -1,45 +1,46 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { handleGenkeyCommand } from "@/lib/telegram/admin";
-import {
-  isAdmin,
-  type TelegramUpdate,
-} from "@/lib/telegram/bot-api";
+import { processTelegramUpdate } from "@/lib/telegram/process-update";
+import type { TelegramUpdate } from "@/lib/telegram/bot-api";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
+/** Puppeteer onboarding can exceed default serverless limits on some hosts. */
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (secret) {
+    const header = request.headers.get("x-telegram-bot-api-secret-token");
+    if (header !== secret) {
+      console.warn("[telegram/webhook] rejected: secret token mismatch");
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  let update: TelegramUpdate;
   try {
-    const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
-    if (secret) {
-      const header = request.headers.get("x-telegram-bot-api-secret-token");
-      if (header !== secret) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-    }
+    update = (await request.json()) as TelegramUpdate;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
-    const update = (await request.json()) as TelegramUpdate;
-    const message = update.message;
-    if (!message?.text || !message.from) {
-      return NextResponse.json({ ok: true });
-    }
+  const supabase = getSupabaseServiceClient();
 
-    const supabase = getSupabaseServiceClient();
-    const text = message.text.trim();
-    const telegramUserId = message.from.id;
+  // Telegram requires a fast 200; Puppeteer sign-in can take 1–3 minutes.
+  const processAsync = process.env.TELEGRAM_WEBHOOK_ASYNC !== "false";
 
-    if (text.startsWith("/genkey")) {
-      if (!isAdmin(telegramUserId)) {
-        return NextResponse.json({ ok: true });
-      }
-      await handleGenkeyCommand(supabase, message.chat.id, text);
-      return NextResponse.json({ ok: true });
-    }
+  if (processAsync) {
+    void processTelegramUpdate(supabase, update).catch((e) => {
+      const msg = e instanceof Error ? e.message : "Webhook error";
+      console.error("[telegram/webhook] async handler failed", msg, e);
+    });
+    return NextResponse.json({ ok: true });
+  }
 
-    const { handleOnboardingMessage } = await import("@/lib/telegram/onboarding");
-    await handleOnboardingMessage(supabase, message);
+  try {
+    await processTelegramUpdate(supabase, update);
     return NextResponse.json({ ok: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Webhook error";
@@ -52,5 +53,6 @@ export async function GET() {
   return NextResponse.json({
     status: "TEXAS FUNDS Telegram webhook",
     ok: true,
+    async: process.env.TELEGRAM_WEBHOOK_ASYNC !== "false",
   });
 }

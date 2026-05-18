@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   Browser,
   Cookie,
@@ -16,7 +16,18 @@ import {
   TEXAS_AGENTS_ORIGIN,
   type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
-import { isRailwayRuntime } from "@/lib/texas/texas-browser-config";
+import {
+  isLocalDebugMode,
+  isRailwayRuntime,
+} from "@/lib/texas/texas-browser-config";
+import { withTexasBrowserLoginLock } from "@/lib/texas/texas-browser-queue";
+import {
+  debugLog,
+  dumpPageFailure,
+  logPageState,
+  stepPauseMs,
+  typeDelayMs,
+} from "@/lib/texas/texas-local-debug";
 import {
   getTexasProxyAuth,
   getTexasProxyLaunchArgs,
@@ -25,6 +36,7 @@ import {
 } from "@/lib/texas/texas-proxy";
 
 export {
+  isLocalDebugMode,
   isTexasBrowserLoginEnabled,
   isTexasBrowserLoginFallbackEnabled,
   isRailwayRuntime,
@@ -46,6 +58,13 @@ const RAILWAY_CHROMIUM_ARGS = [
   "--disable-software-rasterizer",
   "--disable-extensions",
   "--no-first-run",
+  "--disable-blink-features=AutomationControlled",
+  "--window-size=1366,768",
+] as const;
+
+const LOCAL_DEBUG_CHROMIUM_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
   "--disable-blink-features=AutomationControlled",
   "--window-size=1366,768",
 ] as const;
@@ -95,11 +114,7 @@ type PuppeteerExtra = {
 };
 
 let cachedPuppeteer: PuppeteerExtra | null = null;
-
-/** Runtime require from project root (external packages only). */
-const runtimeRequire = createRequire(
-  path.join(process.cwd(), "package.json")
-);
+let cachedRuntimeModule: PuppeteerRuntimeModule | null = null;
 
 function resolvePuppeteerRuntimePath(): string {
   const candidates = [
@@ -114,20 +129,46 @@ function resolvePuppeteerRuntimePath(): string {
   );
 }
 
+type PuppeteerRuntimeModule = {
+  loadPuppeteerWithDiagnostics: () => {
+    puppeteer: PuppeteerExtra;
+    types: Record<string, string>;
+  };
+};
+
+/**
+ * Load scripts/puppeteer-runtime.cjs without webpack — all require() stays in that file.
+ */
+async function loadPuppeteerRuntimeModule(): Promise<PuppeteerRuntimeModule> {
+  if (cachedRuntimeModule) return cachedRuntimeModule;
+
+  const loaderPath = resolvePuppeteerRuntimePath();
+  const loaderUrl = pathToFileURL(loaderPath).href;
+
+  debugLog("importPuppeteerRuntime", { loaderPath, loaderUrl });
+
+  const mod = (await import(
+    /* webpackIgnore: true */
+    loaderUrl
+  )) as PuppeteerRuntimeModule;
+
+  if (typeof mod.loadPuppeteerWithDiagnostics !== "function") {
+    throw new Error(
+      "[texas-browser] puppeteer-runtime.cjs missing loadPuppeteerWithDiagnostics export"
+    );
+  }
+
+  cachedRuntimeModule = mod;
+  return mod;
+}
+
 /**
  * Load puppeteer via pure CJS loader — webpack must never touch puppeteer-extra/stealth.
  */
-function loadPuppeteer(): PuppeteerExtra {
+async function loadPuppeteer(): Promise<PuppeteerExtra> {
   if (cachedPuppeteer) return cachedPuppeteer;
 
-  const loaderPath = resolvePuppeteerRuntimePath();
-  const { loadPuppeteerWithDiagnostics } = runtimeRequire(loaderPath) as {
-    loadPuppeteerWithDiagnostics: () => {
-      puppeteer: PuppeteerExtra;
-      types: Record<string, string>;
-    };
-  };
-
+  const { loadPuppeteerWithDiagnostics } = await loadPuppeteerRuntimeModule();
   const { puppeteer, types } = loadPuppeteerWithDiagnostics();
 
   console.info("[texas-browser] puppeteer runtime types", types);
@@ -144,7 +185,9 @@ function loadPuppeteer(): PuppeteerExtra {
   }
 
   cachedPuppeteer = puppeteer;
-  console.info("[texas-browser] stealth plugin loaded", { loaderPath });
+  console.info("[texas-browser] stealth plugin loaded", {
+    loader: resolvePuppeteerRuntimePath(),
+  });
   return cachedPuppeteer;
 }
 
@@ -199,6 +242,14 @@ async function resolveExecutablePath(): Promise<string> {
   const envPath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim();
   const chromePath = process.env.CHROME_PATH?.trim();
 
+  if (isLocalDebugMode()) {
+    const bundled = await resolveBundledChromiumPath();
+    if (bundled) {
+      debugLog("executablePath", { source: "puppeteer-bundled", path: bundled });
+      return bundled;
+    }
+  }
+
   if (envPath) {
     if (existsSync(envPath)) {
       console.info("[texas-browser] Using PUPPETEER_EXECUTABLE_PATH", {
@@ -235,20 +286,34 @@ async function resolveExecutablePath(): Promise<string> {
 }
 
 async function buildLaunchOptions(): Promise<LaunchOptions> {
-  const proxyArgs = getTexasProxyLaunchArgs();
-  const headed = process.env.TEXAS_BROWSER_HEADED === "true";
+  const proxyArgs = isLocalDebugMode() ? [] : getTexasProxyLaunchArgs();
+  const headed =
+    isLocalDebugMode() || process.env.TEXAS_BROWSER_HEADED === "true";
   const executablePath = await resolveExecutablePath();
+  const chromiumArgs = isLocalDebugMode()
+    ? LOCAL_DEBUG_CHROMIUM_ARGS
+    : RAILWAY_CHROMIUM_ARGS;
 
-  return {
+  const options: LaunchOptions = {
     executablePath,
     headless: headed ? false : true,
     defaultViewport: { width: 1366, height: 768 },
     ignoreDefaultArgs: ["--enable-automation"],
     protocolTimeout: BROWSER_PROTOCOL_TIMEOUT_MS,
     timeout: BROWSER_PROTOCOL_TIMEOUT_MS,
-    dumpio: process.env.TEXAS_BROWSER_DUMPIO === "true",
-    args: [...RAILWAY_CHROMIUM_ARGS, ...proxyArgs],
+    dumpio:
+      isLocalDebugMode() || process.env.TEXAS_BROWSER_DUMPIO === "true",
+    args: [...chromiumArgs, ...proxyArgs],
   };
+
+  debugLog("launchOptions", {
+    executablePath: options.executablePath,
+    headless: options.headless,
+    proxy: proxyArgs.length > 0,
+    argCount: options.args?.length,
+  });
+
+  return options;
 }
 
 function attachBrowserDiagnostics(browser: Browser): void {
@@ -260,6 +325,7 @@ function attachBrowserDiagnostics(browser: Browser): void {
 }
 
 function buildBrowserlessEndpoint(): string | undefined {
+  if (isLocalDebugMode()) return undefined;
   const raw = process.env.BROWSERLESS_WS_ENDPOINT?.trim();
   if (!raw) return undefined;
 
@@ -278,7 +344,7 @@ function buildBrowserlessEndpoint(): string | undefined {
 }
 
 async function launchBrowser(): Promise<Browser> {
-  const puppeteer = loadPuppeteer();
+  const puppeteer = await loadPuppeteer();
   const browserless = buildBrowserlessEndpoint();
 
   if (browserless) {
@@ -291,10 +357,15 @@ async function launchBrowser(): Promise<Browser> {
     });
   }
 
-  logProxyCheck(TEXAS_AGENTS_ORIGIN);
+  if (!isLocalDebugMode()) {
+    logProxyCheck(TEXAS_AGENTS_ORIGIN);
+  } else {
+    debugLog("proxyDisabled", { reason: "LOCAL_DEBUG=true" });
+  }
   const launchOptions = await buildLaunchOptions();
 
   console.info("[texas-browser] Launching Chromium (stealth)", {
+    localDebug: isLocalDebugMode(),
     proxy: resolveTexasProxyUrl() ? "enabled" : "none",
     railway: isRailwayRuntime(),
     executablePath: launchOptions.executablePath,
@@ -302,6 +373,10 @@ async function launchBrowser(): Promise<Browser> {
   });
 
   const browser = await puppeteer.launch(launchOptions);
+  debugLog("browserLaunchSuccess", {
+    executablePath: launchOptions.executablePath,
+    headless: launchOptions.headless,
+  });
   attachBrowserDiagnostics(browser);
   return browser;
 }
@@ -316,6 +391,7 @@ async function safeGoto(
       waitUntil: "domcontentloaded",
       timeout: NAVIGATION_TIMEOUT_MS,
     });
+    await logPageState(page, `goto:${label}`);
   } catch (error) {
     if (isTargetClosedError(error)) {
       throw new Error(
@@ -369,6 +445,10 @@ async function openTexasPage(browser: Browser): Promise<Page> {
 }
 
 async function applyProxyAuth(page: Page): Promise<void> {
+  if (isLocalDebugMode()) {
+    debugLog("proxyAuthSkipped", { reason: "LOCAL_DEBUG=true" });
+    return;
+  }
   const auth = getTexasProxyAuth();
   if (!auth) return;
   await page.authenticate(auth);
@@ -434,6 +514,10 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
       hasCfClearanceCookie(page),
     ]);
 
+    if (isLocalDebugMode()) {
+      debugLog("cloudflarePoll", { challenge, cfClearance });
+    }
+
     if (cfClearance && !challenge) {
       console.info("[texas-browser] Phase 2 complete", {
         title: await page.title(),
@@ -465,6 +549,7 @@ async function waitForCloudflareClear(page: Page): Promise<void> {
 
   const title = await page.title();
   const cookieNames = (await page.cookies()).map((c) => c.name);
+  await dumpPageFailure(page, "cloudflare-timeout");
   throw new Error(
     `Cloudflare did not clear within ${CF_CLEAR_TIMEOUT_MS}ms (title=${title}, cookies=${cookieNames.join(",")})`
   );
@@ -478,10 +563,14 @@ async function findVisibleField(
     const handles = await page.$$(selector);
     for (const handle of handles) {
       const box = await handle.boundingBox();
-      if (box && box.width > 0 && box.height > 0) return handle;
+      if (box && box.width > 0 && box.height > 0) {
+        debugLog("selectorMatch", { selector, width: box.width, height: box.height });
+        return handle;
+      }
       await handle.dispose();
     }
   }
+  debugLog("selectorMiss", { selectors: selectors.join(", ") });
   return null;
 }
 
@@ -533,6 +622,8 @@ async function signInViaUi(
 ): Promise<{ httpStatus: number; data: TexasSignInEnvelope | null }> {
   console.info("[texas-browser] Phase 3: UI login (type + click)");
   await waitForLoginForm(page);
+  await logPageState(page, "before-login-fill");
+  if (stepPauseMs() > 0) await sleep(stepPauseMs());
 
   const signInResponsePromise = page.waitForResponse(isTexasSignInResponse, {
     timeout: LOGIN_TIMEOUT_MS,
@@ -544,10 +635,13 @@ async function signInViaUi(
     throw new Error("Login inputs disappeared before fill");
   }
 
+  const delay = typeDelayMs();
   await usernameField.click({ count: 3 });
-  await usernameField.type(username, { delay: 45 });
+  await usernameField.type(username, { delay });
+  if (stepPauseMs() > 0) await sleep(stepPauseMs());
   await passwordField.click({ count: 3 });
-  await passwordField.type(password, { delay: 45 });
+  await passwordField.type(password, { delay });
+  if (stepPauseMs() > 0) await sleep(stepPauseMs());
 
   let submitted = false;
   for (const selector of SUBMIT_SELECTORS) {
@@ -558,13 +652,15 @@ async function signInViaUi(
       await button.dispose();
       continue;
     }
-    await button.click({ delay: 40 });
+    debugLog("loginSubmit", { selector });
+    await button.click({ delay: isLocalDebugMode() ? 80 : 40 });
     submitted = true;
     await button.dispose();
     break;
   }
 
   if (!submitted) {
+    debugLog("loginSubmit", { method: "Enter" });
     await passwordField.press("Enter");
   }
 
@@ -572,6 +668,10 @@ async function signInViaUi(
   await passwordField.dispose();
 
   const response = await signInResponsePromise;
+  debugLog("signInResponse", {
+    status: response.status(),
+    url: response.url(),
+  });
   const httpStatus = response.status();
   let data: TexasSignInEnvelope | null = null;
   try {
@@ -584,6 +684,9 @@ async function signInViaUi(
     .waitForNavigation({ waitUntil: "networkidle2", timeout: 30_000 })
     .catch(() => undefined);
 
+  await logPageState(page, "after-login-submit");
+  debugLog("redirect", { url: page.url(), title: await page.title() });
+
   return { httpStatus, data };
 }
 
@@ -594,13 +697,22 @@ export async function texasBrowserSignIn(options: {
   username: string;
   password: string;
 }): Promise<TexasBrowserSignInResult> {
+  return withTexasBrowserLoginLock(() =>
+    texasBrowserSignInUnlocked(options)
+  );
+}
+
+async function texasBrowserSignInUnlocked(options: {
+  username: string;
+  password: string;
+}): Promise<TexasBrowserSignInResult> {
   const { username, password } = options;
   let browser: Browser | undefined;
+  let page: Page | undefined;
 
   try {
     browser = await launchBrowser();
 
-    let page: Page;
     try {
       page = await openTexasPage(browser);
       await applyProxyAuth(page);
@@ -610,11 +722,13 @@ export async function texasBrowserSignIn(options: {
       await page.setExtraHTTPHeaders({
         "Accept-Language": "en-US,en;q=0.9",
       });
+      await logPageState(page, "page-opened");
     } catch (error) {
       console.error("[texas-browser] Failed to open page before navigation", {
         username,
         error: error instanceof Error ? error.message : String(error),
       });
+      await dumpPageFailure(page, "page-open-failed", error);
       throw error;
     }
 
@@ -632,11 +746,17 @@ export async function texasBrowserSignIn(options: {
         httpStatus,
         texasMessage,
       });
+      await dumpPageFailure(page, "signin-rejected");
       return { setCookies: [], signInData: envelope, httpStatus };
     }
 
     const cookies = await page.cookies(TEXAS_AGENTS_ORIGIN);
     const setCookies = puppeteerCookiesToSetCookieLines(cookies);
+
+    debugLog("cookiesExtracted", {
+      count: setCookies.length,
+      names: cookies.map((c) => c.name).join(","),
+    });
 
     console.info("[texas-browser] Phase 4: session cookies captured", {
       username,
@@ -645,6 +765,15 @@ export async function texasBrowserSignIn(options: {
     });
 
     return { setCookies, signInData: envelope, httpStatus };
+  } catch (error) {
+    await dumpPageFailure(page, "signin-error", error);
+    if (isLocalDebugMode() && browser) {
+      console.error(
+        "[texas-debug] Pausing 20s before browser close — inspect the window"
+      );
+      await sleep(20_000);
+    }
+    throw error;
   } finally {
     if (browser) {
       try {

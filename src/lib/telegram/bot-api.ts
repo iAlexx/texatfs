@@ -38,6 +38,11 @@ export async function sendTelegramMessage(
 
   if (!res.ok) {
     const body = await res.text();
+    console.error("[fetch-trace] Telegram sendMessage failed", {
+      url: `${TELEGRAM_API}/bot***/sendMessage`,
+      status: res.status,
+      bodyPreview: body.slice(0, 200),
+    });
     throw new Error(`Telegram sendMessage failed: ${res.status} ${body}`);
   }
 }

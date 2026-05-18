@@ -12,6 +12,7 @@ const puppeteerExternals = [
 ];
 
 const puppeteerTraceIncludes = [
+  "./scripts/puppeteer-runtime.cjs",
   "./node_modules/puppeteer-core/**",
   "./node_modules/puppeteer-extra/**",
   "./node_modules/puppeteer-extra-plugin/**",
@@ -37,8 +38,6 @@ const nextConfig = {
       "/api/**/*": puppeteerTraceIncludes,
     },
   },
-  // Next.js 15+ (harmless if ignored on 14.x)
-  serverExternalPackages: puppeteerExternals,
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externalsPresets = { ...config.externalsPresets, node: true };
