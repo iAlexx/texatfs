@@ -41,8 +41,14 @@ if [ ! -f "./scripts/puppeteer-runtime.cjs" ]; then
   exit 1
 fi
 
-if [ -n "${PUPPETEER_EXECUTABLE_PATH}" ] && [ ! -x "${PUPPETEER_EXECUTABLE_PATH}" ] && [ ! -f "${PUPPETEER_EXECUTABLE_PATH}" ]; then
+if [ -n "${PUPPETEER_EXECUTABLE_PATH}" ] && [ ! -f "${PUPPETEER_EXECUTABLE_PATH}" ]; then
   echo "[railway-start] WARN: Chromium not found at ${PUPPETEER_EXECUTABLE_PATH}"
+fi
+if [ -f /usr/lib/chromium/chromium ]; then
+  echo "[railway-start] Chromium binary: /usr/lib/chromium/chromium"
+fi
+if [ -z "${TEXAS_HTTP_PROXY}" ]; then
+  echo "[railway-start] WARN: TEXAS_HTTP_PROXY unset — Cloudflare may block datacenter IP"
 fi
 
 exec node server.js

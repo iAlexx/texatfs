@@ -67,6 +67,14 @@ ENV TEXAS_BROWSER_LOGIN_FALLBACK=false
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs
 
+# Chromium crashpad + puppeteer profiles (non-root user must write here)
+RUN mkdir -p /tmp/chromium-crashpad /tmp/texas-puppeteer \
+  && chmod 1777 /tmp/chromium-crashpad /tmp/texas-puppeteer
+
+ENV HOME=/tmp
+ENV TMPDIR=/tmp
+ENV PUPPETEER_USER_DATA_DIR=/tmp/texas-puppeteer
+
 RUN mkdir -p public
 COPY scripts/railway-start.sh ./railway-start.sh
 COPY scripts/puppeteer-runtime.cjs ./scripts/puppeteer-runtime.cjs

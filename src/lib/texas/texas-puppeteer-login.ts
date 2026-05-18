@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
@@ -53,12 +53,14 @@ const RAILWAY_CHROMIUM_ARGS = [
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
   "--disable-gpu",
-  "--single-process",
   "--no-zygote",
   "--disable-software-rasterizer",
-  "--disable-extensions",
   "--no-first-run",
   "--disable-blink-features=AutomationControlled",
+  "--disable-crash-reporter",
+  "--disable-breakpad",
+  "--disable-features=Crashpad,TranslateUI",
+  "--crash-dumps-dir=/tmp/chromium-crashpad",
   "--window-size=1366,768",
 ] as const;
 
@@ -211,11 +213,19 @@ export function puppeteerCookiesToSetCookieLines(cookies: Cookie[]): string[] {
 
 function linuxChromiumCandidates(): string[] {
   return [
-    "/usr/bin/chromium",
+    "/usr/lib/chromium/chromium",
     "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
     "/usr/bin/google-chrome-stable",
     "/usr/bin/google-chrome",
   ];
+}
+
+/** Writable profile dir — fixes crashpad "--database is required" in Docker. */
+function createChromiumUserDataDir(): string {
+  const root = process.env.PUPPETEER_USER_DATA_DIR?.trim() || "/tmp/texas-puppeteer";
+  mkdirSync(root, { recursive: true });
+  return mkdtempSync(path.join(root, "profile-"));
 }
 
 async function resolveBundledChromiumPath(): Promise<string | undefined> {
@@ -247,6 +257,16 @@ async function resolveExecutablePath(): Promise<string> {
     if (bundled) {
       debugLog("executablePath", { source: "puppeteer-bundled", path: bundled });
       return bundled;
+    }
+  }
+
+  // Prefer real Debian binary over /usr/bin/chromium wrapper (crashpad issues in Docker)
+  if (!isLocalDebugMode() && process.platform === "linux") {
+    for (const candidate of linuxChromiumCandidates()) {
+      if (existsSync(candidate)) {
+        console.info("[texas-browser] Using system Chromium", { path: candidate });
+        return candidate;
+      }
     }
   }
 
@@ -290,9 +310,15 @@ async function buildLaunchOptions(): Promise<LaunchOptions> {
   const headed =
     isLocalDebugMode() || process.env.TEXAS_BROWSER_HEADED === "true";
   const executablePath = await resolveExecutablePath();
+  const containerLinux =
+    !isLocalDebugMode() &&
+    process.platform === "linux" &&
+    (isRailwayRuntime() || process.env.PUPPETEER_EXECUTABLE_PATH);
   const chromiumArgs = isLocalDebugMode()
     ? LOCAL_DEBUG_CHROMIUM_ARGS
     : RAILWAY_CHROMIUM_ARGS;
+
+  const userDataDir = containerLinux ? createChromiumUserDataDir() : undefined;
 
   const options: LaunchOptions = {
     executablePath,
@@ -304,12 +330,27 @@ async function buildLaunchOptions(): Promise<LaunchOptions> {
     dumpio:
       isLocalDebugMode() || process.env.TEXAS_BROWSER_DUMPIO === "true",
     args: [...chromiumArgs, ...proxyArgs],
+    ...(userDataDir ? { userDataDir } : {}),
+    env: {
+      ...process.env,
+      HOME: process.env.HOME || "/tmp",
+      TMPDIR: process.env.TMPDIR || "/tmp",
+    },
   };
+
+  console.info("[texas-browser] launch profile", {
+    executablePath: options.executablePath,
+    headless: options.headless,
+    proxy: proxyArgs.length > 0,
+    userDataDir: userDataDir ?? null,
+    argCount: options.args?.length,
+  });
 
   debugLog("launchOptions", {
     executablePath: options.executablePath,
     headless: options.headless,
     proxy: proxyArgs.length > 0,
+    userDataDir,
     argCount: options.args?.length,
   });
 
