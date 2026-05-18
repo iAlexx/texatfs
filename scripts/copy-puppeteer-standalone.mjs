@@ -1,6 +1,6 @@
 /**
- * Next.js standalone file tracing omits puppeteer-extra-plugin-stealth/evasions/*.
- * Run after `next build` in Docker to copy the full Puppeteer dependency tree.
+ * Next.js standalone file tracing omits puppeteer-extra-plugin-stealth/evasions/*
+ * and transitive deps (fs-extra, rimraf, …). Run after `next build` in Docker.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,6 +16,38 @@ if (!fs.existsSync(srcNm)) {
 
 fs.mkdirSync(destNm, { recursive: true });
 
+function readPkg(nmRoot, name) {
+  const pkgPath = path.join(nmRoot, name, "package.json");
+  if (!fs.existsSync(pkgPath)) return null;
+  return JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+}
+
+/** Walk puppeteer-* packages + all npm dependencies (fs-extra, rimraf, …). */
+function collectTransitivePackageNames(seedNames) {
+  const queue = [...seedNames];
+  const seen = new Set();
+
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (!name || seen.has(name)) continue;
+    if (!fs.existsSync(path.join(srcNm, name))) continue;
+
+    seen.add(name);
+    const pkg = readPkg(srcNm, name);
+    if (!pkg) continue;
+
+    const deps = {
+      ...pkg.dependencies,
+      ...pkg.optionalDependencies,
+    };
+    for (const dep of Object.keys(deps)) {
+      if (!seen.has(dep)) queue.push(dep);
+    }
+  }
+
+  return seen;
+}
+
 function copyPackage(name) {
   const src = path.join(srcNm, name);
   const dest = path.join(destNm, name);
@@ -25,34 +57,23 @@ function copyPackage(name) {
   return true;
 }
 
-const copied = new Set();
-for (const ent of fs.readdirSync(srcNm)) {
-  if (ent.startsWith("puppeteer")) {
-    copyPackage(ent);
-    copied.add(ent);
-  }
+const puppeteerSeeds = fs
+  .readdirSync(srcNm)
+  .filter((ent) => ent.startsWith("puppeteer"));
+
+const allPackages = collectTransitivePackageNames(puppeteerSeeds);
+console.info("[copy-puppeteer] package count", allPackages.size);
+
+for (const name of allPackages) {
+  copyPackage(name);
 }
 
-// Transitive deps commonly required by stealth evasions (top-level hoists)
-const extra = [
-  "deepmerge",
-  "debug",
-  "ms",
-  "merge-deep",
-  "clone-deep",
-  "kind-of",
-  "arr-union",
-  "for-in",
-  "for-own",
-  "is-plain-object",
-  "lazy-cache",
-  "shallow-clone",
-  "is-buffer",
-  "isobject",
-];
-
-for (const name of extra) {
-  if (!copied.has(name)) copyPackage(name);
+const required = ["fs-extra", "puppeteer-extra-plugin-user-data-dir"];
+for (const name of required) {
+  if (!fs.existsSync(path.join(destNm, name, "package.json"))) {
+    console.error("[copy-puppeteer] FATAL: missing required package", name);
+    process.exit(1);
+  }
 }
 
 const evasionsDir = path.join(
@@ -78,5 +99,4 @@ if (!fs.existsSync(runtimeSrc)) {
 }
 fs.cpSync(runtimeSrc, runtimeDest, { force: true });
 console.info("[copy-puppeteer] copied puppeteer-runtime.cjs");
-
-console.info("[copy-puppeteer] stealth evasions OK");
+console.info("[copy-puppeteer] stealth evasions + transitive deps OK");

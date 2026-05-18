@@ -75,14 +75,15 @@ RUN chmod +x ./railway-start.sh \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Merge full production puppeteer tree (standalone trace misses stealth/evasions/*)
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-core ./node_modules/puppeteer-core
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra ./node_modules/puppeteer-extra
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin ./node_modules/puppeteer-extra-plugin
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin-stealth ./node_modules/puppeteer-extra-plugin-stealth
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin-user-preferences ./node_modules/puppeteer-extra-plugin-user-preferences
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules/puppeteer-extra-plugin-user-data-dir ./node_modules/puppeteer-extra-plugin-user-data-dir
-RUN chown nextjs:nodejs ./railway-start.sh
+# Full puppeteer tree + transitive deps (fs-extra, rimraf, …) from production node_modules
+COPY --from=prod-deps /app/node_modules ./prod-node_modules
+COPY scripts/copy-puppeteer-docker-runner.mjs ./scripts/copy-puppeteer-docker-runner.mjs
+USER root
+RUN node scripts/copy-puppeteer-docker-runner.mjs \
+  && rm -rf ./prod-node_modules ./scripts/copy-puppeteer-docker-runner.mjs \
+  && test -f ./node_modules/fs-extra/package.json \
+  && test -d ./node_modules/puppeteer-extra-plugin-stealth/evasions/chrome.app
+RUN chown -R nextjs:nodejs ./node_modules ./scripts ./railway-start.sh
 
 USER nextjs
 EXPOSE 3000

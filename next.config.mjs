@@ -19,6 +19,11 @@ const puppeteerTraceIncludes = [
   "./node_modules/puppeteer-extra-plugin-stealth/**",
   "./node_modules/puppeteer-extra-plugin-user-preferences/**",
   "./node_modules/puppeteer-extra-plugin-user-data-dir/**",
+  "./node_modules/fs-extra/**",
+  "./node_modules/rimraf/**",
+  "./node_modules/graceful-fs/**",
+  "./node_modules/jsonfile/**",
+  "./node_modules/universalify/**",
 ];
 
 const nextConfig = {
