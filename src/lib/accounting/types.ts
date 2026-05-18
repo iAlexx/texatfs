@@ -101,4 +101,11 @@ export interface AccountingRepository {
   ): Promise<NormalizedTexasSnapshot | null>;
 
   upsertOpenLedger(payload: PersistLedgerPayload): Promise<DailyLedgerRow>;
+
+  insertSnapshot(
+    userId: string,
+    ledgerDate: string,
+    snapshot: import("@/lib/texas/types").NormalizedTexasSnapshot,
+    fetchSource?: string
+  ): Promise<{ id: string }>;
 }

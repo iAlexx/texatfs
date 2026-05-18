@@ -24,12 +24,16 @@ export interface AppUser {
   role: UserRole;
   display_name: string | null;
   texas_username: string | null;
+  parent_id?: string | null;
   subscription_end_date?: string | null;
   subscription_active?: boolean;
+  is_tenant_master?: boolean;
 }
 
 export interface LedgerSessionResponse {
   user: AppUser;
   ledger: DailyLedger | null;
   subscription_active: boolean;
+  hierarchy?: import("@/lib/hierarchy/types").HierarchyPayload;
+  viewing_user_id?: string;
 }

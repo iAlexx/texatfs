@@ -25,6 +25,7 @@ export interface DailyReportSkipped {
 export class DailyReportOrchestrator {
   private readonly texasSync = new TexasSyncService();
   private readonly accounting: AccountingService;
+  private readonly repository: AccountingRepository;
   private readonly subscription: SubscriptionService;
   private readonly registration: RegistrationService;
 
@@ -32,6 +33,7 @@ export class DailyReportOrchestrator {
     repository: AccountingRepository,
     supabase: SupabaseClient = getSupabaseServiceClient()
   ) {
+    this.repository = repository;
     this.accounting = new AccountingService(repository);
     this.subscription = new SubscriptionService(supabase);
     this.registration = new RegistrationService(supabase);
@@ -51,11 +53,20 @@ export class DailyReportOrchestrator {
     }
 
     const sync = await this.texasSync.syncUser(context);
+
+    const inserted = await this.repository.insertSnapshot(
+      context.userId,
+      ledgerDate,
+      sync.snapshot,
+      "cron"
+    );
+    const closingSnapshotId = options?.closingSnapshotId ?? inserted.id;
+
     const report = await this.accounting.syncAndPersistDailyReport(
       context.userId,
       ledgerDate,
       sync.snapshot,
-      options
+      { ...options, closingSnapshotId }
     );
     return { sync, report };
   }

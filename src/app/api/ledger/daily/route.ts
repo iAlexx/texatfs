@@ -1,98 +1,52 @@
 import { NextResponse } from "next/server";
+import { mapLedgerRow } from "@/lib/supabase/client";
+import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import type { DailyLedger, LedgerSessionResponse } from "@/lib/supabase/database.types";
+import type { LedgerAuthInput } from "@/lib/ledger/types";
+import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
+import {
+  assertCanViewUser,
+  buildHierarchyPayload,
+  fetchSubAgentsWithLedgers,
+} from "@/lib/hierarchy/sub-agents";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
-import { mapLedgerRow } from "@/lib/supabase/client";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import type { AppUser, DailyLedger, LedgerSessionResponse } from "@/lib/supabase/database.types";
-import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
-import {
-  parseTelegramUserId,
-  validateTelegramInitData,
-} from "@/lib/telegram/validate-init-data";
 
-interface RequestBody {
-  initData?: string;
-  telegramUserId?: number;
+interface RequestBody extends LedgerAuthInput {
   ledgerDate?: string;
+  viewUserId?: string;
 }
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+async function loadLedgerForUser(
+  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  userId: string,
+  ledgerDate: string
+): Promise<DailyLedger | null> {
+  const { data: ledgerRow, error } = await supabase
+    .from("daily_ledgers")
+    .select(
+      "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at"
+    )
+    .eq("user_id", userId)
+    .eq("ledger_date", ledgerDate)
+    .maybeSingle();
+
+  if (error) throw error;
+  return ledgerRow ? mapLedgerRow(ledgerRow) : null;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as RequestBody;
-    const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const isDev = process.env.NODE_ENV === "development";
-
-    let telegramId = body.telegramUserId ?? null;
-
-    if (body.initData && body.initData !== "dev-mode") {
-      if (!botToken) {
-        return NextResponse.json(
-          { error: "TELEGRAM_BOT_TOKEN not configured" },
-          { status: 500 }
-        );
-      }
-      if (!validateTelegramInitData(body.initData, botToken)) {
-        return NextResponse.json(
-          { error: "Invalid Telegram initData" },
-          { status: 401 }
-        );
-      }
-      telegramId = parseTelegramUserId(body.initData) ?? telegramId;
-    } else if (!isDev) {
-      return NextResponse.json(
-        { error: "Telegram authentication required" },
-        { status: 401 }
-      );
-    }
-
-    if (!telegramId && process.env.NEXT_PUBLIC_DEV_TELEGRAM_ID) {
-      telegramId = Number(process.env.NEXT_PUBLIC_DEV_TELEGRAM_ID);
-    }
-
-    if (!telegramId) {
-      return NextResponse.json(
-        { error: "Could not resolve Telegram user" },
-        { status: 400 }
-      );
-    }
-
-    const supabase = getSupabaseServiceClient();
-    const subscription = new SubscriptionService(supabase);
+    const { user, subscriptionActive } = await resolveLedgerUser(body);
     const ledgerDate = body.ledgerDate ?? todayIsoDate();
-
-    const { data: userRow, error: userError } = await supabase
-      .from("users")
-      .select(
-        "id, telegram_id, role, display_name, texas_username, subscription_end_date"
-      )
-      .eq("telegram_id", telegramId)
-      .maybeSingle();
-
-    if (userError) throw userError;
-    if (!userRow) {
-      return NextResponse.json(
-        { error: "User not linked to Telegram account. Send /start to the bot." },
-        { status: 404 }
-      );
-    }
-
-    const subscriptionActive = await subscription.isActive(userRow.id);
-
-    const user: AppUser = {
-      id: userRow.id,
-      telegram_id: userRow.telegram_id,
-      role: userRow.role,
-      display_name: userRow.display_name,
-      texas_username: userRow.texas_username,
-      subscription_end_date: userRow.subscription_end_date,
-      subscription_active: subscriptionActive,
-    };
+    const supabase = getSupabaseServiceClient();
 
     if (!subscriptionActive) {
       const payload: LedgerSessionResponse = {
@@ -103,30 +57,57 @@ export async function POST(request: Request) {
       return NextResponse.json(payload, { status: 402 });
     }
 
-    const { data: ledgerRow, error: ledgerError } = await supabase
-      .from("daily_ledgers")
-      .select(
-        "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at"
-      )
-      .eq("user_id", userRow.id)
-      .eq("ledger_date", ledgerDate)
+    const viewUserId = body.viewUserId?.trim() || user.id;
+    if (viewUserId !== user.id) {
+      await assertCanViewUser(supabase, user.id, viewUserId);
+    }
+
+    const ledger = await loadLedgerForUser(supabase, viewUserId, ledgerDate);
+
+    const { data: profile } = await supabase
+      .from("users")
+      .select("parent_id")
+      .eq("id", user.id)
       .maybeSingle();
 
-    if (ledgerError) throw ledgerError;
+    const subAgents =
+      viewUserId === user.id
+        ? await fetchSubAgentsWithLedgers(supabase, user.id, ledgerDate)
+        : [];
 
-    const ledger: DailyLedger | null = ledgerRow
-      ? mapLedgerRow(ledgerRow)
-      : null;
+    const isTenantMaster =
+      user.role === "master" &&
+      (profile?.parent_id == null || subAgents.length > 0);
+
+    const ownLedger =
+      viewUserId === user.id
+        ? ledger
+        : await loadLedgerForUser(supabase, user.id, ledgerDate);
+
+    const hierarchy =
+      viewUserId === user.id && subAgents.length > 0
+        ? buildHierarchyPayload(subAgents, ownLedger)
+        : undefined;
 
     const payload: LedgerSessionResponse = {
-      user,
+      user: {
+        ...user,
+        parent_id: profile?.parent_id ?? null,
+        is_tenant_master: isTenantMaster,
+      },
       ledger,
       subscription_active: true,
+      hierarchy,
+      viewing_user_id: viewUserId,
     };
 
     return NextResponse.json(payload);
   } catch (e) {
+    if (e instanceof LedgerAuthError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
     const message = e instanceof Error ? e.message : "Server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message.includes("غير مصرح") ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

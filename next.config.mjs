@@ -41,6 +41,8 @@ const nextConfig = {
     outputFileTracingIncludes: {
       "/api/*": puppeteerTraceIncludes,
       "/api/**/*": puppeteerTraceIncludes,
+      "/api/cron/*": puppeteerTraceIncludes,
+      "/api/render/*": puppeteerTraceIncludes,
     },
   },
   webpack: (config, { isServer }) => {

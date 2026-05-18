@@ -5,23 +5,20 @@ import { normalizeTexasUsername } from "@/lib/texas/texas-api-config";
 import { sendTelegramMessage } from "@/lib/telegram/bot-api";
 import type { TelegramMessage } from "@/lib/telegram/bot-api";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
+import { botAr, miniAppHint } from "@/lib/i18n/bot-ar";
 
 type OnboardingStep = "login" | "password" | "license";
 
-/** Texas logins like Alitest@Regional.Nsp — allow @ and preserve case. */
 const TEXAS_LOGIN_RE = /^[^\s]{3,128}$/;
 
 function displayName(msg: TelegramMessage): string {
   const from = msg.from;
-  if (!from) return "Master";
-  return [from.first_name, from.last_name].filter(Boolean).join(" ") || "Master";
+  if (!from) return "ماستر";
+  return [from.first_name, from.last_name].filter(Boolean).join(" ") || "ماستر";
 }
 
-function miniAppHint(): string {
-  const url = process.env.TELEGRAM_MINI_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  return url
-    ? `\n\nOpen your dashboard: ${url}`
-    : "\n\nOpen TEXAS FUNDS from the bot menu.";
+function appUrl(): string | undefined {
+  return process.env.TELEGRAM_MINI_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
 }
 
 function normalizeStep(raw: string): OnboardingStep | null {
@@ -47,13 +44,10 @@ export async function handleOnboardingMessage(
       if (active) {
         await sendTelegramMessage(
           chatId,
-          `Welcome back, ${existing.display_name ?? "Master"}! Your subscription is active.${miniAppHint()}`
+          botAr.welcomeBackActive(existing.display_name ?? "ماستر", appUrl())
         );
       } else {
-        await sendTelegramMessage(
-          chatId,
-          "Your subscription has expired. Contact admin for a new license key to renew."
-        );
+        await sendTelegramMessage(chatId, botAr.subscriptionExpired);
       }
       return;
     }
@@ -63,7 +57,6 @@ export async function handleOnboardingMessage(
       .upsert(
         {
           telegram_id: telegramId,
-          // DB CHECK allows 'email' | 'password' | 'license' (not 'login')
           step: "email",
           texas_email_encrypted: null,
           texas_password_encrypted: null,
@@ -75,19 +68,12 @@ export async function handleOnboardingMessage(
       console.error("[onboarding] session upsert failed", {
         telegramId,
         error: sessionUpsertError.message,
-        code: sessionUpsertError.code,
       });
-      await sendTelegramMessage(
-        chatId,
-        "Could not start registration (database error). Contact support or try again later."
-      );
+      await sendTelegramMessage(chatId, botAr.sessionDbError);
       return;
     }
 
-    await sendTelegramMessage(
-      chatId,
-      "Welcome to TEXAS FUNDS calculate.\n\nStep 1/3 — Send your Texas agents.texas4win.com username or email exactly as shown on the login page (case matters, e.g. Alitest@Regional.Nsp):"
-    );
+    await sendTelegramMessage(chatId, botAr.welcomeNew);
     return;
   }
 
@@ -102,15 +88,12 @@ export async function handleOnboardingMessage(
       telegramId,
       error: sessionFetchError.message,
     });
-    await sendTelegramMessage(
-      chatId,
-      "Registration session error. Send /start to try again."
-    );
+    await sendTelegramMessage(chatId, botAr.sessionFetchError);
     return;
   }
 
   if (!session) {
-    await sendTelegramMessage(chatId, "Send /start to begin registration.");
+    await sendTelegramMessage(chatId, botAr.sendStart);
     return;
   }
 
@@ -118,17 +101,14 @@ export async function handleOnboardingMessage(
   const step = normalizeStep(session.step as string);
 
   if (!step) {
-    await sendTelegramMessage(chatId, "Session invalid. Send /start to begin again.");
+    await sendTelegramMessage(chatId, botAr.sessionInvalid);
     return;
   }
 
   if (step === "login") {
     const texasLogin = normalizeTexasUsername(text);
     if (!TEXAS_LOGIN_RE.test(texasLogin)) {
-      await sendTelegramMessage(
-        chatId,
-        "Invalid login. Send your Texas username or email (3–128 characters, no spaces). Example: Alitest@Regional.Nsp"
-      );
+      await sendTelegramMessage(chatId, botAr.loginInvalid);
       return;
     }
 
@@ -145,23 +125,17 @@ export async function handleOnboardingMessage(
         telegramId,
         error: loginSaveError.message,
       });
-      await sendTelegramMessage(
-        chatId,
-        "Could not save your login. Send /start and try again."
-      );
+      await sendTelegramMessage(chatId, botAr.loginSaveError);
       return;
     }
 
-    await sendTelegramMessage(
-      chatId,
-      "Step 2/3 — Send your Texas dashboard password.\n\n(Message is encrypted before storage.)"
-    );
+    await sendTelegramMessage(chatId, botAr.stepPassword);
     return;
   }
 
   if (step === "password") {
     if (text.length < 4) {
-      await sendTelegramMessage(chatId, "Password is too short. Try again.");
+      await sendTelegramMessage(chatId, botAr.passwordShort);
       return;
     }
 
@@ -178,17 +152,11 @@ export async function handleOnboardingMessage(
         telegramId,
         error: passwordSaveError.message,
       });
-      await sendTelegramMessage(
-        chatId,
-        "Could not save your password. Send /start and try again."
-      );
+      await sendTelegramMessage(chatId, botAr.passwordSaveError);
       return;
     }
 
-    await sendTelegramMessage(
-      chatId,
-      "Step 3/3 — Send your license key (e.g. TEXAS-XXXX-XXXX-XXXX):"
-    );
+    await sendTelegramMessage(chatId, botAr.stepLicense);
     return;
   }
 
@@ -205,10 +173,7 @@ export async function handleOnboardingMessage(
       !freshSession?.texas_email_encrypted ||
       !freshSession?.texas_password_encrypted
     ) {
-      await sendTelegramMessage(
-        chatId,
-        "Session expired. Send /start to register again."
-      );
+      await sendTelegramMessage(chatId, botAr.sessionExpired);
       return;
     }
 
@@ -217,10 +182,7 @@ export async function handleOnboardingMessage(
       .decrypt(freshSession.texas_password_encrypted)
       .trim();
 
-    await sendTelegramMessage(
-      chatId,
-      "Validating your Texas agent account and license key…"
-    );
+    await sendTelegramMessage(chatId, botAr.validating);
 
     try {
       const result = await registration.completeRegistration({
@@ -232,56 +194,40 @@ export async function handleOnboardingMessage(
       });
 
       const end = new Date(result.subscriptionEndDate).toLocaleDateString(
-        "en-GB",
+        "ar-SY",
         { timeZone: process.env.LEDGER_TIMEZONE ?? "Asia/Damascus" }
       );
 
       await sendTelegramMessage(
         chatId,
-        `Registration complete.\n\nSubscription active until: ${end}${miniAppHint()}`
+        botAr.registrationComplete(end) + miniAppHint(appUrl())
       );
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
-      const msg = err.message || "Registration failed";
-      const cause =
-        err.cause instanceof Error
-          ? err.cause.message
-          : err.cause != null
-            ? String(err.cause)
-            : undefined;
+      const msg = err.message || "فشل التسجيل";
       console.error("[onboarding] registration failed", {
         telegramId,
         error: msg,
-        cause,
-        stack: err.stack?.split("\n").slice(0, 8).join("\n"),
       });
 
       if (msg.includes("LICENSE_KEY_INVALID")) {
-        await sendTelegramMessage(
-          chatId,
-          "Invalid or already used license key. Check the key and try again."
-        );
+        await sendTelegramMessage(chatId, botAr.licenseInvalid);
         return;
       }
       if (msg.includes("TELEGRAM_ALREADY_REGISTERED")) {
-        await sendTelegramMessage(
-          chatId,
-          "This Telegram account is already registered. Send /start."
-        );
+        await sendTelegramMessage(chatId, botAr.telegramAlreadyRegistered);
         return;
       }
       if (msg.includes("Texas sign-in failed")) {
-        const texasDetail = msg.includes("Invalid username or password")
-          ? "\n\nTexas says: Invalid username or password."
-          : msg.includes("HTTP 403")
-            ? "\n\nBlocked by Texas/Cloudflare (403). Try again in a few minutes."
-            : msg.includes("HTTP 401")
-              ? "\n\nSession rejected (401)."
-              : "";
-        await sendTelegramMessage(
-          chatId,
-          `Texas login failed. Use the exact username and password from agents.texas4win.com (case-sensitive).${texasDetail}\n\nSend /start to try again.`
-        );
+        let detail = "";
+        if (msg.includes("Invalid username or password")) {
+          detail = "\n\nتكساس: اسم مستخدم أو كلمة مرور غير صحيحة.";
+        } else if (msg.includes("HTTP 403")) {
+          detail = "\n\nمحظور من تكساس/Cloudflare (403).";
+        } else if (msg.includes("HTTP 401")) {
+          detail = "\n\nرفض الجلسة (401).";
+        }
+        await sendTelegramMessage(chatId, botAr.texasLoginFailed(detail));
         await supabase
           .from("telegram_onboarding_sessions")
           .delete()
@@ -289,10 +235,7 @@ export async function handleOnboardingMessage(
         return;
       }
 
-      await sendTelegramMessage(
-        chatId,
-        `Registration failed: ${msg}\n\nSend /start to try again.`
-      );
+      await sendTelegramMessage(chatId, botAr.registrationFailed(msg));
     }
   }
 }

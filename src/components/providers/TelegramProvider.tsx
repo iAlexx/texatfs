@@ -30,8 +30,8 @@ export function TelegramProvider({ children }: { children: ReactNode }) {
     if (wa) {
       wa.ready();
       wa.expand();
-      wa.setHeaderColor("#0a0e17");
-      wa.setBackgroundColor("#0a0e17");
+      wa.setHeaderColor("#0a0a0b");
+      wa.setBackgroundColor("#0a0a0b");
       setInitData(wa.initData ?? "");
       const user = wa.initDataUnsafe?.user;
       if (user?.id) setTelegramUserId(user.id);

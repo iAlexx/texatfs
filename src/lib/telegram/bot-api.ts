@@ -18,6 +18,37 @@ function botToken(): string {
   return token;
 }
 
+export async function sendTelegramPhoto(
+  chatId: number,
+  photo: Buffer,
+  options?: { caption?: string; filename?: string }
+): Promise<void> {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  if (options?.caption) {
+    form.append("caption", options.caption);
+  }
+  form.append(
+    "photo",
+    new Blob([new Uint8Array(photo)], { type: "image/png" }),
+    options?.filename ?? "daily-report.png"
+  );
+
+  const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/sendPhoto`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("[telegram] sendPhoto failed", {
+      status: res.status,
+      bodyPreview: body.slice(0, 200),
+    });
+    throw new Error(`Telegram sendPhoto failed: ${res.status} ${body}`);
+  }
+}
+
 export async function sendTelegramMessage(
   chatId: number,
   text: string,

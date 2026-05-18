@@ -2,11 +2,12 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import Script from "next/script";
 import { AppProviders } from "@/components/providers/AppProviders";
+import { cairo } from "@/lib/fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TEXAS FUNDS calculate",
-  description: "Institutional daily ledger — Telegram Mini App",
+  title: "تكساس فاندز | TEXAS FUNDS",
+  description: "سجل يومي فاخر — تطبيق تيليغرام",
 };
 
 export const viewport: Viewport = {
@@ -23,8 +24,8 @@ export default function RootLayout({
   children: ReactNode;
 }) {
   return (
-    <html lang="ar" dir="rtl" className="h-full">
-      <body className="min-h-full bg-navy-900 font-sans antialiased">
+    <html lang="ar" dir="rtl" className={`h-full ${cairo.variable}`}>
+      <body className={`${cairo.className} min-h-full bg-background font-sans antialiased`}>
         <Script
           src="https://telegram.org/js/telegram-web-app.js"
           strategy="beforeInteractive"

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { botAr } from "@/lib/i18n/bot-ar";
 import { sendTelegramMessage } from "@/lib/telegram/bot-api";
 
 export type LicenseDuration = "1" | "3" | "6" | "12";
@@ -19,10 +20,7 @@ export async function handleGenkeyCommand(
 ): Promise<void> {
   const duration = parseGenkeyArgs(text);
   if (!duration) {
-    await sendTelegramMessage(
-      chatId,
-      "Usage: /genkey [1|3|6|12]\nExample: /genkey 12"
-    );
+    await sendTelegramMessage(chatId, botAr.genkeyUsage);
     return;
   }
 
@@ -33,13 +31,13 @@ export async function handleGenkeyCommand(
   });
 
   if (error) {
-    await sendTelegramMessage(chatId, `Failed to generate key: ${error.message}`);
+    await sendTelegramMessage(chatId, botAr.genkeyFailed(error.message));
     return;
   }
 
   await sendTelegramMessage(
     chatId,
-    `New license key (${duration} month(s)):\n\n<code>${data}</code>\n\nShare this with the Master during registration.`,
+    botAr.genkeySuccess(duration, String(data)),
     { parse_mode: "HTML" }
   );
 }

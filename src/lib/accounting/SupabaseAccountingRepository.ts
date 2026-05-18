@@ -155,4 +155,42 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     if (error) throw error;
     return rowToLedger(data);
   }
+
+  async insertSnapshot(
+    userId: string,
+    ledgerDate: string,
+    snapshot: NormalizedTexasSnapshot,
+    fetchSource = "cron"
+  ): Promise<{ id: string }> {
+    const { data: previous } = await this.supabase
+      .from("api_snapshots")
+      .select("id")
+      .eq("user_id", userId)
+      .lt("ledger_date", ledgerDate)
+      .order("ledger_date", { ascending: false })
+      .order("captured_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { data, error } = await this.supabase
+      .from("api_snapshots")
+      .insert({
+        user_id: userId,
+        ledger_date: ledgerDate,
+        currency_code: snapshot.currencyCode,
+        balance: snapshot.balance,
+        total_deposit: snapshot.totalDeposit,
+        total_withdraw: snapshot.totalWithdraw,
+        ngr: snapshot.ngr,
+        raw_wallets: snapshot.rawWallets,
+        raw_statistics: snapshot.rawStatistics,
+        previous_snapshot_id: previous?.id ?? null,
+        fetch_source: fetchSource,
+      })
+      .select("id")
+      .single();
+
+    if (error) throw error;
+    return { id: data.id as string };
+  }
 }

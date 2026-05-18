@@ -70,4 +70,90 @@ body {
   .admin-gold-text {
     @apply bg-gold-gradient bg-clip-text text-transparent;
   }
+
+  /* TMA ledger — brushed steel panels */
+  .panel-brushed-steel {
+    @apply overflow-hidden rounded-lg border border-steel-border bg-steel-gradient shadow-panel;
+  }
+
+  .panel-brushed-steel-header {
+    @apply border-b border-steel-border/80 bg-navy-700/60 px-4 py-3;
+  }
+
+  .ledger-shell {
+    @apply min-h-screen bg-background;
+  }
+
+  .ledger-title-gold {
+    @apply bg-gold-gradient bg-clip-text text-transparent;
+  }
+
+  .steel-divider {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-steel-border to-transparent;
+  }
+
+  .history-chip {
+    @apply shrink-0 rounded-md border border-steel-border bg-navy-800/80 px-3 py-2 text-right transition-colors;
+  }
+
+  .history-chip-active {
+    @apply border-gold/50 bg-navy-700 shadow-[inset_0_0_0_1px_rgba(201,162,39,0.2)];
+  }
+
+  /* Phase 3 — executive glass & luxury card */
+  .glass-panel {
+    @apply rounded-2xl border border-white/[0.08] bg-white/[0.04] shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl;
+  }
+
+  .glass-panel-gold {
+    @apply glass-panel shadow-[0_0_48px_rgba(201,162,39,0.12),0_8px_32px_rgba(0,0,0,0.5)];
+  }
+
+  .luxury-balance-card {
+    background: linear-gradient(
+      145deg,
+      #1c1c1f 0%,
+      #0a0a0c 35%,
+      #15120d 70%,
+      #1a1814 100%
+    );
+    @apply relative overflow-hidden rounded-2xl border border-gold/35 p-6;
+    box-shadow:
+      0 0 0 1px rgba(201, 162, 39, 0.2),
+      0 0 60px rgba(201, 162, 39, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+  }
+
+  .luxury-balance-card::before {
+    content: "";
+    @apply pointer-events-none absolute inset-0 opacity-30;
+    background: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 2px,
+      rgba(255, 255, 255, 0.02) 2px,
+      rgba(255, 255, 255, 0.02) 4px
+    );
+  }
+
+  .embossed-gold {
+    @apply font-bold tabular-nums tracking-tight;
+    color: #e8d48a;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.8),
+      0 0 24px rgba(201, 162, 39, 0.55),
+      0 0 48px rgba(201, 162, 39, 0.25);
+  }
+
+  .executive-bg {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(201, 162, 39, 0.12), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 100%, rgba(42, 53, 68, 0.4), transparent),
+      hsl(var(--background));
+  }
+
+  .gold-glow-ring {
+    box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35), 0 0 20px rgba(201, 162, 39, 0.15);
+  }
 }
