@@ -5,6 +5,9 @@ import { loadReportRenderData } from "@/lib/report/load-report-data";
 import { dispatchDailySummaryPhoto } from "@/lib/report/daily-summary-dispatcher";
 import { DailyReportOrchestrator } from "@/lib/services/DailyReportOrchestrator";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { recordSyncLog } from "@/lib/finance/sync-log";
+import { upsertDailyMetric } from "@/lib/finance/cumulative-vault";
+import { checkAndSendSmartAlerts } from "@/lib/finance/smart-alerts";
 
 const USER_DELAY_MS = Number(process.env.CRON_USER_DELAY_MS ?? 60_000);
 
@@ -90,6 +93,50 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
       );
       photosSent += 1;
 
+      const { data: ledgerFull } = await supabase
+        .from("daily_ledgers")
+        .select("al_nihai, al_harq, suhoubat, tebat")
+        .eq("id", ledgerRow.id)
+        .single();
+
+      if (ledgerFull) {
+        const { data: prev } = await supabase
+          .from("daily_ledgers")
+          .select("al_nihai")
+          .eq("user_id", user.id)
+          .lt("ledger_date", ledgerDate)
+          .order("ledger_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        await upsertDailyMetric(
+          supabase,
+          user.id,
+          ledgerDate,
+          Number(ledgerFull.al_nihai),
+          prev ? Number(prev.al_nihai) : null
+        );
+
+        await checkAndSendSmartAlerts(
+          supabase,
+          user.id,
+          user.telegram_id,
+          {
+            al_harq: Number(ledgerFull.al_harq),
+            al_nihai: Number(ledgerFull.al_nihai),
+            suhoubat: Number(ledgerFull.suhoubat),
+            tebat: Number(ledgerFull.tebat),
+          },
+          user.subscription_end_date
+        );
+      }
+
+      await recordSyncLog(supabase, {
+        userId: user.id,
+        status: "success",
+        ledgerDate,
+      });
+
       console.info("[cron/daily-sync] user complete", {
         userId: user.id,
         ledgerId: ledgerRow.id,
@@ -99,6 +146,12 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
       console.error("[cron/daily-sync] user failed", {
         userId: user.id,
         error: msg,
+      });
+      await recordSyncLog(supabase, {
+        userId: user.id,
+        status: "failed",
+        errorMessage: msg,
+        ledgerDate,
       });
       failed.push({ userId: user.id, error: msg });
     }

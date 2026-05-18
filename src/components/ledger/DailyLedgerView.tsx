@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils/cn";
 export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const [viewAgentLabel, setViewAgentLabel] = useState<string | null>(null);
   const telegram = useTelegram();
   const history = useLedgerHistory();
   const session = useLedgerSession(selectedDate, viewUserId);
@@ -109,16 +110,19 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const ledger = session.data?.ledger;
   const hierarchy = session.data?.hierarchy;
   const isToday = selectedDate === todayIsoDate();
-  const viewingSubAgent =
-    viewUserId && viewUserId !== user?.id && session.data?.viewing_user_id;
+  const viewingSubAgent = Boolean(
+    viewUserId && user?.id && viewUserId !== user.id
+  );
 
   return (
     <ExecutiveShell
       title={ar.dailyLedger}
       subtitle={
-        ledger
-          ? formatLedgerDate(ledger.ledger_date)
-          : formatLedgerDate(selectedDate)
+        viewingSubAgent && viewAgentLabel
+          ? `${viewAgentLabel} · ${formatLedgerDate(selectedDate)}`
+          : ledger
+            ? formatLedgerDate(ledger.ledger_date)
+            : formatLedgerDate(selectedDate)
       }
       badge={
         ledger?.status === "open"
@@ -135,7 +139,10 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         <motion.button
           type="button"
           className="mb-4 flex items-center gap-2 text-sm text-gold"
-          onClick={() => setViewUserId(null)}
+          onClick={() => {
+            setViewUserId(null);
+            setViewAgentLabel(null);
+          }}
           whileTap={{ scale: 0.97 }}
         >
           <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
@@ -147,7 +154,10 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         selectedDate={selectedDate}
         onSelectDate={(d) => {
           setSelectedDate(d);
-          setViewUserId(null);
+          if (!viewingSubAgent) {
+            setViewUserId(null);
+            setViewAgentLabel(null);
+          }
         }}
         history={history.data?.dates ?? []}
         isLoading={history.isLoading}
@@ -157,7 +167,10 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         <SubAgentsBreakdown
           hierarchy={hierarchy}
           ledgerDate={selectedDate}
-          onSelectAgent={(id) => setViewUserId(id)}
+          onSelectAgent={(id, label) => {
+            setViewUserId(id);
+            setViewAgentLabel(label);
+          }}
         />
       ) : null}
 
@@ -183,7 +196,10 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
             exit={{ opacity: 0, x: -8 }}
             transition={{ type: "spring", stiffness: 200, damping: 24 }}
           >
-            <ExecutiveLedgerReport ledger={ledger} />
+            <ExecutiveLedgerReport
+              ledger={ledger}
+              targetUserId={viewUserId ?? user?.id}
+            />
           </motion.div>
         )}
       </AnimatePresence>

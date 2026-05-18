@@ -12,7 +12,8 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 interface ExportBody extends LedgerAuthInput {
-  targetUserId: string;
+  /** Omit to share your own ledger report */
+  targetUserId?: string;
   ledgerDate?: string;
 }
 
@@ -23,7 +24,10 @@ export async function POST(request: Request) {
     const supabase = getSupabaseServiceClient();
     const ledgerDate = body.ledgerDate ?? resolveLedgerDate();
 
-    await assertCanViewUser(supabase, user.id, body.targetUserId);
+    const targetUserId = body.targetUserId?.trim() || user.id;
+    if (targetUserId !== user.id) {
+      await assertCanViewUser(supabase, user.id, targetUserId);
+    }
 
     const masterTelegramId = user.telegram_id;
     if (!masterTelegramId) {
@@ -36,7 +40,7 @@ export async function POST(request: Request) {
     const { data: ledgerRow, error } = await supabase
       .from("daily_ledgers")
       .select("id")
-      .eq("user_id", body.targetUserId)
+      .eq("user_id", targetUserId)
       .eq("ledger_date", ledgerDate)
       .maybeSingle();
 

@@ -154,3 +154,7 @@ export function parseAdminIds(): Set<number> {
 export function isAdmin(telegramUserId: number): boolean {
   return parseAdminIds().has(telegramUserId);
 }
+
+export function getAdminTelegramIds(): number[] {
+  return [...parseAdminIds()];
+}

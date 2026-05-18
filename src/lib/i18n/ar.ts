@@ -68,7 +68,21 @@ export const ar = {
   exportReport: "تصدير",
   exportSent: "تم إرسال التقرير إلى تيليغرام",
   exportFailed: "تعذر التصدير",
+  shareReport: "مشاركة التقرير",
+  shareReportSent: "تم إرسال صورة التقرير إلى تيليغرام",
+  shareReportHint: "صورة PNG فاخرة تصلك مباشرة في المحادثة",
+  networkTotalBurn: "إجمالي حرق الشبكة",
   sectionMovement: "الحركة المالية",
+  vaultTitle: "الخزنة — صافي الربح",
+  balanced: "متوازن ✅",
+  unbalanced: "غير متوازن — يوجد فرق",
+  downloadPdf: "تحميل PDF",
+  aiInsight: "تحليل ذكي",
+  referralTitle: "برنامج الإحالة",
+  referralInvited: "مدعوون",
+  referralReward: "أيام مكافأة",
+  networkMap: "شبكة الوكلاء",
+  liveSync: "متصل",
 } as const;
 
 export type ArKey = keyof typeof ar;

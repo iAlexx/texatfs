@@ -31,9 +31,19 @@ export interface HeroData {
   };
   ledger_date: string;
   performance_rating: string | null;
+  ai_insight: string;
   ledger_status: string | null;
   al_nihai: number | null;
   announcement: string;
+  synced_today: boolean;
+  last_sync_at: string | null;
+  vault: {
+    days7: number;
+    days30: number;
+    series: { date: string; cumulative_net: number }[];
+  };
+  network_total_burn: number | null;
+  network_agent_count: number;
 }
 
 export function useHeroData() {
@@ -50,7 +60,7 @@ export function useHeroData() {
 export function useExportReport() {
   const { initData, telegramUserId } = useTelegram();
   return useMutation({
-    mutationFn: (params: { targetUserId: string; ledgerDate?: string }) =>
+    mutationFn: (params: { targetUserId?: string; ledgerDate?: string }) =>
       postJson<{ ok: boolean; message: string }>("/api/ledger/export", {
         ...authBody(initData, telegramUserId),
         ...params,
@@ -68,3 +78,18 @@ export function useRedeemLicense() {
       ),
   });
 }
+
+export function useReferralData() {
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
+  return useQuery({
+    queryKey: ["profile", "referral"],
+    enabled: isReady && canAuthenticate,
+    queryFn: () =>
+      postJson<{
+        referral_code: string;
+        invited_count: number;
+        reward_days: number;
+      }>("/api/profile/referral", authBody(initData, telegramUserId)),
+  });
+}
+

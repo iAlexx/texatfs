@@ -1,4 +1,5 @@
 import { ar } from "@/lib/i18n/ar";
+import { reconcileLedger } from "@/lib/finance/reconciliation";
 import { resolvePerformanceSummary } from "@/lib/i18n/performance";
 import { formatLedgerDate, formatMoney } from "@/lib/utils/format";
 import type { ReportRenderData } from "@/lib/report/types";
@@ -32,6 +33,15 @@ export function renderReportHtml(data: ReportRenderData): string {
   });
   const statusAr =
     ledger.status === "open" ? ar.statusOpen : ar.statusClosed;
+  const reconciliation = reconcileLedger({
+    tebat: ledger.tebat,
+    suhoubat: ledger.suhoubat,
+    wasel_menho: ledger.wasel_menho,
+    wasel_eleih: ledger.wasel_eleih,
+  });
+  const reconciliationLabel = reconciliation.balanced
+    ? ar.balanced
+    : ar.unbalanced;
 
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -114,6 +124,24 @@ export function renderReportHtml(data: ReportRenderData): string {
       color: #e8d48a;
       text-align: center;
     }
+    .reconcile {
+      margin: 10px 18px 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+    .reconcile-ok {
+      background: rgba(184,255,60,0.1);
+      border: 1px solid rgba(184,255,60,0.35);
+      color: #b8ff3c;
+    }
+    .reconcile-bad {
+      background: rgba(196,92,92,0.12);
+      border: 1px solid rgba(196,92,92,0.4);
+      color: #e8a0a0;
+    }
     .hero-balance {
       margin: 20px 18px;
       padding: 28px 20px;
@@ -187,6 +215,7 @@ export function renderReportHtml(data: ReportRenderData): string {
         <p class="user">${escapeHtml(displayName)}</p>
       </header>
       <p class="performance">${escapeHtml(performance)}</p>
+      <p class="reconcile ${reconciliation.balanced ? "reconcile-ok" : "reconcile-bad"}">${escapeHtml(reconciliationLabel)}</p>
       ${
         ledger.discrepancy_flag
           ? `<p class="alert">${escapeHtml(ar.discrepancyAlert)}</p>`
@@ -195,6 +224,8 @@ export function renderReportHtml(data: ReportRenderData): string {
       <section class="hero-balance">
         <p class="hero-label">${escapeHtml(ar.finalBalance)}</p>
         <p class="hero-value">${escapeHtml(formatMoney(ledger.al_nihai))}</p>
+        <p class="hero-label" style="margin-top:14px">${escapeHtml(ar.alHarq)}</p>
+        <p class="hero-value" style="font-size:28px;color:#c45c5c">${escapeHtml(formatMoney(ledger.al_harq))}</p>
       </section>
       <section class="grid">
         ${gridCell(ar.tebat, formatMoney(ledger.tebat))}

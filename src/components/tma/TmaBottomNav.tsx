@@ -17,8 +17,8 @@ export function TmaBottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="glass-nav fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-md">
-      <div className="flex items-stretch justify-around px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
+    <nav className="pointer-events-none fixed bottom-4 left-0 right-0 z-50 flex justify-center px-4">
+      <div className="nav-float pointer-events-auto flex w-full max-w-sm items-stretch justify-around rounded-2xl px-2 py-2">
         {tabs.map(({ href, label, icon: Icon }) => {
           const active =
             pathname === href || (href === "/home" && pathname === "/");
@@ -34,14 +34,20 @@ export function TmaBottomNav() {
               {active && (
                 <motion.span
                   layoutId="nav-pill"
-                  className="absolute inset-0 rounded-xl bg-gold/10 ring-1 ring-gold/30"
-                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  className="absolute inset-0 rounded-xl bg-gold/15 ring-1 ring-gold/40"
+                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
                 />
               )}
-              <Icon
-                className="relative z-10 h-5 w-5"
-                strokeWidth={active ? 2 : 1.5}
-              />
+              <motion.span
+                animate={active ? { scale: 1.12, y: -2 } : { scale: 1, y: 0 }}
+                transition={{ type: "spring", stiffness: 500, damping: 24 }}
+                className="relative z-10"
+              >
+                <Icon
+                  className="h-5 w-5"
+                  strokeWidth={active ? 2.2 : 1.5}
+                />
+              </motion.span>
               <span className="relative z-10 font-medium">{label}</span>
             </Link>
           );

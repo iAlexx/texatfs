@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, Download, Flame, Search, Users } from "lucide-react";
+import { ChevronLeft, Flame, Search, Send, Users } from "lucide-react";
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/utils/format";
 import { ar } from "@/lib/i18n/ar";
@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 
 interface SubAgentsBreakdownProps {
   hierarchy: HierarchyPayload;
-  onSelectAgent: (agentId: string) => void;
+  onSelectAgent: (agentId: string, label: string) => void;
   ledgerDate: string;
 }
 
@@ -56,7 +56,7 @@ export function SubAgentsBreakdown({
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-gold" strokeWidth={1.5} />
           <div>
-            <h2 className="text-sm font-semibold">{ar.subAgentsTitle}</h2>
+            <h2 className="text-sm font-semibold">{ar.networkMap}</h2>
             <p className="text-[10px] text-steel-500">{ar.subAgentsSubtitle}</p>
           </div>
         </div>
@@ -98,7 +98,12 @@ export function SubAgentsBreakdown({
             <div className="flex items-center gap-2 px-3 py-2">
               <button
                 type="button"
-                onClick={() => onSelectAgent(agent.id)}
+                onClick={() =>
+                  onSelectAgent(
+                    agent.id,
+                    agent.display_name ?? agent.texas_username ?? "وكيل"
+                  )
+                }
                 className="flex min-w-0 flex-1 items-center gap-2 text-right hover:opacity-90"
               >
                 <div className="min-w-0 flex-1">
@@ -127,8 +132,8 @@ export function SubAgentsBreakdown({
                 disabled={!agent.ledger || exportReport.isPending}
                 onClick={(e) => void handleExport(agent.id, e)}
               >
-                <Download className="h-3 w-3" />
-                {ar.exportReport}
+                <Send className="h-3 w-3" />
+                {ar.shareReport}
               </Button>
             </div>
           </motion.li>
