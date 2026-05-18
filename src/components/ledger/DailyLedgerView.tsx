@@ -19,7 +19,7 @@ import { ar } from "@/lib/i18n/ar";
 import { formatLedgerDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
 
-export function DailyLedgerView() {
+export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const telegram = useTelegram();
@@ -28,7 +28,7 @@ export function DailyLedgerView() {
 
   if (!telegram.isReady) {
     return (
-      <ExecutiveShell title={ar.loading}>
+      <ExecutiveShell title={ar.loading} embedded={embedded}>
         <motion.div
           className="flex items-center justify-center gap-2 py-20 text-steel-500"
           animate={{ opacity: [0.5, 1, 0.5] }}
@@ -43,7 +43,7 @@ export function DailyLedgerView() {
 
   if (!telegram.canAuthenticate) {
     return (
-      <ExecutiveShell title="خطأ">
+      <ExecutiveShell title="خطأ" embedded={embedded}>
         <p className="text-accent-negative">
           {telegram.authError ?? ar.errorGeneric}
         </p>
@@ -62,7 +62,7 @@ export function DailyLedgerView() {
 
   if (session.isLoading && !session.data) {
     return (
-      <ExecutiveShell title={ar.loading}>
+      <ExecutiveShell title={ar.loading} embedded={embedded}>
         <motion.div
           className="flex items-center justify-center gap-2 py-20 text-steel-500"
           animate={{ opacity: [0.5, 1, 0.5] }}
@@ -78,7 +78,7 @@ export function DailyLedgerView() {
   if (session.subscriptionExpired && session.data?.user) {
     return (
       <>
-        <ExecutiveShell title={ar.dailyLedger}>
+        <ExecutiveShell title={ar.dailyLedger} embedded={embedded}>
           <p className="text-steel-500">{ar.accessSuspended}</p>
         </ExecutiveShell>
         <SubscriptionExpiredOverlay
@@ -90,7 +90,7 @@ export function DailyLedgerView() {
 
   if (session.error) {
     return (
-      <ExecutiveShell title="خطأ">
+      <ExecutiveShell title="خطأ" embedded={embedded}>
         <p className="text-accent-negative">{session.error}</p>
         <Button
           type="button"
@@ -129,6 +129,7 @@ export function DailyLedgerView() {
       }
       onRefresh={isToday && !viewingSubAgent ? () => void session.refresh() : undefined}
       refreshing={session.isLoading}
+      embedded={embedded}
     >
       {viewingSubAgent ? (
         <motion.button
@@ -155,6 +156,7 @@ export function DailyLedgerView() {
       {!viewingSubAgent && hierarchy && hierarchy.sub_agents.length > 0 ? (
         <SubAgentsBreakdown
           hierarchy={hierarchy}
+          ledgerDate={selectedDate}
           onSelectAgent={(id) => setViewUserId(id)}
         />
       ) : null}
@@ -208,6 +210,7 @@ function ExecutiveShell({
   badge,
   onRefresh,
   refreshing,
+  embedded,
   children,
 }: {
   title: string;
@@ -215,23 +218,45 @@ function ExecutiveShell({
   badge?: string;
   onRefresh?: () => void;
   refreshing?: boolean;
+  embedded?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div className="executive-bg mx-auto min-h-screen max-w-md px-4 pb-12 pt-6">
+    <div
+      className={cn(
+        "mx-auto max-w-md px-4",
+        embedded ? "pb-4 pt-4" : "executive-bg min-h-screen pb-12 pt-6"
+      )}
+    >
       <motion.header
-        className="mb-6"
+        className={embedded ? "mb-4" : "mb-6"}
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <div className="glass-panel-gold flex items-start justify-between gap-3 p-4">
+        <div
+          className={cn(
+            "flex items-start justify-between gap-3 p-4",
+            embedded ? "glass-inner rounded-2xl" : "glass-panel-gold"
+          )}
+        >
           <div>
-            <p className="text-[10px] uppercase tracking-[0.25em] text-gold/70">
-              {ar.brandEn}
+            {!embedded && (
+              <p className="text-[10px] uppercase tracking-[0.25em] text-gold/70">
+                {ar.brandEn}
+              </p>
+            )}
+            <h1
+              className={cn(
+                "font-bold",
+                embedded ? "text-lg text-gold" : "mt-1 text-2xl ledger-title-gold"
+              )}
+            >
+              {embedded ? title : ar.brand}
+            </h1>
+            <p className="mt-0.5 text-sm text-steel-400">
+              {embedded ? (subtitle ?? title) : title}
             </p>
-            <h1 className="mt-1 text-2xl font-bold ledger-title-gold">{ar.brand}</h1>
-            <p className="mt-0.5 text-base text-steel-400">{title}</p>
-            {subtitle && (
+            {!embedded && subtitle && (
               <p className="mt-1 text-xs text-steel-600">{subtitle}</p>
             )}
           </div>

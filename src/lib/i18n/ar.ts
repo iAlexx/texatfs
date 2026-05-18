@@ -57,6 +57,18 @@ export const ar = {
   errorGeneric: "حدث خطأ. حاول مجدداً.",
   photoFallback:
     "تعذر إرسال صورة التقرير. افتح التطبيق لعرض السجل.",
+  navHome: "الرئيسية",
+  navLedger: "سجل المحاسبة",
+  navProfile: "حسابي",
+  profileTitle: "حسابي",
+  redeemLicense: "تفعيل مفتاح ترخيص",
+  redeemHint: "أدخل المفتاح الذي استلمته من المسؤول",
+  redeemSubmit: "تفعيل المفتاح",
+  searchAgents: "بحث بالبريد أو اسم المستخدم",
+  exportReport: "تصدير",
+  exportSent: "تم إرسال التقرير إلى تيليغرام",
+  exportFailed: "تعذر التصدير",
+  sectionMovement: "الحركة المالية",
 } as const;
 
 export type ArKey = keyof typeof ar;

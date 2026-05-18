@@ -7,9 +7,21 @@ export interface TelegramMessage {
   text?: string;
 }
 
+export interface TelegramInlineKeyboard {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+}
+
+export interface TelegramCallbackQuery {
+  id: string;
+  from: { id: number; first_name?: string };
+  message?: { message_id: number; chat: { id: number } };
+  data?: string;
+}
+
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 }
 
 function botToken(): string {
@@ -52,8 +64,11 @@ export async function sendTelegramPhoto(
 export async function sendTelegramMessage(
   chatId: number,
   text: string,
-  options?: { parse_mode?: "HTML" | "Markdown" }
-): Promise<void> {
+  options?: {
+    parse_mode?: "HTML" | "Markdown";
+    reply_markup?: TelegramInlineKeyboard;
+  }
+): Promise<{ message_id: number }> {
   const res = await fetch(
     `${TELEGRAM_API}/bot${botToken()}/sendMessage`,
     {
@@ -63,6 +78,7 @@ export async function sendTelegramMessage(
         chat_id: chatId,
         text,
         parse_mode: options?.parse_mode,
+        reply_markup: options?.reply_markup,
       }),
     }
   );
@@ -76,6 +92,51 @@ export async function sendTelegramMessage(
     });
     throw new Error(`Telegram sendMessage failed: ${res.status} ${body}`);
   }
+
+  const json = (await res.json()) as { result?: { message_id: number } };
+  return { message_id: json.result?.message_id ?? 0 };
+}
+
+export async function editTelegramMessage(
+  chatId: number,
+  messageId: number,
+  text: string,
+  options?: {
+    parse_mode?: "HTML" | "Markdown";
+    reply_markup?: TelegramInlineKeyboard;
+  }
+): Promise<void> {
+  const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/editMessageText`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: options?.parse_mode,
+      reply_markup: options?.reply_markup,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram editMessageText failed: ${res.status} ${body}`);
+  }
+}
+
+export async function answerCallbackQuery(
+  callbackQueryId: string,
+  text?: string
+): Promise<void> {
+  await fetch(`${TELEGRAM_API}/bot${botToken()}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: text ? text.length > 60 : false,
+    }),
+  });
 }
 
 export function parseAdminIds(): Set<number> {

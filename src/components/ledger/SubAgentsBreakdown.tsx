@@ -1,40 +1,73 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, Flame, Users } from "lucide-react";
+import { ChevronLeft, Download, Flame, Search, Users } from "lucide-react";
+import { toast } from "sonner";
 import { formatMoney } from "@/lib/utils/format";
 import { ar } from "@/lib/i18n/ar";
 import type { HierarchyPayload } from "@/lib/hierarchy/types";
-import { cn } from "@/lib/utils/cn";
+import { useExportReport } from "@/hooks/use-tma-api";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 interface SubAgentsBreakdownProps {
   hierarchy: HierarchyPayload;
   onSelectAgent: (agentId: string) => void;
+  ledgerDate: string;
 }
 
 export function SubAgentsBreakdown({
   hierarchy,
   onSelectAgent,
+  ledgerDate,
 }: SubAgentsBreakdownProps) {
   const { consolidated, sub_agents } = hierarchy;
+  const [query, setQuery] = useState("");
+  const exportReport = useExportReport();
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sub_agents;
+    return sub_agents.filter((a) => {
+      const email = (a.texas_username ?? "").toLowerCase();
+      const name = (a.display_name ?? "").toLowerCase();
+      return email.includes(q) || name.includes(q);
+    });
+  }, [sub_agents, query]);
+
+  async function handleExport(agentId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await exportReport.mutateAsync({ targetUserId: agentId, ledgerDate });
+      toast.success(ar.exportSent);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : ar.exportFailed);
+    }
+  }
 
   return (
     <motion.section
       className="glass-panel-gold mb-5 overflow-hidden"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.1 }}
     >
       <header className="border-b border-white/[0.06] px-4 py-3">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-gold" strokeWidth={1.5} />
           <div>
-            <h2 className="text-sm font-semibold text-foreground">
-              {ar.subAgentsTitle}
-            </h2>
+            <h2 className="text-sm font-semibold">{ar.subAgentsTitle}</h2>
             <p className="text-[10px] text-steel-500">{ar.subAgentsSubtitle}</p>
           </div>
+        </div>
+        <div className="relative mt-3">
+          <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-steel-500" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={ar.searchAgents}
+            className="border-steel-border bg-obsidian/40 pr-10 text-sm"
+          />
         </div>
       </header>
 
@@ -54,71 +87,57 @@ export function SubAgentsBreakdown({
         />
       </div>
 
-      <ul className="max-h-56 divide-y divide-white/[0.04] overflow-y-auto">
-        {sub_agents.map((agent, i) => (
+      <ul className="max-h-64 divide-y divide-white/[0.04] overflow-y-auto">
+        {filtered.map((agent, i) => (
           <motion.li
             key={agent.id}
             initial={{ opacity: 0, x: 8 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.05 * i }}
+            transition={{ delay: 0.03 * i }}
           >
-            <button
-              type="button"
-              onClick={() => onSelectAgent(agent.id)}
-              className="flex w-full items-center gap-3 px-4 py-3 text-right transition-colors hover:bg-white/[0.04] active:scale-[0.99]"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {agent.display_name ?? agent.texas_username ?? "—"}
-                </p>
-                <p className="truncate font-mono text-[10px] text-steel-600">
-                  {agent.texas_username}
-                </p>
-              </div>
-              <div className="text-left">
-                <p className="text-[10px] text-steel-500">{ar.agentBurn}</p>
-                <p className="font-mono text-xs tabular-nums text-accent-negative">
-                  {agent.ledger
-                    ? formatMoney(agent.ledger.al_harq)
-                    : "—"}
-                </p>
-              </div>
-              <div className="text-left">
-                <p className="text-[10px] text-steel-500">{ar.alNihai}</p>
-                <p
-                  className={cn(
-                    "font-mono text-xs tabular-nums",
-                    agent.ledger && agent.ledger.al_nihai >= 0
-                      ? "text-gold"
-                      : "text-accent-negative"
-                  )}
-                >
-                  {agent.ledger
-                    ? formatMoney(agent.ledger.al_nihai)
-                    : "—"}
-                </p>
-              </div>
-              <span
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-[9px]",
-                  agent.ledger?.status === "open"
-                    ? "bg-emerald-900/40 text-emerald-400"
-                    : "bg-steel-800 text-steel-500"
-                )}
+            <div className="flex items-center gap-2 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => onSelectAgent(agent.id)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-right hover:opacity-90"
               >
-                {agent.ledger?.status === "open"
-                  ? ar.statusOpen
-                  : agent.ledger
-                    ? ar.statusClosed
-                    : "—"}
-              </span>
-              <ChevronLeft
-                className="h-4 w-4 shrink-0 text-steel-600"
-                strokeWidth={1.5}
-              />
-            </button>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {agent.display_name ?? "—"}
+                  </p>
+                  <p className="truncate font-mono text-[10px] text-steel-600">
+                    {agent.texas_username}
+                  </p>
+                </div>
+                <div className="text-left">
+                  <p className="font-mono text-xs text-accent-negative">
+                    {agent.ledger ? formatMoney(agent.ledger.al_harq) : "—"}
+                  </p>
+                  <p className="font-mono text-[10px] text-gold/80">
+                    {agent.ledger ? formatMoney(agent.ledger.al_nihai) : "—"}
+                  </p>
+                </div>
+                <ChevronLeft className="h-4 w-4 shrink-0 text-steel-600" strokeWidth={1.5} />
+              </button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-gold/30 px-2 text-[10px] text-gold"
+                disabled={!agent.ledger || exportReport.isPending}
+                onClick={(e) => void handleExport(agent.id, e)}
+              >
+                <Download className="h-3 w-3" />
+                {ar.exportReport}
+              </Button>
+            </div>
           </motion.li>
         ))}
+        {!filtered.length && (
+          <li className="px-4 py-8 text-center text-xs text-steel-500">
+            لا نتائج للبحث
+          </li>
+        )}
       </ul>
     </motion.section>
   );
@@ -134,7 +153,7 @@ function ConsolidatedStat({
   icon?: ReactNode;
 }) {
   return (
-    <div className="bg-navy-900/80 px-3 py-3 text-center">
+    <div className="bg-obsidian/80 px-3 py-3 text-center">
       <p className="mb-1 flex items-center justify-center gap-1 text-[9px] text-steel-500">
         {icon}
         {label}

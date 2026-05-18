@@ -14,6 +14,7 @@ const sectionMotion = {
   animate: { opacity: 1, y: 0 },
 };
 
+/** واصل مدمج داخل حركة تكساس والرصيد — بدون قسم واتساب منفصل */
 export function ExecutiveLedgerReport({ ledger }: { ledger: DailyLedger }) {
   const performance = resolvePerformanceSummary({
     al_harq: ledger.al_harq,
@@ -52,7 +53,7 @@ export function ExecutiveLedgerReport({ ledger }: { ledger: DailyLedger }) {
       <motion.section className="glass-panel mb-4 overflow-hidden" {...sectionMotion}>
         <header className="border-b border-white/[0.06] px-4 py-3">
           <p className="text-xs font-medium tracking-wide text-steel-500">
-            {ar.sectionTexas}
+            {ar.sectionMovement}
           </p>
         </header>
         <LedgerRow labelAr={ar.tebat} labelEn="Tebat" value={ledger.tebat} />
@@ -64,18 +65,6 @@ export function ExecutiveLedgerReport({ ledger }: { ledger: DailyLedger }) {
           variant="emphasis"
         />
         <LedgerRow labelAr={ar.alHarq} labelEn="Al-Harq" value={ledger.al_harq} />
-      </motion.section>
-
-      <motion.section
-        className="glass-panel mb-4 overflow-hidden"
-        {...sectionMotion}
-        transition={{ delay: 0.05 }}
-      >
-        <header className="border-b border-white/[0.06] px-4 py-3">
-          <p className="text-xs font-medium tracking-wide text-steel-500">
-            {ar.sectionWasel}
-          </p>
-        </header>
         <LedgerRow
           labelAr={ar.waselMenho}
           labelEn="Wasel Menho"
@@ -93,7 +82,7 @@ export function ExecutiveLedgerReport({ ledger }: { ledger: DailyLedger }) {
       <motion.section
         className="glass-panel overflow-hidden"
         {...sectionMotion}
-        transition={{ delay: 0.1 }}
+        transition={{ delay: 0.05 }}
       >
         <header className="border-b border-white/[0.06] px-4 py-3">
           <p className="text-xs font-medium tracking-wide text-steel-500">

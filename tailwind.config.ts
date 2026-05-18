@@ -46,9 +46,18 @@ const config: Config = {
           foreground: "hsl(var(--card-foreground))",
         },
         gold: {
-          DEFAULT: "#c9a227",
+          DEFAULT: "#D4AF37",
           muted: "#8a7020",
-          foreground: "#0a0a0b",
+          foreground: "#0D0D0D",
+        },
+        obsidian: {
+          DEFAULT: "#0D0D0D",
+          900: "#0a0a0a",
+          800: "#121212",
+        },
+        lime: {
+          DEFAULT: "#B8FF3C",
+          muted: "#7ab82a",
         },
         navy: {
           950: "#060a12",
