@@ -2,28 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg-base: #0a0e17;
-  --bg-panel: #0f1623;
-  --border-steel: #2a3544;
-  --text-primary: #e8ecf1;
-  --text-muted: #7d8b9a;
-  --text-metallic: #c8d0dc;
+@layer base {
+  :root {
+    --background: 240 6% 4%;
+    --foreground: 210 20% 92%;
+    --card: 220 25% 8%;
+    --card-foreground: 210 20% 92%;
+    --popover: 220 25% 7%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 43 68% 47%;
+    --primary-foreground: 240 6% 6%;
+    --secondary: 215 18% 16%;
+    --secondary-foreground: 210 15% 85%;
+    --muted: 215 15% 14%;
+    --muted-foreground: 215 12% 55%;
+    --accent: 215 18% 18%;
+    --accent-foreground: 210 20% 92%;
+    --destructive: 0 55% 55%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 215 18% 22%;
+    --input: 215 18% 18%;
+    --ring: 43 68% 47%;
+    --radius: 0.5rem;
+
+    --bg-base: #0a0a0b;
+    --bg-panel: #0f1218;
+    --border-steel: #2a3544;
+    --text-primary: #e8ecf1;
+    --text-muted: #7d8b9a;
+    --text-metallic: #c8d0dc;
+    --gold: #c9a227;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
 }
 
 html,
 body {
   height: 100%;
-  background: var(--bg-base);
-  color: var(--text-primary);
 }
 
-body {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Flat institutional — no gradients on surfaces */
+/* Legacy ledger utilities */
 @layer components {
   .panel-steel {
     @apply border border-steel-border bg-navy-800 shadow-panel;
@@ -35,5 +61,13 @@ body {
 
   .label-ar {
     @apply text-sm text-steel-400;
+  }
+
+  .admin-panel {
+    @apply rounded-lg border border-border bg-card bg-steel-gradient shadow-luxury;
+  }
+
+  .admin-gold-text {
+    @apply bg-gold-gradient bg-clip-text text-transparent;
   }
 }
