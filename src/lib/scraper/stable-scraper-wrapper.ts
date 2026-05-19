@@ -69,7 +69,12 @@ export interface ScraperLogEvent {
 }
 
 function scraperLog(event: Omit<ScraperLogEvent, "ts">): void {
-  const line: ScraperLogEvent = { ts: new Date().toISOString(), ...event };
+  const safeEvent =
+    event && typeof event === "object" ? event : { level: "error" as const, step: "unknown", message: String(event) };
+  const line: ScraperLogEvent = {
+    ts: new Date().toISOString(),
+    ...safeEvent,
+  };
   const payload = JSON.stringify(line);
   if (event.level === "error") {
     console.error(payload);
@@ -151,9 +156,26 @@ function recordSuccess(): void {
   circuit.lastError = null;
 }
 
-function recordFailure(error: string): boolean {
-  circuit.consecutiveFailures += 1;
+/** Client/data-shape bugs should not trip the global circuit breaker. */
+function shouldTripCircuit(message: string): boolean {
+  if (/Spread syntax requires/i.test(message)) return false;
+  if (/is not iterable/i.test(message)) return false;
+  if (/Cannot convert undefined or null to object/i.test(message)) return false;
+  return true;
+}
+
+function normalizeError(err: unknown): Error {
+  if (err instanceof Error) return err;
+  return new Error(typeof err === "string" ? err : "Unknown sync error");
+}
+
+function recordFailure(error: string, tripCircuit: boolean): boolean {
   circuit.lastError = error;
+  if (!tripCircuit) {
+    return false;
+  }
+
+  circuit.consecutiveFailures += 1;
 
   if (circuit.consecutiveFailures < CIRCUIT_FAILURE_THRESHOLD) {
     return false;
@@ -263,7 +285,8 @@ export async function runWithStableScraper<T>(
       });
       return result;
     } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+      lastError = normalizeError(err);
+      const tripCircuit = shouldTripCircuit(lastError.message);
       scraperLog({
         level: "error",
         step: `${step}.failure`,
@@ -273,9 +296,10 @@ export async function runWithStableScraper<T>(
         userId: options?.userId,
         durationMs: Date.now() - started,
         error: lastError.message,
+        meta: { tripCircuit },
       });
 
-      const opened = recordFailure(lastError.message);
+      const opened = recordFailure(lastError.message, tripCircuit);
       if (opened) {
         scraperLog({
           level: "error",
@@ -371,3 +395,6 @@ export function resetScraperCircuit(): void {
     message: "Circuit manually reset",
   });
 }
+
+/** Alias for admin / ops */
+export const resetCircuitBreaker = resetScraperCircuit;

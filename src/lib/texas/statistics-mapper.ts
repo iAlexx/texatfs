@@ -87,7 +87,11 @@ export function mapWalletBalance(wallet: TexasWalletRecord): Pick<
   NormalizedTexasSnapshot,
   "balance" | "currencyCode" | "rawWallets"
 > {
-  const bag = { ...wallet } as Record<string, unknown>;
+  const safeWallet =
+    wallet && typeof wallet === "object" && !Array.isArray(wallet)
+      ? wallet
+      : ({} as TexasWalletRecord);
+  const bag = { ...safeWallet } as Record<string, unknown>;
   const balance = pickNumeric(bag, walletMapping.balance);
   const currency =
     pickString(bag, walletMapping.currencyCode) ?? "NSP";

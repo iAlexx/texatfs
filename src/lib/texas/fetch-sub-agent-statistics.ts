@@ -6,6 +6,21 @@ import type {
 } from "@/lib/texas/types";
 
 const DEFAULT_PAGE_SIZE = 1000;
+
+/** Texas API sometimes returns `records` as a non-array object — avoid spread crash. */
+function coerceRecordsArray(
+  value: unknown
+): SubAgentStatisticsResponse["result"]["records"] {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).filter(
+      (row): row is SubAgentStatisticsResponse["result"]["records"][number] =>
+        row !== null && typeof row === "object"
+    );
+  }
+  return [];
+}
+
 const DEFAULT_CURRENCY_FILTER: TexasFilterMap = {
   currency: {
     action: "=",
@@ -57,8 +72,10 @@ export async function fetchAllSubAgentStatistics(
       );
     }
 
-    const pageRecords = response.data.result?.records ?? [];
-    allRecords.push(...pageRecords);
+    const pageRecords = coerceRecordsArray(response.data.result?.records);
+    if (pageRecords.length) {
+      allRecords.push(...pageRecords);
+    }
 
     const totalRaw = response.data.result?.totalRecordsCount ?? "0";
     totalRecords = parseInt(totalRaw, 10);
@@ -75,10 +92,17 @@ export async function fetchAllSubAgentStatistics(
     throw new Error("getSubAgentStatistics returned no pages");
   }
 
+  const baseResult =
+    lastResponse.result &&
+    typeof lastResponse.result === "object" &&
+    !Array.isArray(lastResponse.result)
+      ? lastResponse.result
+      : {};
+
   const merged: SubAgentStatisticsResponse = {
     ...lastResponse,
     result: {
-      ...lastResponse.result,
+      ...baseResult,
       records: allRecords,
       totalRecordsCount: String(allRecords.length),
     },
