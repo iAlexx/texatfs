@@ -105,6 +105,37 @@ export interface TexasWalletRecord {
 
 export type AgentAllWalletsResponse = TexasApiEnvelope<TexasWalletRecord[]>;
 
+/** Row from POST /Agent/getChildren */
+export interface TexasChildRecord {
+  affiliateId: string;
+  username?: string;
+  email?: string;
+  role?: string;
+  mainCurrency?: string;
+  status?: string;
+  address?: string | null;
+  promoCode?: string | null;
+  [key: string]: unknown;
+}
+
+export type TexasChildrenResponse = TexasApiEnvelope<
+  TexasPagedResult<TexasChildRecord>
+>;
+
+export interface TexasAgentWalletResult {
+  transactionId?: string;
+  affiliateId?: string;
+  balance?: string;
+  availability?: string;
+  creditLine?: string;
+  credit?: string;
+  bonus?: string;
+  frozenBalance?: string;
+  [key: string]: unknown;
+}
+
+export type TexasAgentWalletResponse = TexasApiEnvelope<TexasAgentWalletResult>;
+
 export interface NormalizedTexasSnapshot {
   balance: number;
   totalDeposit: number;

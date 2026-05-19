@@ -16,21 +16,43 @@ import {
   useLedgerSession,
   todayIsoDate,
 } from "@/hooks/use-ledger-api";
+import {
+  useTexasAgentDetail,
+  useTexasSubAgents,
+} from "@/hooks/use-texas-agents-api";
+import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
 import { ar } from "@/lib/i18n/ar";
 import { formatLedgerDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
 
 export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
-  const [viewUserId, setViewUserId] = useState<string | null>(null);
+  const [viewTexasAffiliateId, setViewTexasAffiliateId] = useState<
+    string | null
+  >(null);
   const [viewAgentLabel, setViewAgentLabel] = useState<string | null>(null);
+  const [viewAgentCurrency, setViewAgentCurrency] = useState("NSP");
   const [activeTab, setActiveTab] = useState<LedgerTabId>("account");
   const telegram = useTelegram();
   const history = useLedgerHistory();
-  const session = useLedgerSession(selectedDate, viewUserId, {
-    forceSync: Boolean(viewUserId),
-    syncNetwork: activeTab === "agents" && !viewUserId,
-  });
+  const viewingTexasAgent = Boolean(viewTexasAffiliateId);
+  const session = useLedgerSession(
+    selectedDate,
+    null,
+    viewingTexasAgent ? undefined : { forceSync: false }
+  );
+  const showAgentsTab = session.data?.user
+    ? canManageNetwork(session.data.user.role)
+    : false;
+  const texasSubAgents = useTexasSubAgents(
+    selectedDate,
+    Boolean(showAgentsTab && !viewingTexasAgent)
+  );
+  const texasAgentDetail = useTexasAgentDetail(
+    viewTexasAffiliateId,
+    selectedDate,
+    viewAgentCurrency
+  );
 
   if (!telegram.isReady) {
     return (
@@ -76,8 +98,12 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         >
           <Loader2 className="h-5 w-5 animate-spin text-gold" strokeWidth={1.5} />
           <span className="text-sm">{ar.loadingLedger}</span>
-          {(viewUserId || activeTab === "agents") && (
-            <span className="text-[10px] text-lime/80">{ar.syncingTexas}</span>
+          {(viewingTexasAgent || activeTab === "agents") && (
+            <span className="text-[10px] text-lime/80">
+              {activeTab === "agents" && !viewingTexasAgent
+                ? ar.loadingSubAgents
+                : ar.syncingTexas}
+            </span>
           )}
         </motion.div>
       </ExecutiveShell>
@@ -115,29 +141,33 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   }
 
   const user = session.data?.user;
-  const ledger = session.data?.ledger;
-  const network = session.data?.network;
-  const canSeeNetwork =
-    user?.role === "master" ||
-    user?.role === "super_master" ||
-    user?.role === "agent";
-  const showAgentsTab = canSeeNetwork && Boolean(network);
+  const ledger = viewingTexasAgent
+    ? texasAgentDetail.data?.ledger ?? null
+    : session.data?.ledger;
+  const accountLoading =
+    viewingTexasAgent &&
+    (texasAgentDetail.isLoading || !texasAgentDetail.data) &&
+    !texasAgentDetail.error;
+  const accountError = viewingTexasAgent ? texasAgentDetail.error : null;
 
-  function selectAgent(id: string, label: string) {
-    setViewUserId(id);
+  function selectTexasAgent(
+    affiliateId: string,
+    label: string,
+    currency: string
+  ) {
+    setViewTexasAffiliateId(affiliateId);
     setViewAgentLabel(label);
+    setViewAgentCurrency(currency);
     setActiveTab("account");
   }
 
   function returnToMaster() {
-    setViewUserId(null);
+    setViewTexasAffiliateId(null);
     setViewAgentLabel(null);
-    setActiveTab("account");
+    setActiveTab("agents");
   }
   const isToday = selectedDate === todayIsoDate();
-  const viewingSubAgent = Boolean(
-    viewUserId && user?.id && viewUserId !== user.id
-  );
+  const viewingSubAgent = viewingTexasAgent;
 
   return (
     <ExecutiveShell
@@ -191,7 +221,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         onSelectDate={(d) => {
           setSelectedDate(d);
           if (!viewingSubAgent) {
-            setViewUserId(null);
+            setViewTexasAffiliateId(null);
             setViewAgentLabel(null);
           }
         }}
@@ -205,8 +235,14 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         showAgentsTab={showAgentsTab}
       />
 
-      {activeTab === "agents" && showAgentsTab && network ? (
-        <SubAgentsTabPanel network={network} onSelectAgent={selectAgent} />
+      {activeTab === "agents" && showAgentsTab ? (
+        <SubAgentsTabPanel
+          data={texasSubAgents.data}
+          isLoading={texasSubAgents.isLoading}
+          error={texasSubAgents.error}
+          onRetry={() => void texasSubAgents.refetch()}
+          onSelectAgent={selectTexasAgent}
+        />
       ) : null}
 
       {activeTab === "history" ? (
@@ -244,7 +280,36 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
 
       {activeTab === "account" ? (
         <AnimatePresence mode="wait">
-          {!ledger ? (
+          {accountLoading ? (
+            <motion.div
+              key="loading-agent"
+              className="glass-panel px-6 py-14 text-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <Loader2 className="mx-auto h-6 w-6 animate-spin text-gold" />
+              <p className="mt-3 text-sm text-steel-400">{ar.syncingTexas}</p>
+            </motion.div>
+          ) : accountError ? (
+            <motion.div
+              key="agent-error"
+              className="glass-panel px-6 py-10 text-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              <p className="text-sm text-accent-negative">
+                {accountError.message}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4 border-gold/30 text-gold"
+                onClick={() => void texasAgentDetail.refetch()}
+              >
+                {ar.retry}
+              </Button>
+            </motion.div>
+          ) : !ledger ? (
             <motion.div
               key="empty"
               className="glass-panel px-6 py-14 text-center"
@@ -253,7 +318,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
               exit={{ opacity: 0 }}
             >
               <p className="text-sm text-steel-400">{ar.noReportForDate}</p>
-              {isToday && (
+              {isToday && !viewingSubAgent && (
                 <p className="mt-4 text-xs text-steel-500">
                   {ar.reportPendingSync}
                 </p>
@@ -269,7 +334,8 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
             >
               <ExecutiveLedgerReport
                 ledger={ledger}
-                targetUserId={viewUserId ?? user?.id}
+                targetUserId={viewingSubAgent ? undefined : user?.id}
+                disableShare={viewingSubAgent}
               />
             </motion.div>
           )}

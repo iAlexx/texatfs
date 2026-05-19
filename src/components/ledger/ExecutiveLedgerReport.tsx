@@ -17,9 +17,12 @@ import { useExportReport } from "@/hooks/use-tma-api";
 export function ExecutiveLedgerReport({
   ledger,
   targetUserId,
+  disableShare = false,
 }: {
   ledger: DailyLedger;
   targetUserId?: string;
+  /** Texas live sub-agent view has no Supabase user for PDF share */
+  disableShare?: boolean;
 }) {
   const shareReport = useExportReport();
   const userId = targetUserId ?? ledger.user_id;
@@ -62,20 +65,22 @@ export function ExecutiveLedgerReport({
       <LedgerFlowChart ledger={ledger} />
       <BankStatementGrid ledger={ledger} />
 
-      <motion.div className="mt-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-        <Button
-          variant="gold"
-          className="w-full gap-2"
-          disabled={shareReport.isPending}
-          onClick={() => void handleShare()}
-        >
-          <Send className="h-4 w-4" strokeWidth={1.5} />
-          {shareReport.isPending ? ar.loading : ar.shareReport}
-        </Button>
-        <p className="mt-2 text-center text-[10px] text-steel-500">
-          {ar.shareReportHint}
-        </p>
-      </motion.div>
+      {!disableShare ? (
+        <motion.div className="mt-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <Button
+            variant="gold"
+            className="w-full gap-2"
+            disabled={shareReport.isPending}
+            onClick={() => void handleShare()}
+          >
+            <Send className="h-4 w-4" strokeWidth={1.5} />
+            {shareReport.isPending ? ar.loading : ar.shareReport}
+          </Button>
+          <p className="mt-2 text-center text-[10px] text-steel-500">
+            {ar.shareReportHint}
+          </p>
+        </motion.div>
+      ) : null}
     </>
   );
 }
