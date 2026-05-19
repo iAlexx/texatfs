@@ -64,9 +64,9 @@ export async function buildLedgerSession(
   let network;
   let hierarchy;
 
-  if (isViewingSelf && canManageNetwork(role)) {
+  if (canManageNetwork(role)) {
     network = await fetchNetworkPayload(supabase, user.id, role, ledgerDate);
-    if (network.members.length > 0) {
+    if (isViewingSelf && network.members.length > 0) {
       hierarchy = buildHierarchyPayload(
         network.members.map((m) => ({
           id: m.id,

@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/utils/format";
 import { ar } from "@/lib/i18n/ar";
+import { filterMembersForSubAgentsTab } from "@/lib/hierarchy/subtree-rules";
 import type { NetworkPayload, NetworkMember } from "@/lib/hierarchy/types";
 import { useExportReport } from "@/hooks/use-tma-api";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils/cn";
 function roleBadge(role: string): string {
   if (role === "master") return ar.roleMaster;
   if (role === "super_master") return ar.roleSuperMaster;
+  if (role === "agent") return ar.roleAgent;
   return ar.rolePlayer;
 }
 
@@ -35,17 +37,23 @@ export function NetworkMapPanel({
 }) {
   const [query, setQuery] = useState("");
   const shareReport = useExportReport();
-  const { stats, members, ledger_date } = network;
+  const { stats, members, ledger_date, viewer_id, viewer_role } = network;
+
+  const subAgents = useMemo(
+    () => filterMembersForSubAgentsTab(viewer_role, members, viewer_id),
+    [viewer_role, members, viewer_id]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) => {
+    if (!q) return subAgents;
+    return subAgents.filter((m) => {
       const email = (m.texas_username ?? "").toLowerCase();
       const name = (m.display_name ?? "").toLowerCase();
-      return email.includes(q) || name.includes(q);
+      const tg = m.telegram_id != null ? String(m.telegram_id) : "";
+      return email.includes(q) || name.includes(q) || tg.includes(q);
     });
-  }, [members, query]);
+  }, [subAgents, query]);
 
   async function handleShare(agent: NetworkMember, e: React.MouseEvent) {
     e.stopPropagation();

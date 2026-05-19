@@ -7,6 +7,14 @@ import type {
   NetworkPayload,
   NetworkStats,
 } from "@/lib/hierarchy/types";
+import {
+  compareNetworkMembers,
+  filterMembersForSubAgentsTab,
+  isCountableNetworkMember,
+} from "@/lib/hierarchy/subtree-rules";
+
+const LEDGER_SELECT =
+  "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at";
 
 function toAgentSummary(ledger: DailyLedger | null): AgentLedgerSummary | null {
   if (!ledger) return null;
@@ -35,9 +43,7 @@ async function loadLedgersForUsers(
 
   const { data, error } = await supabase
     .from("daily_ledgers")
-    .select(
-      "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at"
-    )
+    .select(LEDGER_SELECT)
     .in("user_id", userIds)
     .eq("ledger_date", ledgerDate);
 
@@ -48,6 +54,7 @@ async function loadLedgersForUsers(
   );
 }
 
+/** Full recursive subtree via Phase 7 RPC */
 async function fetchDescendantMembers(
   supabase: SupabaseClient,
   rootId: string
@@ -56,7 +63,13 @@ async function fetchDescendantMembers(
     p_root_id: rootId,
   });
 
-  if (error) throw error;
+  if (error) {
+    console.error("[hierarchy] get_descendant_user_ids failed", {
+      rootId,
+      message: error.message,
+    });
+    throw error;
+  }
 
   return (data ?? []).map((row: { id: string; depth: number }) => ({
     id: row.id,
@@ -64,63 +77,40 @@ async function fetchDescendantMembers(
   }));
 }
 
-async function fetchDirectChildren(
-  supabase: SupabaseClient,
-  parentId: string
-): Promise<Array<{ id: string; depth: number }>> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("id")
-    .eq("parent_id", parentId)
-    .eq("is_active", true)
-    .order("display_name", { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []).map((u) => ({ id: u.id as string, depth: 1 }));
-}
-
 function computeStats(
+  viewerRole: UserRole,
+  viewerId: string,
   members: NetworkMember[],
   ownLedger: AgentLedgerSummary | null
 ): NetworkStats {
-  const players = members.filter((m) => m.role === "player");
-  const active_agents = players.filter((m) => m.is_active).length;
+  const visible = filterMembersForSubAgentsTab(viewerRole, members, viewerId);
+  const active_agents = visible.filter(
+    (m) => m.is_active && isCountableNetworkMember(viewerRole, m)
+  ).length;
 
   let combined_balance = ownLedger?.al_nihai ?? 0;
   let total_network_burn = ownLedger?.al_harq ?? 0;
 
   let highest: NetworkStats["highest_burn_agent"] = null;
 
-  for (const m of members) {
-    if (m.ledger) {
-      combined_balance += m.ledger.al_nihai;
-      total_network_burn += m.ledger.al_harq;
-      if (
-        !highest ||
-        m.ledger.al_harq > highest.al_harq
-      ) {
-        highest = {
-          id: m.id,
-          name: m.display_name ?? m.texas_username ?? "—",
-          al_harq: m.ledger.al_harq,
-        };
-      }
+  for (const m of visible) {
+    if (!m.ledger) continue;
+    combined_balance += m.ledger.al_nihai;
+    total_network_burn += m.ledger.al_harq;
+    if (!highest || m.ledger.al_harq > highest.al_harq) {
+      highest = {
+        id: m.id,
+        name: m.display_name ?? m.texas_username ?? "—",
+        al_harq: m.ledger.al_harq,
+      };
     }
-  }
-
-  if (ownLedger && (!highest || ownLedger.al_harq > highest.al_harq)) {
-    highest = {
-      id: "self",
-      name: "حسابي",
-      al_harq: ownLedger.al_harq,
-    };
   }
 
   return {
     active_agents,
     combined_balance,
     total_network_burn,
-    highest_burn_agent: highest && highest.id !== "self" ? highest : highest,
+    highest_burn_agent: highest,
   };
 }
 
@@ -131,11 +121,11 @@ export async function fetchNetworkPayload(
   ledgerDate: string
 ): Promise<NetworkPayload> {
   const descendantRefs =
-    viewerRole === "super_master"
+    viewerRole === "super_master" ||
+    viewerRole === "master" ||
+    viewerRole === "agent"
       ? await fetchDescendantMembers(supabase, viewerId)
-      : viewerRole === "master"
-        ? await fetchDirectChildren(supabase, viewerId)
-        : [];
+      : [];
 
   const ids = descendantRefs.map((d) => d.id);
   const depthById = new Map(descendantRefs.map((d) => [d.id, d.depth]));
@@ -143,7 +133,9 @@ export async function fetchNetworkPayload(
   const { data: users, error: usersError } = ids.length
     ? await supabase
         .from("users")
-        .select("id, display_name, texas_username, role, parent_id, is_active")
+        .select(
+          "id, display_name, texas_username, telegram_id, role, parent_id, is_active"
+        )
         .in("id", ids)
     : { data: [], error: null };
 
@@ -153,9 +145,7 @@ export async function fetchNetworkPayload(
 
   const { data: ownRow } = await supabase
     .from("daily_ledgers")
-    .select(
-      "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at"
-    )
+    .select(LEDGER_SELECT)
     .eq("user_id", viewerId)
     .eq("ledger_date", ledgerDate)
     .maybeSingle();
@@ -170,6 +160,7 @@ export async function fetchNetworkPayload(
         id: u.id,
         display_name: u.display_name,
         texas_username: u.texas_username,
+        telegram_id: u.telegram_id ?? null,
         role: u.role as UserRole,
         parent_id: u.parent_id,
         depth: depthById.get(u.id) ?? 1,
@@ -177,19 +168,9 @@ export async function fetchNetworkPayload(
         ledger: full ? toAgentSummary(full) : null,
       };
     })
-    .sort((a, b) => {
-      if (a.depth !== b.depth) return a.depth - b.depth;
-      if (a.role !== b.role) {
-        const order = { super_master: 0, master: 1, player: 2 };
-        return (order[a.role] ?? 9) - (order[b.role] ?? 9);
-      }
-      return (a.display_name ?? a.texas_username ?? "").localeCompare(
-        b.display_name ?? b.texas_username ?? "",
-        "ar"
-      );
-    });
+    .sort(compareNetworkMembers);
 
-  const stats = computeStats(members, ownLedger);
+  const stats = computeStats(viewerRole, viewerId, members, ownLedger);
 
   return {
     viewer_id: viewerId,
@@ -248,7 +229,9 @@ export function buildHierarchyPayload(
     consolidated: {
       total_burn: totalBurn,
       total_al_nihai: totalAlNihai,
-      agent_count: subAgents.filter((a) => a.role === "player").length,
+      agent_count: subAgents.filter(
+        (a) => a.role === "player" || a.role === "agent"
+      ).length,
     },
     sub_agents: subAgents,
   };

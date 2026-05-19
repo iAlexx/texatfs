@@ -1,4 +1,4 @@
-export type UserRole = "super_master" | "master" | "player";
+export type UserRole = "super_master" | "master" | "agent" | "player";
 export type LedgerStatus = "open" | "closed";
 
 export interface DailyLedger {

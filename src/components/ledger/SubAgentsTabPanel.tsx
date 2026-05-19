@@ -6,6 +6,7 @@ import { ChevronLeft, Mail, Search, Send, Users } from "lucide-react";
 import { toast } from "sonner";
 import { formatMoney } from "@/lib/utils/format";
 import { ar } from "@/lib/i18n/ar";
+import { filterMembersForSubAgentsTab } from "@/lib/hierarchy/subtree-rules";
 import type { NetworkMember, NetworkPayload } from "@/lib/hierarchy/types";
 import { useExportReport } from "@/hooks/use-tma-api";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,15 @@ import { cn } from "@/lib/utils/cn";
 function roleLabel(role: string): string {
   if (role === "master") return ar.roleMaster;
   if (role === "super_master") return ar.roleSuperMaster;
+  if (role === "agent") return ar.roleAgent;
   return ar.rolePlayer;
+}
+
+function matchesSearch(member: NetworkMember, q: string): boolean {
+  const email = (member.texas_username ?? "").toLowerCase();
+  const name = (member.display_name ?? "").toLowerCase();
+  const tg = member.telegram_id != null ? String(member.telegram_id) : "";
+  return email.includes(q) || name.includes(q) || tg.includes(q);
 }
 
 export function SubAgentsTabPanel({
@@ -27,22 +36,18 @@ export function SubAgentsTabPanel({
 }) {
   const [query, setQuery] = useState("");
   const shareReport = useExportReport();
-  const { members, ledger_date, stats } = network;
+  const { members, ledger_date, stats, viewer_id, viewer_role } = network;
 
-  const agents = useMemo(
-    () => members.filter((m) => m.role === "player"),
-    [members]
+  const subAgents = useMemo(
+    () => filterMembersForSubAgentsTab(viewer_role, members, viewer_id),
+    [viewer_role, members, viewer_id]
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return agents;
-    return agents.filter((m) => {
-      const email = (m.texas_username ?? "").toLowerCase();
-      const name = (m.display_name ?? "").toLowerCase();
-      return email.includes(q) || name.includes(q);
-    });
-  }, [agents, query]);
+    if (!q) return subAgents;
+    return subAgents.filter((m) => matchesSearch(m, q));
+  }, [subAgents, query]);
 
   async function handleShare(agent: NetworkMember, e: React.MouseEvent) {
     e.stopPropagation();
@@ -77,6 +82,18 @@ export function SubAgentsTabPanel({
           <MiniStat
             label={ar.totalNetworkBurnToday}
             value={formatMoney(stats.total_network_burn)}
+          />
+          <MiniStat
+            label={ar.combinedNetworkBalance}
+            value={formatMoney(stats.combined_balance)}
+          />
+          <MiniStat
+            label={ar.highestBurnToday}
+            value={
+              stats.highest_burn_agent
+                ? formatMoney(stats.highest_burn_agent.al_harq)
+                : "—"
+            }
           />
         </div>
         <div className="relative mt-3">
@@ -113,12 +130,12 @@ export function SubAgentsTabPanel({
                   <p className="truncate text-sm font-medium text-foreground">
                     {agent.display_name ?? "—"}
                   </p>
-                  <p className="mt-0.5 flex items-center justify-end gap-1 truncate font-mono text-xs text-lime">
+                  <p className="mt-0.5 flex items-center justify-end gap-1 truncate font-mono text-xs text-lime underline decoration-lime/40 underline-offset-2">
                     <Mail className="h-3 w-3 shrink-0" />
                     {agent.texas_username ?? "—"}
                   </p>
                   <span className="mt-1 inline-block rounded-full bg-obsidian/80 px-2 py-0.5 text-[9px] text-steel-500">
-                    {roleLabel(agent.role)}
+                    {roleLabel(agent.role)} · L{agent.depth}
                   </span>
                 </button>
                 <Button
@@ -133,7 +150,6 @@ export function SubAgentsTabPanel({
                 </Button>
                 <ChevronLeft className="mt-1 h-4 w-4 shrink-0 text-gold/40" />
               </div>
-
               {agent.ledger ? (
                 <AgentLedgerMiniGrid ledger={agent.ledger} />
               ) : (
@@ -146,7 +162,7 @@ export function SubAgentsTabPanel({
         ))}
         {!filtered.length && (
           <li className="px-4 py-12 text-center text-xs text-steel-500">
-            {agents.length === 0 ? ar.noSubAgents : "لا نتائج للبحث"}
+            {subAgents.length === 0 ? ar.noSubAgents : "لا نتائج للبحث"}
           </li>
         )}
       </ul>

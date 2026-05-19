@@ -112,7 +112,9 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const ledger = session.data?.ledger;
   const network = session.data?.network;
   const canSeeNetwork =
-    user?.role === "master" || user?.role === "super_master";
+    user?.role === "master" ||
+    user?.role === "super_master" ||
+    user?.role === "agent";
   const showAgentsTab = canSeeNetwork && Boolean(network);
 
   function selectAgent(id: string, label: string) {
@@ -274,9 +276,11 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
           <span className="text-gold/70">
             {user.role === "master"
               ? ar.roleMaster
-              : user.role === "player"
-                ? ar.rolePlayer
-                : ar.roleSuperMaster}
+              : user.role === "agent"
+                ? ar.roleAgent
+                : user.role === "player"
+                  ? ar.rolePlayer
+                  : ar.roleSuperMaster}
           </span>
         </footer>
       )}

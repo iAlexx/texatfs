@@ -39,6 +39,7 @@ export interface NetworkMember {
   id: string;
   display_name: string | null;
   texas_username: string | null;
+  telegram_id: number | null;
   role: UserRole;
   parent_id: string | null;
   depth: number;

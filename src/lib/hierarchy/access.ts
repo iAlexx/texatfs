@@ -22,6 +22,4 @@ export async function assertCanViewUser(
   }
 }
 
-export function canManageNetwork(role: string): boolean {
-  return role === "master" || role === "super_master";
-}
+export { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
