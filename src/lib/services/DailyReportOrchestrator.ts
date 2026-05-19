@@ -1,6 +1,10 @@
 import { AccountingService } from "@/lib/accounting/AccountingService";
 import type { AccountingRepository, DailyLedgerReport } from "@/lib/accounting/types";
 import { RegistrationService } from "@/lib/services/RegistrationService";
+import {
+  requireUserCredentials,
+  toTexasSyncRole,
+} from "@/lib/scraper/resolve-user-credentials";
 import { TexasSyncService } from "@/lib/services/TexasSyncService";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
 import { SubscriptionExpiredError } from "@/lib/subscription/errors";
@@ -28,11 +32,13 @@ export class DailyReportOrchestrator {
   private readonly repository: AccountingRepository;
   private readonly subscription: SubscriptionService;
   private readonly registration: RegistrationService;
+  private readonly supabase: SupabaseClient;
 
   constructor(
     repository: AccountingRepository,
     supabase: SupabaseClient = getSupabaseServiceClient()
   ) {
+    this.supabase = supabase;
     this.repository = repository;
     this.accounting = new AccountingService(repository);
     this.subscription = new SubscriptionService(supabase);
@@ -85,14 +91,18 @@ export class DailyReportOrchestrator {
       return { skipped: true, reason: "SUBSCRIPTION_EXPIRED", userId };
     }
 
-    const credentials = await this.registration.loadTexasCredentials(userId);
+    const creds = await requireUserCredentials(this.supabase, userId);
+    const syncRole = toTexasSyncRole(creds.role);
 
     return this.runForUser(
       {
         userId,
-        texasAffiliateId,
-        role,
-        credentials,
+        texasAffiliateId: texasAffiliateId ?? creds.texas_affiliate_id,
+        role: syncRole,
+        credentials: {
+          username: creds.username,
+          password: creds.password,
+        },
       },
       ledgerDate,
       { skipSubscriptionCheck: true }

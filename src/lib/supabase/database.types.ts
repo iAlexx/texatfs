@@ -30,6 +30,13 @@ export interface AppUser {
   is_tenant_master?: boolean;
 }
 
+export interface LedgerSyncMeta {
+  target_user_id: string;
+  synced: boolean;
+  reason: string;
+  network_synced?: number;
+}
+
 export interface LedgerSessionResponse {
   user: AppUser;
   ledger: DailyLedger | null;
@@ -37,4 +44,5 @@ export interface LedgerSessionResponse {
   hierarchy?: import("@/lib/hierarchy/types").HierarchyPayload;
   network?: import("@/lib/hierarchy/types").NetworkPayload;
   viewing_user_id?: string;
+  sync_meta?: LedgerSyncMeta;
 }

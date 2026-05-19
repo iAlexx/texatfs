@@ -47,14 +47,22 @@ export function useLedgerHistory() {
 
 export function useLedgerSession(
   ledgerDate: string,
-  viewUserId?: string | null
+  viewUserId?: string | null,
+  options?: { forceSync?: boolean; syncNetwork?: boolean }
 ) {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
   const queryClient = useQueryClient();
   const isToday = ledgerDate === todayIsoDate();
 
   const query = useQuery({
-    queryKey: ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
+    queryKey: [
+      "ledger",
+      "daily",
+      ledgerDate,
+      viewUserId ?? "self",
+      options?.forceSync ?? false,
+      options?.syncNetwork ?? false,
+    ],
     enabled: isReady && canAuthenticate && !!ledgerDate,
     queryFn: async () => {
       const res = await fetch("/api/ledger/get-ledger", {
@@ -63,7 +71,10 @@ export function useLedgerSession(
         body: JSON.stringify({
           ...authBody(initData, telegramUserId),
           ledgerDate,
+          target_user_id: viewUserId ?? undefined,
           agent_id: viewUserId ?? undefined,
+          forceSync: options?.forceSync === true,
+          syncNetwork: options?.syncNetwork === true,
         }),
       });
 

@@ -95,6 +95,8 @@ export const ar = {
   tabLedgerHistory: "سجل المحاسبة",
   noSubAgents: "لا يوجد وكلاء فرعيون مرتبطون بحسابك",
   ledgerHistoryHint: "اختر تاريخاً من الشريط أعلاه لعرض تقرير ذلك اليوم",
+  syncingTexas: "جاري مزامنة بيانات تكساس لهذا الحساب…",
+  noTexasCredentials: "لا توجد بيانات دخول تكساس لهذا الحساب",
 } as const;
 
 export type ArKey = keyof typeof ar;

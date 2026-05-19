@@ -27,7 +27,10 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [activeTab, setActiveTab] = useState<LedgerTabId>("account");
   const telegram = useTelegram();
   const history = useLedgerHistory();
-  const session = useLedgerSession(selectedDate, viewUserId);
+  const session = useLedgerSession(selectedDate, viewUserId, {
+    forceSync: Boolean(viewUserId),
+    syncNetwork: activeTab === "agents" && !viewUserId,
+  });
 
   if (!telegram.isReady) {
     return (
@@ -67,12 +70,15 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
     return (
       <ExecutiveShell title={ar.loading} embedded={embedded}>
         <motion.div
-          className="flex items-center justify-center gap-2 py-20 text-steel-500"
+          className="flex flex-col items-center justify-center gap-2 py-20 text-steel-500"
           animate={{ opacity: [0.5, 1, 0.5] }}
           transition={{ repeat: Infinity, duration: 1.6 }}
         >
           <Loader2 className="h-5 w-5 animate-spin text-gold" strokeWidth={1.5} />
           <span className="text-sm">{ar.loadingLedger}</span>
+          {(viewUserId || activeTab === "agents") && (
+            <span className="text-[10px] text-lime/80">{ar.syncingTexas}</span>
+          )}
         </motion.div>
       </ExecutiveShell>
     );

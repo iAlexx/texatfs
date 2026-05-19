@@ -13,6 +13,12 @@ interface Body extends LedgerAuthInput {
   agent_id?: string;
   /** @deprecated use agent_id */
   viewUserId?: string;
+  /** Alias for agent_id */
+  target_user_id?: string;
+  /** Force per-user Texas sync before returning ledger */
+  forceSync?: boolean;
+  /** Refresh stale subtree member ledgers (agents tab) */
+  syncNetwork?: boolean;
 }
 
 function todayIsoDate(): string {
@@ -24,8 +30,13 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Body;
     const { user, subscriptionActive } = await resolveLedgerUser(body);
     const ledgerDate = body.ledgerDate ?? todayIsoDate();
-    const agentId = body.agent_id ?? body.viewUserId;
+    const targetUserId =
+      body.target_user_id ?? body.agent_id ?? body.viewUserId;
     const supabase = getSupabaseServiceClient();
+    const sessionOptions = {
+      forceSync: body.forceSync === true,
+      syncNetwork: body.syncNetwork === true,
+    };
 
     if (!subscriptionActive) {
       const payload = await buildLedgerSession(
@@ -33,7 +44,8 @@ export async function POST(request: Request) {
         user,
         false,
         ledgerDate,
-        agentId
+        targetUserId,
+        sessionOptions
       );
       return NextResponse.json(payload, { status: 402 });
     }
@@ -43,7 +55,8 @@ export async function POST(request: Request) {
       user,
       true,
       ledgerDate,
-      agentId
+      targetUserId,
+      sessionOptions
     );
 
     return NextResponse.json(payload);

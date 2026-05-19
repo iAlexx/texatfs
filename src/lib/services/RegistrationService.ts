@@ -263,20 +263,10 @@ export class RegistrationService {
     username: string;
     password: string;
   }> {
-    const { data, error } = await this.supabase
-      .from("users")
-      .select("texas_email_encrypted, texas_password_encrypted")
-      .eq("id", userId)
-      .single();
-
-    if (error) throw error;
-    if (!data.texas_email_encrypted || !data.texas_password_encrypted) {
-      throw new Error("Texas credentials not stored for user");
-    }
-
-    return {
-      username: this.vault.decrypt(data.texas_email_encrypted).trim(),
-      password: this.vault.decrypt(data.texas_password_encrypted).trim(),
-    };
+    const { requireUserCredentials } = await import(
+      "@/lib/scraper/resolve-user-credentials"
+    );
+    const creds = await requireUserCredentials(this.supabase, userId);
+    return { username: creds.username, password: creds.password };
   }
 }

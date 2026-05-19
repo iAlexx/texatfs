@@ -4,12 +4,15 @@ import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
 import { canManageNetwork } from "@/lib/hierarchy/access";
 import { fetchNetworkPayload } from "@/lib/hierarchy/network";
+import { refreshStaleSubtreeLedgers } from "@/lib/scraper/ensure-user-ledger-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 interface Body extends LedgerAuthInput {
   ledgerDate?: string;
+  /** Refresh stale per-user Texas syncs before building network */
+  syncStale?: boolean;
 }
 
 function todayIsoDate(): string {
@@ -34,6 +37,16 @@ export async function POST(request: Request) {
 
     const supabase = getSupabaseServiceClient();
     const ledgerDate = body.ledgerDate ?? todayIsoDate();
+
+    if (body.syncStale !== false) {
+      const { data: descendants } = await supabase.rpc(
+        "get_descendant_user_ids",
+        { p_root_id: user.id }
+      );
+      const memberIds = (descendants ?? []).map((r: { id: string }) => r.id);
+      await refreshStaleSubtreeLedgers(supabase, memberIds, ledgerDate);
+    }
+
     const network = await fetchNetworkPayload(
       supabase,
       user.id,

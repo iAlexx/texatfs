@@ -11,6 +11,19 @@ import {
   buildHierarchyPayload,
   fetchNetworkPayload,
 } from "@/lib/hierarchy/network";
+import {
+  ensureFreshLedgerForUser,
+  refreshStaleSubtreeLedgers,
+} from "@/lib/scraper/ensure-user-ledger-sync";
+
+export interface LedgerSessionOptions {
+  /** Force Texas sync for target user even if ledger is fresh */
+  forceSync?: boolean;
+  /** Refresh stale ledgers for network members (agents tab) */
+  syncNetwork?: boolean;
+}
+
+import type { LedgerSyncMeta } from "@/lib/supabase/database.types";
 
 export async function loadLedgerForUser(
   supabase: SupabaseClient,
@@ -35,8 +48,9 @@ export async function buildLedgerSession(
   user: AppUser,
   subscriptionActive: boolean,
   ledgerDate: string,
-  agentId?: string | null
-): Promise<LedgerSessionResponse> {
+  targetUserId?: string | null,
+  options?: LedgerSessionOptions
+): Promise<LedgerSessionResponse & { sync_meta?: LedgerSyncMeta }> {
   if (!subscriptionActive) {
     return {
       user,
@@ -45,12 +59,17 @@ export async function buildLedgerSession(
     };
   }
 
-  const viewUserId = agentId?.trim() || user.id;
+  const viewUserId = targetUserId?.trim() || user.id;
   if (viewUserId !== user.id) {
     await assertCanViewUser(supabase, user.id, viewUserId);
   }
 
-  const ledger = await loadLedgerForUser(supabase, viewUserId, ledgerDate);
+  const syncResult = await ensureFreshLedgerForUser(
+    supabase,
+    viewUserId,
+    ledgerDate,
+    { force: options?.forceSync }
+  );
 
   const { data: profile } = await supabase
     .from("users")
@@ -59,13 +78,31 @@ export async function buildLedgerSession(
     .maybeSingle();
 
   const role = (profile?.role ?? user.role) as UserRole;
-  const isViewingSelf = viewUserId === user.id;
+
+  let networkSynced = 0;
+  if (canManageNetwork(role) && options?.syncNetwork) {
+    const descendantRefs = await supabase.rpc("get_descendant_user_ids", {
+      p_root_id: user.id,
+    });
+    const memberIds = (descendantRefs.data ?? []).map(
+      (r: { id: string }) => r.id
+    );
+    const batch = await refreshStaleSubtreeLedgers(
+      supabase,
+      memberIds,
+      ledgerDate
+    );
+    networkSynced = batch.synced;
+  }
+
+  const ledger = await loadLedgerForUser(supabase, viewUserId, ledgerDate);
 
   let network;
   let hierarchy;
 
   if (canManageNetwork(role)) {
     network = await fetchNetworkPayload(supabase, user.id, role, ledgerDate);
+    const isViewingSelf = viewUserId === user.id;
     if (isViewingSelf && network.members.length > 0) {
       hierarchy = buildHierarchyPayload(
         network.members.map((m) => ({
@@ -95,5 +132,11 @@ export async function buildLedgerSession(
     hierarchy,
     network,
     viewing_user_id: viewUserId,
+    sync_meta: {
+      target_user_id: viewUserId,
+      synced: syncResult.synced,
+      reason: syncResult.reason,
+      network_synced: networkSynced,
+    },
   };
 }
