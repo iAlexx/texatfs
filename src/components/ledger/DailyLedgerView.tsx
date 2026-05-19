@@ -6,6 +6,7 @@ import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { LedgerHistoryNav } from "@/components/ledger/LedgerHistoryNav";
 import { ExecutiveLedgerReport } from "@/components/ledger/ExecutiveLedgerReport";
 import { NetworkMapPanel } from "@/components/ledger/NetworkMapPanel";
+import { SubAgentsBreakdown } from "@/components/ledger/SubAgentsBreakdown";
 import { SubscriptionExpiredOverlay } from "@/components/ledger/SubscriptionExpiredOverlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,6 +110,9 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const user = session.data?.user;
   const ledger = session.data?.ledger;
   const network = session.data?.network;
+  const hierarchy = session.data?.hierarchy;
+  const canSeeNetwork =
+    user?.role === "master" || user?.role === "super_master";
   const isToday = selectedDate === todayIsoDate();
   const viewingSubAgent = Boolean(
     viewUserId && user?.id && viewUserId !== user.id
@@ -177,9 +181,18 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         isLoading={history.isLoading}
       />
 
-      {!viewingSubAgent && network && network.members.length > 0 ? (
+      {!viewingSubAgent && canSeeNetwork && network ? (
         <NetworkMapPanel
           network={network}
+          onSelectAgent={(id, label) => {
+            setViewUserId(id);
+            setViewAgentLabel(label);
+          }}
+        />
+      ) : !viewingSubAgent && hierarchy && hierarchy.sub_agents.length > 0 ? (
+        <SubAgentsBreakdown
+          hierarchy={hierarchy}
+          ledgerDate={selectedDate}
           onSelectAgent={(id, label) => {
             setViewUserId(id);
             setViewAgentLabel(label);

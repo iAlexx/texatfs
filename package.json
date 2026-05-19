@@ -23,10 +23,11 @@
     "onboarding:check": "tsx scripts/check-onboarding-readiness.ts",
     "probe:texas-browser": "tsx scripts/probe-texas-browser.ts",
     "db:validate": "node scripts/validate-migration.mjs",
-    "db:push": "supabase db push",
-    "db:seed": "supabase db seed",
-    "db:lint": "supabase db lint",
-    "db:start": "supabase start"
+    "db:push": "npx supabase db push",
+    "db:seed": "npx supabase db seed",
+    "db:lint": "npx supabase db lint",
+    "db:start": "npx supabase start",
+    "db:link": "npx supabase link"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",
