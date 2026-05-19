@@ -57,13 +57,13 @@ export function useLedgerSession(
     queryKey: ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
     enabled: isReady && canAuthenticate && !!ledgerDate,
     queryFn: async () => {
-      const res = await fetch("/api/ledger/daily", {
+      const res = await fetch("/api/ledger/get-ledger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...authBody(initData, telegramUserId),
           ledgerDate,
-          viewUserId: viewUserId ?? undefined,
+          agent_id: viewUserId ?? undefined,
         }),
       });
 
@@ -132,7 +132,7 @@ export function useLedgerSession(
           if (rowDate !== ledgerDate) return;
 
           queryClient.setQueryData<LedgerSessionResponse>(
-            ["ledger", "daily", ledgerDate],
+            ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
             (prev) =>
               prev
                 ? { ...prev, ledger: mapLedgerRow(row) }
@@ -146,7 +146,7 @@ export function useLedgerSession(
     const pollId = setInterval(() => {
       if (ledgerStatus === "open") {
         void queryClient.invalidateQueries({
-          queryKey: ["ledger", "daily", ledgerDate],
+          queryKey: ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
         });
       }
     }, pollMs);
@@ -162,6 +162,7 @@ export function useLedgerSession(
     ledgerStatus,
     subscriptionExpired,
     queryClient,
+    viewUserId,
   ]);
 
   return {

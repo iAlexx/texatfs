@@ -60,10 +60,15 @@ export function useHeroData() {
 export function useExportReport() {
   const { initData, telegramUserId } = useTelegram();
   return useMutation({
-    mutationFn: (params: { targetUserId?: string; ledgerDate?: string }) =>
-      postJson<{ ok: boolean; message: string }>("/api/ledger/export", {
+    mutationFn: (params: {
+      agent_id?: string;
+      targetUserId?: string;
+      ledgerDate?: string;
+    }) =>
+      postJson<{ ok: boolean; message: string }>("/api/report/generate", {
         ...authBody(initData, telegramUserId),
-        ...params,
+        agent_id: params.agent_id ?? params.targetUserId,
+        ledgerDate: params.ledgerDate,
       }),
   });
 }

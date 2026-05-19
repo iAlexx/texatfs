@@ -34,7 +34,7 @@ export function ExecutiveLedgerReport({
   async function handleShare() {
     try {
       await shareReport.mutateAsync({
-        targetUserId: userId,
+        agent_id: userId,
         ledgerDate: ledger.ledger_date,
       });
       toast.success(ar.shareReportSent);

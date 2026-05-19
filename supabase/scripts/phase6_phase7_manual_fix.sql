@@ -1,6 +1,8 @@
--- Phase 6: Intelligent Financial Engine + Admin controls
+-- Run in Supabase SQL Editor if Phase 6 failed partway through.
+-- Safe to re-run: uses IF NOT EXISTS / DROP IF EXISTS.
 
--- Users: freeze + referral
+-- ── Phase 6 remainder (skip if already applied) ─────────────────────────────
+
 ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS referral_code TEXT,
@@ -11,7 +13,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_uq
   ON public.users (referral_code)
   WHERE referral_code IS NOT NULL;
 
--- Cumulative vault metrics (daily rollup per user)
 CREATE TABLE IF NOT EXISTS public.cumulative_metrics (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id         UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -32,7 +33,6 @@ DROP POLICY IF EXISTS cumulative_metrics_service ON public.cumulative_metrics;
 CREATE POLICY cumulative_metrics_service ON public.cumulative_metrics
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Sync logs for admin health dashboard
 CREATE TABLE IF NOT EXISTS public.sync_logs (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID REFERENCES public.users(id) ON DELETE SET NULL,
@@ -55,7 +55,6 @@ DROP POLICY IF EXISTS sync_logs_service ON public.sync_logs;
 CREATE POLICY sync_logs_service ON public.sync_logs
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Subscription active respects freeze
 CREATE OR REPLACE FUNCTION public.is_subscription_active(p_user_id UUID)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -94,7 +93,52 @@ BEGIN
 END;
 $$;
 
--- Generate referral code for existing masters
 UPDATE public.users
 SET referral_code = upper(substr(replace(id::text, '-', ''), 1, 8))
 WHERE referral_code IS NULL AND role = 'master';
+
+-- ── Phase 7 ─────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.can_view_user_for(
+  p_viewer_id UUID,
+  p_target_id UUID
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH RECURSIVE subtree AS (
+    SELECT id FROM public.users WHERE id = p_viewer_id
+    UNION ALL
+    SELECT u.id
+    FROM public.users u
+    INNER JOIN subtree s ON u.parent_id = s.id
+  )
+  SELECT EXISTS (
+    SELECT 1 FROM subtree WHERE id = p_target_id
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_descendant_user_ids(p_root_id UUID)
+RETURNS TABLE (id UUID, depth INT)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH RECURSIVE tree AS (
+    SELECT u.id, 1 AS depth
+    FROM public.users u
+    WHERE u.parent_id = p_root_id
+    UNION ALL
+    SELECT u.id, t.depth + 1
+    FROM public.users u
+    INNER JOIN tree t ON u.parent_id = t.id
+  )
+  SELECT tree.id, tree.depth FROM tree;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.can_view_user_for(UUID, UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_descendant_user_ids(UUID) TO authenticated, service_role;

@@ -8,30 +8,34 @@ export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 
-interface RequestBody extends LedgerAuthInput {
+interface Body extends LedgerAuthInput {
   ledgerDate?: string;
-  viewUserId?: string;
   agent_id?: string;
+  /** @deprecated use agent_id */
+  viewUserId?: string;
 }
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** @deprecated Prefer POST /api/ledger/get-ledger */
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as RequestBody;
+    const body = (await request.json()) as Body;
     const { user, subscriptionActive } = await resolveLedgerUser(body);
     const ledgerDate = body.ledgerDate ?? todayIsoDate();
     const agentId = body.agent_id ?? body.viewUserId;
     const supabase = getSupabaseServiceClient();
 
     if (!subscriptionActive) {
-      return NextResponse.json(
-        await buildLedgerSession(supabase, user, false, ledgerDate, agentId),
-        { status: 402 }
+      const payload = await buildLedgerSession(
+        supabase,
+        user,
+        false,
+        ledgerDate,
+        agentId
       );
+      return NextResponse.json(payload, { status: 402 });
     }
 
     const payload = await buildLedgerSession(

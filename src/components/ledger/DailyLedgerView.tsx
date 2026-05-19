@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { LedgerHistoryNav } from "@/components/ledger/LedgerHistoryNav";
 import { ExecutiveLedgerReport } from "@/components/ledger/ExecutiveLedgerReport";
-import { SubAgentsBreakdown } from "@/components/ledger/SubAgentsBreakdown";
+import { NetworkMapPanel } from "@/components/ledger/NetworkMapPanel";
 import { SubscriptionExpiredOverlay } from "@/components/ledger/SubscriptionExpiredOverlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -108,7 +108,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
 
   const user = session.data?.user;
   const ledger = session.data?.ledger;
-  const hierarchy = session.data?.hierarchy;
+  const network = session.data?.network;
   const isToday = selectedDate === todayIsoDate();
   const viewingSubAgent = Boolean(
     viewUserId && user?.id && viewUserId !== user.id
@@ -135,19 +135,33 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
       refreshing={session.isLoading}
       embedded={embedded}
     >
-      {viewingSubAgent ? (
-        <motion.button
-          type="button"
-          className="mb-4 flex items-center gap-2 text-sm text-gold"
-          onClick={() => {
-            setViewUserId(null);
-            setViewAgentLabel(null);
-          }}
-          whileTap={{ scale: 0.97 }}
+      {viewingSubAgent && viewAgentLabel ? (
+        <motion.div
+          className="mb-4 space-y-3"
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
         >
-          <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
-          {ar.backToMaster}
-        </motion.button>
+          <div className="glass-inner flex items-center justify-between gap-2 rounded-xl border border-lime/25 bg-lime/5 px-3 py-2">
+            <span className="text-[10px] uppercase tracking-wider text-lime/80">
+              {ar.viewingAgentData}
+            </span>
+            <span className="truncate text-sm font-semibold text-lime">
+              {viewAgentLabel}
+            </span>
+          </div>
+          <motion.button
+            type="button"
+            className="flex items-center gap-2 text-sm text-gold"
+            onClick={() => {
+              setViewUserId(null);
+              setViewAgentLabel(null);
+            }}
+            whileTap={{ scale: 0.97 }}
+          >
+            <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
+            {ar.backToMaster}
+          </motion.button>
+        </motion.div>
       ) : null}
 
       <LedgerHistoryNav
@@ -163,10 +177,9 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         isLoading={history.isLoading}
       />
 
-      {!viewingSubAgent && hierarchy && hierarchy.sub_agents.length > 0 ? (
-        <SubAgentsBreakdown
-          hierarchy={hierarchy}
-          ledgerDate={selectedDate}
+      {!viewingSubAgent && network && network.members.length > 0 ? (
+        <NetworkMapPanel
+          network={network}
           onSelectAgent={(id, label) => {
             setViewUserId(id);
             setViewAgentLabel(label);

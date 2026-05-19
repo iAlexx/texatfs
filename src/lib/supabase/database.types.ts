@@ -35,5 +35,6 @@ export interface LedgerSessionResponse {
   ledger: DailyLedger | null;
   subscription_active: boolean;
   hierarchy?: import("@/lib/hierarchy/types").HierarchyPayload;
+  network?: import("@/lib/hierarchy/types").NetworkPayload;
   viewing_user_id?: string;
 }

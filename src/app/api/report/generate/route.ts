@@ -8,16 +8,16 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-interface ExportBody extends LedgerAuthInput {
-  targetUserId?: string;
+interface Body extends LedgerAuthInput {
   agent_id?: string;
+  /** @deprecated */
+  targetUserId?: string;
   ledgerDate?: string;
 }
 
-/** @deprecated Prefer POST /api/report/generate */
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as ExportBody;
+    const body = (await request.json()) as Body;
     const { user } = await resolveLedgerUser(body);
     const supabase = getSupabaseServiceClient();
 
@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
     const msg = e instanceof Error ? e.message : "Server error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status = msg.includes("لا يوجد") ? 404 : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }

@@ -82,6 +82,12 @@ export const ar = {
   referralInvited: "مدعوون",
   referralReward: "أيام مكافأة",
   networkMap: "شبكة الوكلاء",
+  networkMapSubtitle: "إحصائيات الشبكة والوكلاء النشطين",
+  activeAgents: "وكلاء نشطون",
+  combinedNetworkBalance: "رصيد الشبكة",
+  totalNetworkBurnToday: "حرق الشبكة اليوم",
+  highestBurnToday: "أعلى حرق اليوم",
+  viewingAgentData: "عرض بيانات الوكيل",
   liveSync: "متصل",
 } as const;
 
