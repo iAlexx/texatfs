@@ -4,6 +4,7 @@ import { SupabaseAccountingRepository } from "@/lib/accounting/SupabaseAccountin
 import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 import { recordSyncLog } from "@/lib/finance/sync-log";
 import { upsertDailyMetric } from "@/lib/finance/cumulative-vault";
+import { runStableRegisteredUserSync } from "@/lib/scraper/stable-scraper-wrapper";
 
 export async function forceSyncUser(
   supabase: SupabaseClient,
@@ -29,7 +30,8 @@ export async function forceSyncUser(
   const orchestrator = new DailyReportOrchestrator(repo, supabase);
 
   try {
-    const result = await orchestrator.runForRegisteredUser(
+    const result = await runStableRegisteredUserSync(
+      orchestrator,
       userId,
       ledgerDate,
       user.texas_affiliate_id,

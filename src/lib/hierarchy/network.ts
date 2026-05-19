@@ -14,11 +14,15 @@ function toAgentSummary(ledger: DailyLedger | null): AgentLedgerSummary | null {
     id: ledger.id,
     ledger_date: ledger.ledger_date,
     status: ledger.status,
+    tebat: ledger.tebat,
+    suhoubat: ledger.suhoubat,
+    al_farq: ledger.al_farq,
     al_harq: ledger.al_harq,
+    wasel_menho: ledger.wasel_menho,
+    wasel_eleih: ledger.wasel_eleih,
+    baqi_qadim: ledger.baqi_qadim,
     al_nihai: ledger.al_nihai,
     discrepancy_flag: ledger.discrepancy_flag,
-    tebat: ledger.tebat,
-    al_farq: ledger.al_farq,
   };
 }
 
@@ -159,6 +163,7 @@ export async function fetchNetworkPayload(
   const ownLedger = ownRow ? toAgentSummary(mapLedgerRow(ownRow)) : null;
 
   const members: NetworkMember[] = (users ?? [])
+    .filter((u) => u.is_active !== false)
     .map((u) => {
       const full = ledgerByUser.get(u.id);
       return {

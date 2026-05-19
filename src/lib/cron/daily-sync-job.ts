@@ -8,6 +8,10 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { recordSyncLog } from "@/lib/finance/sync-log";
 import { upsertDailyMetric } from "@/lib/finance/cumulative-vault";
 import { checkAndSendSmartAlerts } from "@/lib/finance/smart-alerts";
+import {
+  runStableRegisteredUserSync,
+  ScraperCircuitOpenError,
+} from "@/lib/scraper/stable-scraper-wrapper";
 
 const USER_DELAY_MS = Number(process.env.CRON_USER_DELAY_MS ?? 60_000);
 
@@ -55,7 +59,8 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
         ledgerDate,
       });
 
-      const result = await orchestrator.runForRegisteredUser(
+      const result = await runStableRegisteredUserSync(
+        orchestrator,
         user.id,
         ledgerDate,
         user.texas_affiliate_id,
@@ -154,6 +159,13 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
         ledgerDate,
       });
       failed.push({ userId: user.id, error: msg });
+
+      if (e instanceof ScraperCircuitOpenError) {
+        console.error("[cron/daily-sync] circuit open — stopping job", {
+          error: msg,
+        });
+        break;
+      }
     }
   }
 

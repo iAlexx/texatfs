@@ -89,6 +89,11 @@ export const ar = {
   highestBurnToday: "أعلى حرق اليوم",
   viewingAgentData: "عرض بيانات الوكيل",
   liveSync: "متصل",
+  tabMyAccount: "حسابي",
+  tabSubAgents: "الوكلاء الفرعيون",
+  tabLedgerHistory: "سجل المحاسبة",
+  noSubAgents: "لا يوجد وكلاء فرعيون مرتبطون بحسابك",
+  ledgerHistoryHint: "اختر تاريخاً من الشريط أعلاه لعرض تقرير ذلك اليوم",
 } as const;
 
 export type ArKey = keyof typeof ar;

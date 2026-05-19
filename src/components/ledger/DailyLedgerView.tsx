@@ -5,8 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { LedgerHistoryNav } from "@/components/ledger/LedgerHistoryNav";
 import { ExecutiveLedgerReport } from "@/components/ledger/ExecutiveLedgerReport";
-import { NetworkMapPanel } from "@/components/ledger/NetworkMapPanel";
-import { SubAgentsBreakdown } from "@/components/ledger/SubAgentsBreakdown";
+import { LedgerTabBar, type LedgerTabId } from "@/components/ledger/LedgerTabBar";
+import { SubAgentsTabPanel } from "@/components/ledger/SubAgentsTabPanel";
 import { SubscriptionExpiredOverlay } from "@/components/ledger/SubscriptionExpiredOverlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
   const [viewUserId, setViewUserId] = useState<string | null>(null);
   const [viewAgentLabel, setViewAgentLabel] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<LedgerTabId>("account");
   const telegram = useTelegram();
   const history = useLedgerHistory();
   const session = useLedgerSession(selectedDate, viewUserId);
@@ -110,9 +111,21 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const user = session.data?.user;
   const ledger = session.data?.ledger;
   const network = session.data?.network;
-  const hierarchy = session.data?.hierarchy;
   const canSeeNetwork =
     user?.role === "master" || user?.role === "super_master";
+  const showAgentsTab = canSeeNetwork && Boolean(network);
+
+  function selectAgent(id: string, label: string) {
+    setViewUserId(id);
+    setViewAgentLabel(label);
+    setActiveTab("account");
+  }
+
+  function returnToMaster() {
+    setViewUserId(null);
+    setViewAgentLabel(null);
+    setActiveTab("account");
+  }
   const isToday = selectedDate === todayIsoDate();
   const viewingSubAgent = Boolean(
     viewUserId && user?.id && viewUserId !== user.id
@@ -156,10 +169,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
           <motion.button
             type="button"
             className="flex items-center gap-2 text-sm text-gold"
-            onClick={() => {
-              setViewUserId(null);
-              setViewAgentLabel(null);
-            }}
+            onClick={returnToMaster}
             whileTap={{ scale: 0.97 }}
           >
             <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
@@ -181,54 +191,82 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         isLoading={history.isLoading}
       />
 
-      {!viewingSubAgent && canSeeNetwork && network ? (
-        <NetworkMapPanel
-          network={network}
-          onSelectAgent={(id, label) => {
-            setViewUserId(id);
-            setViewAgentLabel(label);
-          }}
-        />
-      ) : !viewingSubAgent && hierarchy && hierarchy.sub_agents.length > 0 ? (
-        <SubAgentsBreakdown
-          hierarchy={hierarchy}
-          ledgerDate={selectedDate}
-          onSelectAgent={(id, label) => {
-            setViewUserId(id);
-            setViewAgentLabel(label);
-          }}
-        />
+      <LedgerTabBar
+        active={activeTab}
+        onChange={setActiveTab}
+        showAgentsTab={showAgentsTab}
+      />
+
+      {activeTab === "agents" && showAgentsTab && network ? (
+        <SubAgentsTabPanel network={network} onSelectAgent={selectAgent} />
       ) : null}
 
-      <AnimatePresence mode="wait">
-        {!ledger ? (
-          <motion.div
-            key="empty"
-            className="glass-panel px-6 py-14 text-center"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <p className="text-sm text-steel-400">{ar.noReportForDate}</p>
-            {isToday && (
-              <p className="mt-4 text-xs text-steel-500">{ar.reportPendingSync}</p>
-            )}
-          </motion.div>
-        ) : (
-          <motion.div
-            key={ledger.id}
-            initial={{ opacity: 0, x: viewingSubAgent ? 12 : 0 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -8 }}
-            transition={{ type: "spring", stiffness: 200, damping: 24 }}
-          >
-            <ExecutiveLedgerReport
-              ledger={ledger}
-              targetUserId={viewUserId ?? user?.id}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {activeTab === "history" ? (
+        <motion.div
+          className="glass-panel mb-4 px-4 py-8 text-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          <p className="text-sm text-steel-400">{ar.ledgerHistoryHint}</p>
+          {history.data?.dates?.length ? (
+            <ul className="mt-4 space-y-2 text-right">
+              {history.data.dates.slice(0, 12).map((d) => (
+                <li key={d}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDate(d);
+                      setActiveTab("account");
+                    }}
+                    className={cn(
+                      "w-full rounded-lg border px-3 py-2 text-sm transition-colors",
+                      d === selectedDate
+                        ? "border-gold/40 bg-gold/10 text-gold"
+                        : "border-white/[0.06] text-steel-400 hover:border-gold/20"
+                    )}
+                  >
+                    {formatLedgerDate(d)}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </motion.div>
+      ) : null}
+
+      {activeTab === "account" ? (
+        <AnimatePresence mode="wait">
+          {!ledger ? (
+            <motion.div
+              key="empty"
+              className="glass-panel px-6 py-14 text-center"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <p className="text-sm text-steel-400">{ar.noReportForDate}</p>
+              {isToday && (
+                <p className="mt-4 text-xs text-steel-500">
+                  {ar.reportPendingSync}
+                </p>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key={ledger.id}
+              initial={{ opacity: 0, x: viewingSubAgent ? 12 : 0 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -8 }}
+              transition={{ type: "spring", stiffness: 200, damping: 24 }}
+            >
+              <ExecutiveLedgerReport
+                ledger={ledger}
+                targetUserId={viewUserId ?? user?.id}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      ) : null}
 
       {user && (
         <footer className="mt-8 flex items-center justify-between border-t border-white/[0.06] pt-4 text-xs text-steel-600">

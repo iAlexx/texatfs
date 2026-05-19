@@ -5,11 +5,15 @@ export type AgentLedgerSummary = Pick<
   | "id"
   | "ledger_date"
   | "status"
+  | "tebat"
+  | "suhoubat"
+  | "al_farq"
   | "al_harq"
+  | "wasel_menho"
+  | "wasel_eleih"
+  | "baqi_qadim"
   | "al_nihai"
   | "discrepancy_flag"
-  | "tebat"
-  | "al_farq"
 >;
 
 /** @deprecated Use NetworkMember */
