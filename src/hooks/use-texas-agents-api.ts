@@ -25,7 +25,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
-export function useTexasSubAgents(ledgerDate: string, enabled: boolean) {
+export function useTexasSubAgents(
+  ledgerDate: string,
+  enabled: boolean,
+  forceRefresh = false
+) {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
   return useQuery({
@@ -35,9 +39,11 @@ export function useTexasSubAgents(ledgerDate: string, enabled: boolean) {
       postJson<TexasSubAgentsPayload>("/api/texas/sub-agents", {
         ...authBody(initData, telegramUserId),
         ledgerDate,
+        forceRefresh: forceRefresh || undefined,
       }),
     staleTime: 90_000,
     gcTime: 5 * 60_000,
+    retry: 1,
   });
 }
 
@@ -53,7 +59,9 @@ export interface TexasAgentDetailResponse {
 export function useTexasAgentDetail(
   affiliateId: string | null,
   ledgerDate: string,
-  currencyCode?: string
+  currencyCode?: string,
+  /** Pre-fetched stats from list view (reduces API calls to 1) */
+  cachedStats?: { username?: string; tebat?: number; suhoubat?: number; al_harq?: number }
 ) {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
@@ -66,16 +74,25 @@ export function useTexasAgentDetail(
       currencyCode,
       initData,
     ],
-    enabled:
-      isReady && canAuthenticate && Boolean(affiliateId?.trim()),
+    enabled: isReady && canAuthenticate && Boolean(affiliateId?.trim()),
     queryFn: () =>
       postJson<TexasAgentDetailResponse>("/api/texas/agent-detail", {
         ...authBody(initData, telegramUserId),
         affiliateId,
         ledgerDate,
         currencyCode,
+        // Pass cached stats so server skips redundant Texas API calls
+        ...(cachedStats?.tebat !== undefined
+          ? {
+              username: cachedStats.username,
+              tebat: cachedStats.tebat,
+              suhoubat: cachedStats.suhoubat,
+              al_harq: cachedStats.al_harq,
+            }
+          : {}),
       }),
     staleTime: 60_000,
     gcTime: 5 * 60_000,
+    retry: 1,
   });
 }
