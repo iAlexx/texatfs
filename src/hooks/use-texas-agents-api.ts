@@ -25,6 +25,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
+/**
+ * Sub-agents list — data is live from Texas API.
+ * staleTime: 30s matches server-side cache TTL.
+ * Pass forceRefresh=true to bypass both client and server caches.
+ */
 export function useTexasSubAgents(
   ledgerDate: string,
   enabled: boolean,
@@ -41,9 +46,10 @@ export function useTexasSubAgents(
         ledgerDate,
         forceRefresh: forceRefresh || undefined,
       }),
-    staleTime: 90_000,
-    gcTime: 5 * 60_000,
+    staleTime: 30_000,   // matches server TTL — prevents double-fetch but shows fresh data
+    gcTime:    5 * 60_000,
     retry: 1,
+    refetchOnWindowFocus: true,  // refresh when user returns to tab
   });
 }
 
@@ -56,12 +62,15 @@ export interface TexasAgentDetailResponse {
   source: "texas_api";
 }
 
+/**
+ * Deep-dive for a single agent — always fetches live data.
+ * staleTime: 0 means React Query always re-fetches when the component mounts
+ * or the window regains focus. No stale stats from the list view are sent.
+ */
 export function useTexasAgentDetail(
   affiliateId: string | null,
   ledgerDate: string,
-  currencyCode?: string,
-  /** Pre-fetched stats from list view (reduces API calls to 1) */
-  cachedStats?: { username?: string; tebat?: number; suhoubat?: number; al_harq?: number }
+  currencyCode?: string
 ) {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
@@ -81,18 +90,11 @@ export function useTexasAgentDetail(
         affiliateId,
         ledgerDate,
         currencyCode,
-        // Pass cached stats so server skips redundant Texas API calls
-        ...(cachedStats?.tebat !== undefined
-          ? {
-              username: cachedStats.username,
-              tebat: cachedStats.tebat,
-              suhoubat: cachedStats.suhoubat,
-              al_harq: cachedStats.al_harq,
-            }
-          : {}),
+        // No cached stats passed — server always fetches fresh
       }),
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: 0,          // always re-fetch on mount / window focus
+    gcTime:    60_000,
     retry: 1,
+    refetchOnWindowFocus: true,
   });
 }

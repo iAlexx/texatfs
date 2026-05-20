@@ -2,6 +2,10 @@ import type { AxiosInstance } from "axios";
 import { fetchAllSubAgentStatistics } from "@/lib/texas/fetch-sub-agent-statistics";
 import { fetchAllTexasChildren } from "@/lib/texas/fetch-texas-children";
 import {
+  fetchAgentsTransfers,
+  getTransferSummary,
+} from "@/lib/texas/fetch-agents-transfers";
+import {
   metricsFromTexasSources,
   pickAffiliateId,
   texasRoleLabel,
@@ -53,16 +57,19 @@ function indexStatisticsByAffiliate(
 }
 
 /**
- * Live sub-agents list: Texas getChildren + getSubAgentStatistics (no Supabase hierarchy).
+ * Live sub-agents list: getChildren + getSubAgentStatistics + getAgentsTransfers.
+ * All three calls run in parallel.
  */
 export async function fetchTexasSubAgentsLive(
   client: AxiosInstance,
   ledgerDate: string
 ): Promise<TexasSubAgentsPayload> {
-  const [{ records: children }, { response: statsResponse }] = await Promise.all([
-    fetchAllTexasChildren(client),
-    fetchAllSubAgentStatistics(client, { paginate: true }),
-  ]);
+  const [{ records: children }, { response: statsResponse }, transfersMap] =
+    await Promise.all([
+      fetchAllTexasChildren(client),
+      fetchAllSubAgentStatistics(client, { paginate: true }),
+      fetchAgentsTransfers(client, { date: ledgerDate }),
+    ]);
 
   const statsById = indexStatisticsByAffiliate(
     statsResponse.result?.records ?? []
@@ -70,47 +77,45 @@ export async function fetchTexasSubAgentsLive(
 
   const agents: TexasSubAgentRow[] = children.map((child) => {
     const affiliateId = String(child.affiliateId);
-    const stats = statsById.get(affiliateId) ?? null;
-    const metrics = metricsFromTexasSources(stats, null);
+    const stats     = statsById.get(affiliateId) ?? null;
+    const transfers = getTransferSummary(transfersMap, affiliateId);
+    const metrics   = metricsFromTexasSources(stats, null, transfers);
 
     return {
       affiliateId,
-      username: childLabel(child),
-      email: child.email?.trim() || child.username?.trim() || affiliateId,
-      texasRole: texasRoleLabel(child.role),
+      username:     childLabel(child),
+      email:        child.email?.trim() || child.username?.trim() || affiliateId,
+      texasRole:    texasRoleLabel(child.role),
       mainCurrency: child.mainCurrency?.trim() || "NSP",
       metrics,
     };
   });
 
-  let totalBurn = 0;
+  let totalBurn       = 0;
   let combinedBalance = 0;
   let highest: TexasSubAgentsPayload["stats"]["highest_burn_agent"] = null;
 
   for (const agent of agents) {
-    totalBurn += agent.metrics.al_harq;
+    totalBurn       += agent.metrics.al_harq;
     combinedBalance += agent.metrics.al_nihai;
-    if (
-      !highest ||
-      agent.metrics.al_harq > highest.al_harq
-    ) {
+    if (!highest || agent.metrics.al_harq > highest.al_harq) {
       highest = {
         affiliateId: agent.affiliateId,
-        label: agent.username,
-        al_harq: agent.metrics.al_harq,
+        label:       agent.username,
+        al_harq:     agent.metrics.al_harq,
       };
     }
   }
 
   return {
     ledger_date: ledgerDate,
-    fetched_at: new Date().toISOString(),
+    fetched_at:  new Date().toISOString(),
     agents,
     stats: {
-      active_agents: agents.length,
-      total_network_burn: roundAgg(totalBurn),
-      combined_balance: roundAgg(combinedBalance),
-      highest_burn_agent: highest,
+      active_agents:       agents.length,
+      total_network_burn:  roundAgg(totalBurn),
+      combined_balance:    roundAgg(combinedBalance),
+      highest_burn_agent:  highest,
     },
   };
 }
@@ -126,21 +131,22 @@ export async function fetchTexasAgentWallet(
 ): Promise<import("@/lib/texas/types").TexasAgentWalletResult | null> {
   const response = await client.post<
     import("@/lib/texas/types").TexasAgentWalletResponse
-  >("/Agent/getAgentWalletByAgentId", {
-    affiliateId,
-    currencyCode,
-  });
+  >("/Agent/getAgentWalletByAgentId", { affiliateId, currencyCode });
 
-  if (!response.data?.status || !response.data.result) {
-    return null;
-  }
+  if (!response.data?.status || !response.data.result) return null;
   return response.data.result;
 }
 
+/**
+ * Full detail fetch for a single agent — always live, no cache shortcut.
+ * Calls getChildren + getSubAgentStatistics + getAgentWalletByAgentId +
+ * getAgentsTransfers in parallel.
+ */
 export async function fetchTexasAgentDetailLive(
   client: AxiosInstance,
   affiliateId: string,
-  currencyCode: string
+  currencyCode: string,
+  ledgerDate: string
 ): Promise<{
   affiliateId: string;
   username: string;
@@ -148,12 +154,17 @@ export async function fetchTexasAgentDetailLive(
   mainCurrency: string;
   metrics: TexasLiveLedgerMetrics;
 }> {
-  const [{ records: children }, { response: statsResponse }, wallet] =
-    await Promise.all([
-      fetchAllTexasChildren(client),
-      fetchAllSubAgentStatistics(client, { paginate: true }),
-      fetchTexasAgentWallet(client, affiliateId, currencyCode),
-    ]);
+  const [
+    { records: children },
+    { response: statsResponse },
+    wallet,
+    transfersMap,
+  ] = await Promise.all([
+    fetchAllTexasChildren(client),
+    fetchAllSubAgentStatistics(client, { paginate: true }),
+    fetchTexasAgentWallet(client, affiliateId, currencyCode),
+    fetchAgentsTransfers(client, { date: ledgerDate }),
+  ]);
 
   const child =
     children.find((c) => String(c.affiliateId) === affiliateId) ?? null;
@@ -162,17 +173,18 @@ export async function fetchTexasAgentDetailLive(
       (r) => pickAffiliateId(r) === affiliateId
     ) ?? null;
 
+  const transfers = getTransferSummary(transfersMap, affiliateId);
+
   const username = child
     ? child.username?.trim() || child.email?.trim() || affiliateId
     : affiliateId;
-  const email =
-    child?.email?.trim() || child?.username?.trim() || affiliateId;
+  const email = child?.email?.trim() || child?.username?.trim() || affiliateId;
 
   return {
     affiliateId,
     username,
     email,
     mainCurrency: child?.mainCurrency?.trim() || currencyCode,
-    metrics: metricsFromTexasSources(stats, wallet),
+    metrics: metricsFromTexasSources(stats, wallet, transfers),
   };
 }

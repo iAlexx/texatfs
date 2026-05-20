@@ -32,9 +32,6 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   >(null);
   const [viewAgentLabel, setViewAgentLabel] = useState<string | null>(null);
   const [viewAgentCurrency, setViewAgentCurrency] = useState("NSP");
-  const [viewAgentStats, setViewAgentStats] = useState<
-    { tebat: number; suhoubat: number; al_harq: number } | undefined
-  >(undefined);
   const [activeTab, setActiveTab] = useState<LedgerTabId>("account");
   const telegram = useTelegram();
   const history = useLedgerHistory();
@@ -54,8 +51,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const texasAgentDetail = useTexasAgentDetail(
     viewTexasAffiliateId,
     selectedDate,
-    viewAgentCurrency,
-    viewAgentStats
+    viewAgentCurrency
   );
 
   if (!telegram.isReady) {
@@ -157,20 +153,17 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   function selectTexasAgent(
     affiliateId: string,
     label: string,
-    currency: string,
-    stats?: { tebat: number; suhoubat: number; al_harq: number }
+    currency: string
   ) {
     setViewTexasAffiliateId(affiliateId);
     setViewAgentLabel(label);
     setViewAgentCurrency(currency);
-    setViewAgentStats(stats);
     setActiveTab("account");
   }
 
   function returnToMaster() {
     setViewTexasAffiliateId(null);
     setViewAgentLabel(null);
-    setViewAgentStats(undefined);
     setActiveTab("agents");
   }
   const isToday = selectedDate === todayIsoDate();
@@ -248,12 +241,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
           isLoading={texasSubAgents.isLoading}
           error={texasSubAgents.error}
           onRetry={() => void texasSubAgents.refetch()}
-          onSelectAgent={(affiliateId, label, currency) => {
-            const agentRow = texasSubAgents.data?.agents.find(
-              (a) => a.affiliateId === affiliateId
-            );
-            selectTexasAgent(affiliateId, label, currency, agentRow?.metrics);
-          }}
+          onSelectAgent={selectTexasAgent}
         />
       ) : null}
 

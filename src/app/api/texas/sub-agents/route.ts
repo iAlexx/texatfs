@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 /** sub-agents fetches are slow (multiple Texas API calls) — allow up to 25s */
 export const maxDuration = 25;
 
-const SUB_AGENTS_TTL_MS = 90_000; // 90 seconds
+const SUB_AGENTS_TTL_MS = 30_000; // 30 seconds — balance changes must appear quickly
 
 interface Body extends LedgerAuthInput {
   ledgerDate?: string;
