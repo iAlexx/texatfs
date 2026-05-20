@@ -76,7 +76,6 @@ export function HeroPage() {
               label="حالة الاشتراك"
               value={hero.data?.user.subscription_active ? "فعّال" : "منتهي"}
               variant={hero.data?.user.subscription_active ? "lime" : "muted"}
-              loading={hero.isLoading}
             />
             {hero.data?.network_total_burn != null &&
             hero.data.network_agent_count > 0 ? (

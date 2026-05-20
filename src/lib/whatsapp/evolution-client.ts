@@ -167,6 +167,22 @@ export class EvolutionClient {
   }
 
   /**
+   * Send a plain-text message to a phone number or group JID.
+   * For personal numbers use: "9639XXXXXXXX@s.whatsapp.net"
+   * For groups: "XXXXXXXXXX@g.us"
+   */
+  async sendTextMessage(
+    instanceName: string,
+    jid: string,
+    text: string
+  ): Promise<void> {
+    await this.client.post(
+      `/message/sendText/${encodeURIComponent(instanceName)}`,
+      { number: jid, text }
+    );
+  }
+
+  /**
    * Register a webhook for message events on the instance.
    * Call once after connecting.
    */

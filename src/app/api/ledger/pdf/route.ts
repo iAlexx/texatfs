@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       "مستخدم";
 
     const pdf = buildLedgerStatementPdf(ledger, name);
-    return new NextResponse(pdf, {
+    return new NextResponse(new Uint8Array(pdf), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="texas-statement-${ledger.ledger_date}.pdf"`,

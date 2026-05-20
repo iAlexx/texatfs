@@ -7,8 +7,8 @@ import { serverCacheGet, serverCacheSet } from "@/lib/texas/server-cache";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
-/** sub-agents fetches are slow (multiple Texas API calls) — allow up to 25s */
-export const maxDuration = 25;
+/** sub-agents fetches are slow (multiple Texas API calls) — allow up to 30s */
+export const maxDuration = 30;
 
 const SUB_AGENTS_TTL_MS = 30_000; // 30 seconds — balance changes must appear quickly
 

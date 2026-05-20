@@ -151,7 +151,7 @@ async function handleWebhookAsync(
     messageId: msg.key.id,
     payment,
     rawMessage: text,
-    senderJid: msg.key.participant ?? null,
+    senderJid: msg.key.participant ?? undefined,
     paymentDate: todayDamascus(),
   });
 

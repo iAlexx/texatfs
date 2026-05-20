@@ -135,8 +135,8 @@ async function processOneInstance(
   // 4. Cash payments today
   const cash = await getDayCashSummary(supabase, userId, ledgerDate);
 
-  // 5. Final balance = Texas balance + cashIn - cashOut
-  const finalBalance = metrics.al_nihai + cash.cashIn - cash.cashOut;
+  // 5. Final balance = Texas balance + totalIn - totalOut
+  const finalBalance = metrics.al_nihai + cash.totalIn - cash.totalOut;
 
   const reportData: WhatsAppReportData = {
     ownerName,
@@ -145,8 +145,8 @@ async function processOneInstance(
     totalDeposit: metrics.tebat,
     totalWithdraw: metrics.suhoubat,
     ngr: metrics.al_harq,
-    cashIn: cash.cashIn,
-    cashOut: cash.cashOut,
+    cashIn:  cash.totalIn,
+    cashOut: cash.totalOut,
     finalBalance,
     generatedAt: new Date().toISOString(),
   };

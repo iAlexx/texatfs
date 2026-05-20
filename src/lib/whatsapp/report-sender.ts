@@ -85,7 +85,7 @@ async function screenshotReportHtml(html: string): Promise<Buffer> {
       const page = await browser.newPage();
       await page.setViewport(VIEWPORT);
       await page.setContent(html, {
-        waitUntil: "networkidle0",
+        waitUntil: "domcontentloaded",
         timeout: SCREENSHOT_TIMEOUT_MS,
       });
       await page.waitForSelector("[data-report-ready='true']", {

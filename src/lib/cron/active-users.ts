@@ -7,6 +7,7 @@ export interface CronSubscriber {
   texas_affiliate_id: string | null;
   display_name: string | null;
   texas_username: string | null;
+  subscription_end_date: string | null;
 }
 
 /**
@@ -43,6 +44,7 @@ export async function fetchActiveCronSubscribers(
       texas_affiliate_id: row.texas_affiliate_id,
       display_name: row.display_name,
       texas_username: row.texas_username,
+      subscription_end_date: row.subscription_end_date ?? null,
     });
   }
 

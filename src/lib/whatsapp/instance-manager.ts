@@ -119,11 +119,13 @@ export async function syncInstanceStatus(
     state = "error";
   }
 
+  const isFirstConnection = state === "connected" && !instance.connected_at;
+
   const patch: Partial<WhatsAppInstance> = {
     status: state,
     last_seen_at: new Date().toISOString(),
   };
-  if (state === "connected" && !instance.connected_at) {
+  if (isFirstConnection) {
     patch.connected_at = new Date().toISOString();
   }
 
@@ -132,7 +134,68 @@ export async function syncInstanceStatus(
     .update(patch)
     .eq("user_id", userId);
 
+  // Send welcome message on first successful connection
+  if (isFirstConnection && instance.phone_number) {
+    void sendWelcomeMessage(
+      evo,
+      instance.instance_name,
+      instance.phone_number,
+      supabase,
+      userId
+    ).catch((e) =>
+      console.warn("[instance-manager] welcome message failed (non-fatal)", e instanceof Error ? e.message : e)
+    );
+  }
+
   return state;
+}
+
+async function sendWelcomeMessage(
+  evo: import("@/lib/whatsapp/evolution-client").EvolutionClient,
+  instanceName: string,
+  phoneNumber: string,
+  supabase: SupabaseClient,
+  userId: string
+): Promise<void> {
+  // Fetch owner display name
+  const { data: userRow } = await supabase
+    .from("users")
+    .select("display_name, texas_username")
+    .eq("id", userId)
+    .maybeSingle();
+  const name = userRow?.display_name ?? userRow?.texas_username ?? "صديقي";
+
+  // Personal JID: phoneNumber@s.whatsapp.net
+  const jid = `${phoneNumber.replace(/\D/g, "")}@s.whatsapp.net`;
+
+  const welcomeText = `مرحباً ${name} 👑
+
+تم ربط حسابك في منصة *Texas Funds Pro Max* بـ WhatsApp بنجاح! 🎉
+
+━━━━━━━━━━━━━━━━━━
+📋 *كيف تستخدم البوت:*
+
+1️⃣ *إنشاء مجموعات التقارير 🔥*
+أنشئ مجموعات واتساب وضع 🔥 في اسم المجموعة
+• سيُرسل التقرير اليومي إليها تلقائياً كل يوم الساعة 4:00 صباحاً
+
+2️⃣ *تسجيل المدفوعات النقدية:*
+💰 [المبلغ] ← وصل منك (كاش استلمته)
+📤 [المبلغ] ← واصل إليك (كاش أرسلته)
+
+مثال:
+💰 500
+📤 250
+
+3️⃣ *التقرير اليومي التلقائي:*
+• يُرسل كل يوم الساعة 4:00 صباحاً
+• يتضمن: رصيد تكساس + صافي الكاش + الرصيد النهائي
+
+━━━━━━━━━━━━━━━━━━
+*Texas Funds Pro Max* 🏆`;
+
+  await evo.sendTextMessage(instanceName, jid, welcomeText);
+  console.info(`[instance-manager] welcome message sent to ${jid}`);
 }
 
 /** Disconnect + delete Evolution instance. */

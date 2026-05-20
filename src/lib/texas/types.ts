@@ -38,8 +38,8 @@ export interface TexasPagedRequest {
 export interface TexasPagedResult<TRecord> {
   records: TRecord[];
   totalRecordsCount: string;
-  titles: unknown;
-  total: SubAgentStatisticsTotals | null;
+  titles?: unknown;
+  total?: SubAgentStatisticsTotals | null;
 }
 
 /**

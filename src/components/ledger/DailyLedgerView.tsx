@@ -44,9 +44,16 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const showAgentsTab = session.data?.user
     ? canManageNetwork(session.data.user.role)
     : false;
+
+  // Start fetching as soon as the user is authenticated and navigates to the agents
+  // tab — do NOT wait for session.data?.user (removes 1-3s sequential delay).
+  // The server returns 403 for non-masters, which renders as an error state in the panel.
   const texasSubAgents = useTexasSubAgents(
     selectedDate,
-    Boolean(showAgentsTab && !viewingTexasAgent)
+    telegram.isReady &&
+      telegram.canAuthenticate &&
+      !viewingTexasAgent &&
+      (showAgentsTab || activeTab === "agents")
   );
   const texasAgentDetail = useTexasAgentDetail(
     viewTexasAffiliateId,
@@ -254,22 +261,22 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
           <p className="text-sm text-steel-400">{ar.ledgerHistoryHint}</p>
           {history.data?.dates?.length ? (
             <ul className="mt-4 space-y-2 text-right">
-              {history.data.dates.slice(0, 12).map((d) => (
-                <li key={d}>
+              {history.data.dates.slice(0, 12).map((entry) => (
+                <li key={entry.ledger_date}>
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedDate(d);
+                      setSelectedDate(entry.ledger_date);
                       setActiveTab("account");
                     }}
                     className={cn(
                       "w-full rounded-lg border px-3 py-2 text-sm transition-colors",
-                      d === selectedDate
+                      entry.ledger_date === selectedDate
                         ? "border-gold/40 bg-gold/10 text-gold"
                         : "border-white/[0.06] text-steel-400 hover:border-gold/20"
                     )}
                   >
-                    {formatLedgerDate(d)}
+                    {formatLedgerDate(entry.ledger_date)}
                   </button>
                 </li>
               ))}
