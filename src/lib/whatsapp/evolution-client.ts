@@ -46,27 +46,109 @@ export interface EvolutionSendMediaResponse {
   status: string;
 }
 
+/**
+ * Thrown for every Evolution API communication error.
+ * Message is always in Arabic and safe to show in the UI.
+ */
+export class EvolutionApiError extends Error {
+  constructor(
+    message: string,
+    /** HTTP status that triggered the error (0 = network-level failure) */
+    readonly httpStatus: number = 0
+  ) {
+    super(message);
+    this.name = "EvolutionApiError";
+  }
+}
+
+export function isEvolutionConfigured(): boolean {
+  return Boolean(
+    process.env.EVOLUTION_API_URL?.trim() &&
+    process.env.EVOLUTION_API_KEY?.trim()
+  );
+}
+
 function resolveEvolutionConfig(): EvolutionConfig {
   const baseUrl = process.env.EVOLUTION_API_URL?.trim().replace(/\/$/, "");
   const apiKey  = process.env.EVOLUTION_API_KEY?.trim();
 
   if (!baseUrl || !apiKey) {
-    throw new Error(
-      "EVOLUTION_API_URL and EVOLUTION_API_KEY must be set in environment"
+    throw new EvolutionApiError(
+      "خدمة WhatsApp غير مُهيأة — يرجى إضافة EVOLUTION_API_URL و EVOLUTION_API_KEY في إعدادات Railway",
+      503
     );
   }
   return { baseUrl, apiKey };
 }
 
 function makeClient(config: EvolutionConfig): AxiosInstance {
-  return axios.create({
+  const instance = axios.create({
     baseURL: config.baseUrl,
     headers: {
       apikey: config.apiKey,
       "Content-Type": "application/json",
     },
-    timeout: 20_000,
+    timeout: 25_000,
   });
+
+  // Translate all Axios errors to user-friendly Arabic EvolutionApiErrors
+  instance.interceptors.response.use(
+    (r) => r,
+    (err: unknown) => {
+      // Network-level failure (no HTTP response received)
+      if (
+        err &&
+        typeof err === "object" &&
+        "response" in err &&
+        !(err as { response: unknown }).response
+      ) {
+        const code = (err as { code?: string }).code ?? "";
+        if (
+          code === "ECONNREFUSED" ||
+          code === "ENOTFOUND" ||
+          code === "ECONNRESET"
+        ) {
+          throw new EvolutionApiError(
+            "لا يمكن الوصول إلى خدمة Evolution API — تأكد من أن الخدمة تعمل على Railway",
+            0
+          );
+        }
+        if (code === "ETIMEDOUT" || code === "ECONNABORTED") {
+          throw new EvolutionApiError(
+            "انتهت مهلة الاتصال بـ Evolution API — الخدمة بطيئة أو لا تستجيب",
+            0
+          );
+        }
+        const msg =
+          (err as { message?: string }).message ?? "network error";
+        throw new EvolutionApiError(
+          `فشل الاتصال بـ Evolution API: ${msg}`,
+          0
+        );
+      }
+
+      // HTTP response received but with error status
+      const status: number =
+        (err as { response?: { status?: number } }).response?.status ?? 0;
+
+      if (status === 502 || status === 503 || status === 504) {
+        throw new EvolutionApiError(
+          `خدمة WhatsApp غير متوفرة حالياً (${status}) — تحقق من حالة خدمة Evolution API على Railway`,
+          status
+        );
+      }
+      if (status === 401 || status === 403) {
+        throw new EvolutionApiError(
+          "مفتاح EVOLUTION_API_KEY غير صحيح أو منتهي الصلاحية",
+          status
+        );
+      }
+      // Re-throw everything else (404, 422, etc.) as-is for callers to handle
+      throw err;
+    }
+  );
+
+  return instance;
 }
 
 export class EvolutionClient {

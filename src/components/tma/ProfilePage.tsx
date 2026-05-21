@@ -59,18 +59,20 @@ export function ProfilePage() {
   const disconnectWa = useWhatsAppDisconnect();
   const [phone, setPhone] = useState("");
   const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const waStatus = whatsappStatus.data?.status ?? "disconnected";
   const isConnecting = waStatus === "connecting" || waStatus === "creating";
   const isConnected  = waStatus === "connected";
 
-  // Poll every 3s while connecting
-  useWhatsAppStatusPoller(isConnecting || (connectWa.isSuccess && !isConnected));
+  // Poll every 3s while connecting (and while we're waiting for pairing confirmation)
+  useWhatsAppStatusPoller(isConnecting || (connectWa.isSuccess && !isConnected && !!pairingCode));
 
   // Auto-clear pairing code once connected
   useEffect(() => {
     if (isConnected && pairingCode) {
       setPairingCode(null);
+      setConnectError(null);
       toast.success("تم ربط واتساب بنجاح ✅");
     }
   }, [isConnected, pairingCode]);
@@ -78,14 +80,16 @@ export function ProfilePage() {
   async function handleConnect() {
     const cleaned = phone.replace(/\D/g, "").trim();
     if (!cleaned || cleaned.length < 7) {
-      toast.error("أدخل رقم الهاتف بدون + (مثال: 963912345678)");
+      setConnectError("أدخل رقم الهاتف بدون + (مثال: 963912345678)");
       return;
     }
+    setConnectError(null);
     try {
       const result = await connectWa.mutateAsync(cleaned);
       setPairingCode(result.pairingCode);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : ar.errorGeneric);
+      const msg = e instanceof Error ? e.message : ar.errorGeneric;
+      setConnectError(msg);
     }
   }
 
@@ -94,6 +98,7 @@ export function ProfilePage() {
       await disconnectWa.mutateAsync();
       setPairingCode(null);
       setPhone("");
+      setConnectError(null);
       toast.success("تم قطع اتصال واتساب");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : ar.errorGeneric);
@@ -218,6 +223,8 @@ export function ProfilePage() {
         phone={phone}
         setPhone={setPhone}
         pairingCode={pairingCode}
+        connectError={connectError}
+        onClearError={() => setConnectError(null)}
         fireGroupsCount={whatsappStatus.data?.fire_groups_count ?? 0}
         connectedPhone={whatsappStatus.data?.phone_number ?? null}
         isPending={connectWa.isPending}
@@ -238,6 +245,8 @@ function WhatsAppSection({
   phone,
   setPhone,
   pairingCode,
+  connectError,
+  onClearError,
   fireGroupsCount,
   connectedPhone,
   isPending,
@@ -251,6 +260,8 @@ function WhatsAppSection({
   phone: string;
   setPhone: (v: string) => void;
   pairingCode: string | null;
+  connectError: string | null;
+  onClearError: () => void;
   fireGroupsCount: number;
   connectedPhone: string | null;
   isPending: boolean;
@@ -382,31 +393,67 @@ function WhatsAppSection({
                 اربط حسابك على واتساب لتفعيل التقارير التلقائية وتتبع المدفوعات النقدية.
               </p>
 
+              {/* Inline error — appears below description */}
+              <AnimatePresence>
+                {connectError && (
+                  <motion.div
+                    key="err"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-3"
+                  >
+                    <span className="mt-0.5 shrink-0 text-base">⚠️</span>
+                    <div className="flex-1">
+                      <p className="text-xs leading-relaxed text-accent-negative">
+                        {connectError}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={onClearError}
+                        className="mt-1.5 text-[10px] text-steel-400 underline underline-offset-2"
+                      >
+                        إغلاق
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div>
                 <label className="mb-1.5 block text-[11px] text-steel-400">
                   رقم الهاتف (بدون +)
                 </label>
                 <Input
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+                  onChange={(e) => {
+                    setPhone(e.target.value.replace(/\D/g, ""));
+                    if (connectError) onClearError();
+                  }}
                   placeholder={ar.whatsappPhonePlaceholder}
                   inputMode="tel"
                   className="border-steel-border/80 bg-obsidian/60 font-mono text-sm"
                   dir="ltr"
+                  disabled={isPending}
                 />
               </div>
 
               <Button
-                className="w-full gap-2 bg-[#25d366] text-white hover:bg-[#1db954] active:bg-[#1aa34a]"
+                className="w-full gap-2 bg-[#25d366] text-white hover:bg-[#1db954] active:bg-[#1aa34a] disabled:opacity-60"
                 disabled={isPending || !phone.trim()}
                 onClick={onConnect}
               >
                 {isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    جاري الاتصال بـ Evolution API…
+                  </>
                 ) : (
-                  <Wifi className="h-4 w-4" />
+                  <>
+                    <Wifi className="h-4 w-4" />
+                    {ar.whatsappConnect}
+                  </>
                 )}
-                {isPending ? "جاري الاتصال…" : ar.whatsappConnect}
               </Button>
             </motion.div>
           )}

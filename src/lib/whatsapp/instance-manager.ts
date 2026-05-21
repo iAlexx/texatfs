@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getEvolutionClient } from "@/lib/whatsapp/evolution-client";
+import { getEvolutionClient, EvolutionApiError } from "@/lib/whatsapp/evolution-client";
 
 export interface WhatsAppInstance {
   id: string;
@@ -66,35 +66,64 @@ export async function startInstanceConnection(
   try {
     await evo.createInstance(instanceName);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // "already exists" is fine — just proceed
-    if (!msg.toLowerCase().includes("already")) {
-      throw new Error(`تعذر إنشاء WhatsApp instance: ${msg}`);
+    // EvolutionApiError already has a clean Arabic message — re-throw as-is
+    if (e instanceof EvolutionApiError) throw e;
+
+    // Evolution API v2 returns HTTP 409 when instance already exists — that's fine
+    const status = (e as { response?: { status?: number } }).response?.status;
+    const msg    = e instanceof Error ? e.message : String(e);
+    const isAlreadyExists =
+      status === 409 ||
+      msg.toLowerCase().includes("already") ||
+      msg.toLowerCase().includes("exists");
+
+    if (!isAlreadyExists) {
+      throw new EvolutionApiError(
+        `تعذر إنشاء جلسة WhatsApp: ${msg}`,
+        status ?? 0
+      );
     }
+    // instance already exists → continue
+    console.info("[instance-manager] instance already exists, proceeding", instanceName);
   }
 
-  // Register webhook
+  // Register webhook (non-fatal if Evolution API doesn't support it yet)
   try {
     await evo.setWebhook(instanceName, webhookUrl);
   } catch (e) {
-    console.warn("[instance-manager] setWebhook failed (non-fatal)", e);
+    if (e instanceof EvolutionApiError) {
+      console.warn("[instance-manager] setWebhook failed (non-fatal):", e.message);
+    } else {
+      console.warn("[instance-manager] setWebhook failed (non-fatal)", e);
+    }
   }
 
-  // Get pairing code
-  const pairingCode = await evo.getPairingCode(instanceName, phoneNumber.trim());
+  // Get pairing code — this can fail if phone format is wrong or instance is in bad state
+  let pairingCode: string;
+  try {
+    pairingCode = await evo.getPairingCode(instanceName, phoneNumber.trim());
+  } catch (e) {
+    if (e instanceof EvolutionApiError) throw e;
+    const status = (e as { response?: { status?: number } }).response?.status;
+    const msg    = e instanceof Error ? e.message : String(e);
+    throw new EvolutionApiError(
+      `تعذر الحصول على رمز الإقران: ${msg}`,
+      status ?? 0
+    );
+  }
 
   // Upsert DB record
-  const { error } = await supabase.from("whatsapp_instances").upsert(
+  const { error: dbError } = await supabase.from("whatsapp_instances").upsert(
     {
-      user_id: userId,
+      user_id:       userId,
       instance_name: instanceName,
-      status: "connecting",
-      phone_number: phoneNumber.trim(),
+      status:        "connecting",
+      phone_number:  phoneNumber.trim(),
       error_message: null,
     },
     { onConflict: "user_id" }
   );
-  if (error) throw error;
+  if (dbError) throw dbError;
 
   return { instanceName, pairingCode };
 }

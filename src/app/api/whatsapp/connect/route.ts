@@ -11,6 +11,7 @@ import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
 import { startInstanceConnection } from "@/lib/whatsapp/instance-manager";
 import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
+import { isEvolutionConfigured, EvolutionApiError } from "@/lib/whatsapp/evolution-client";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -22,13 +23,24 @@ interface Body extends LedgerAuthInput {
 }
 
 export async function POST(request: Request) {
+  // ── Pre-flight: check env vars before any auth/DB work ───────────────────
+  if (!isEvolutionConfigured()) {
+    return Response.json(
+      {
+        error: "خدمة WhatsApp غير مُهيأة — يرجى إضافة EVOLUTION_API_URL و EVOLUTION_API_KEY في إعدادات Railway",
+        code:  "NOT_CONFIGURED",
+      },
+      { status: 503 }
+    );
+  }
+
   try {
     const body = (await request.json().catch(() => ({}))) as Body;
     const phone = body.phone?.trim();
 
     if (!phone || !/^\d{7,15}$/.test(phone)) {
       return Response.json(
-        { error: "رقم الهاتف غير صالح. أدخل الأرقام فقط بدون + (مثال: 963912345678)" },
+        { error: "رقم الهاتف غير صالح — أدخل الأرقام فقط بدون + (مثال: 963912345678)" },
         { status: 400 }
       );
     }
@@ -43,7 +55,7 @@ export async function POST(request: Request) {
     }
     if (!canManageNetwork(user.role)) {
       return Response.json(
-        { error: "صلاحية الاتصال بـ WhatsApp متاحة للماسترات فقط" },
+        { error: "ميزة WhatsApp متاحة للماسترات فقط" },
         { status: 403 }
       );
     }
@@ -62,6 +74,12 @@ export async function POST(request: Request) {
   } catch (e) {
     if (e instanceof LedgerAuthError) {
       return Response.json({ error: e.message }, { status: e.status });
+    }
+    // Evolution API errors already contain Arabic user-friendly messages
+    if (e instanceof EvolutionApiError) {
+      console.error("[whatsapp/connect] Evolution API error:", e.message, `(HTTP ${e.httpStatus})`);
+      const status = e.httpStatus >= 400 ? e.httpStatus : 502;
+      return Response.json({ error: e.message, code: "EVOLUTION_ERROR" }, { status });
     }
     const msg = e instanceof Error ? e.message : "تعذر الاتصال بـ WhatsApp";
     console.error("[whatsapp/connect]", msg);
