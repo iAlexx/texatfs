@@ -25,7 +25,10 @@ export interface EvolutionConnectionState {
 }
 
 export interface EvolutionPairingCodeResponse {
-  code: string;
+  /** Evolution API v1/some v2 builds return "code" */
+  code?: string;
+  /** Evolution API v2 newer builds return "pairingCode" */
+  pairingCode?: string;
 }
 
 export interface EvolutionGroup {
@@ -182,16 +185,23 @@ function makeClient(config: EvolutionConfig): AxiosInstance {
       // Evolution API returns 403 for many reasons: instance already connected,
       // wrong phone format, endpoint not available in current state, etc.
       if (status === 403) {
-        const detail = evolutionMsg
-          ? `: ${evolutionMsg}`
-          : "";
+        const detail = evolutionMsg ? `: ${evolutionMsg}` : "";
         throw new EvolutionApiError(
           `طلب مرفوض من Evolution API (403)${detail}`,
           403
         );
       }
 
-      // Re-throw everything else (404, 409, 422, etc.) as-is for callers to handle
+      // 404 = instance doesn't exist yet (still initializing) or wrong path
+      if (status === 404) {
+        const detail = evolutionMsg ? `: ${evolutionMsg}` : "";
+        throw new EvolutionApiError(
+          `الجلسة غير موجودة في Evolution API (404)${detail} — ربما لم تنتهِ من الإعداد بعد`,
+          404
+        );
+      }
+
+      // Re-throw everything else (409, 422, etc.) as-is for callers to handle
       throw err;
     }
   );
@@ -221,7 +231,11 @@ export class EvolutionClient {
     return res.data;
   }
 
-  /** Get pairing code for a phone number (format: 905xxxxxxxxx). */
+  /**
+   * Request pairing code for a phone number.
+   * Phone must be digits only, international format (e.g. 963912345678).
+   * Evolution API v2 returns either `pairingCode` or `code` depending on build.
+   */
   async getPairingCode(
     instanceName: string,
     phoneNumber: string
@@ -230,12 +244,18 @@ export class EvolutionClient {
       `/instance/connect/${encodeURIComponent(instanceName)}`,
       { number: phoneNumber }
     );
-    if (!res.data?.code) {
-      throw new Error(
-        `Evolution API did not return a pairing code for ${instanceName}`
+    const code = res.data?.pairingCode ?? res.data?.code;
+    if (!code) {
+      console.warn(
+        "[EvolutionClient] getPairingCode unexpected response body:",
+        JSON.stringify(res.data)
+      );
+      throw new EvolutionApiError(
+        "لم تُرجع Evolution API رمز الإقران — تحقق من صحة رقم الهاتف وأن الجلسة في حالة جاهزة",
+        0
       );
     }
-    return res.data.code;
+    return code;
   }
 
   /** Poll connection state. */

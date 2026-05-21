@@ -75,11 +75,35 @@ export async function POST(request: Request) {
     if (e instanceof LedgerAuthError) {
       return Response.json({ error: e.message }, { status: e.status });
     }
-    // Evolution API errors already contain Arabic user-friendly messages
     if (e instanceof EvolutionApiError) {
       console.error("[whatsapp/connect] Evolution API error:", e.message, `(HTTP ${e.httpStatus})`);
-      const status = e.httpStatus >= 400 ? e.httpStatus : 502;
-      return Response.json({ error: e.message, code: "EVOLUTION_ERROR" }, { status });
+
+      // Map specific HTTP codes to more actionable Arabic messages
+      const userMsg = (() => {
+        switch (e.httpStatus) {
+          case 401:
+            return "مفتاح EVOLUTION_API_KEY غير صحيح — تحقق من إعدادات Railway";
+          case 403:
+            return e.message.toLowerCase().includes("already")
+              ? "هذه الجلسة مستخدمة مسبقاً — انتظر قليلاً ثم حاول مجدداً"
+              : e.message;
+          case 404:
+            return "الجلسة لم تُهيَّأ بعد في Evolution API — حاول مجدداً بعد ثوانٍ";
+          case 422:
+            return "رقم الهاتف غير مقبول — تأكد من صيغة: كود الدولة + الرقم بدون + (مثال: 963912345678)";
+          case 0:
+            return e.message; // network-level errors already have good Arabic messages
+          default:
+            return e.message;
+        }
+      })();
+
+      const httpStatus =
+        e.httpStatus === 422 ? 422 :
+        e.httpStatus === 401 ? 401 :
+        e.httpStatus >= 400 && e.httpStatus < 500 ? 400 :
+        502;
+      return Response.json({ error: userMsg, code: "EVOLUTION_ERROR" }, { status: httpStatus });
     }
     const msg = e instanceof Error ? e.message : "تعذر الاتصال بـ WhatsApp";
     console.error("[whatsapp/connect]", msg);

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getEvolutionClient, EvolutionApiError } from "@/lib/whatsapp/evolution-client";
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export interface WhatsAppInstance {
   id: string;
   user_id: string;
@@ -62,67 +64,118 @@ export async function startInstanceConnection(
   const instanceName = instanceNameForUser(userId);
   const webhookUrl = resolveWebhookUrl();
 
-  // Create instance in Evolution API (idempotent — safe to call again)
+  // ── Step 1: Ensure instance exists in Evolution API ─────────────────────
+  let instanceExists = false;
   try {
     await evo.createInstance(instanceName);
-    console.info("[instance-manager] instance created", instanceName);
+    instanceExists = true;
+    console.info("[instance-manager] instance created:", instanceName);
   } catch (e) {
     if (e instanceof EvolutionApiError) {
-      // 401 = wrong API key — fatal, stop immediately
-      if (e.httpStatus === 401) throw e;
+      if (e.httpStatus === 401) throw e; // wrong API key — fatal
 
-      // 403 from createInstance usually means the instance already exists in
-      // Evolution API (returned when the instance is in a connected/connecting state).
-      // Fall through and attempt to get pairing code anyway.
-      if (e.httpStatus === 403) {
-        console.info(
-          "[instance-manager] createInstance returned 403 — assuming instance exists, proceeding.",
-          { instanceName, detail: e.message }
-        );
-        // continue — don't throw
+      // 403: Evolution API returns this when the instance name is already taken
+      // 404: shouldn't happen on create, but treat as non-fatal
+      if (e.httpStatus === 403 || e.httpStatus === 404) {
+        console.info("[instance-manager] createInstance →", e.httpStatus, "— assuming exists:", instanceName);
+        instanceExists = true;
       } else {
-        // Any other EvolutionApiError (502, network, etc.) is fatal
-        throw e;
+        throw e; // 502, network, etc. — fatal
       }
     } else {
-      // Raw Axios error (interceptor did not convert it — e.g. 409 Conflict)
+      // Raw Axios error not caught by interceptor (e.g. 409 Conflict)
       const status = (e as { response?: { status?: number } }).response?.status;
       const msg    = e instanceof Error ? e.message : String(e);
-      const isAlreadyExists =
+      const alreadyExists =
         status === 409 ||
         msg.toLowerCase().includes("already") ||
         msg.toLowerCase().includes("exists");
-
-      if (!isAlreadyExists) {
+      if (!alreadyExists) {
         throw new EvolutionApiError(`تعذر إنشاء جلسة WhatsApp: ${msg}`, status ?? 0);
       }
-      console.info("[instance-manager] instance already exists (409), proceeding", instanceName);
+      instanceExists = true;
+      console.info("[instance-manager] instance already exists (409):", instanceName);
     }
   }
 
-  // Register webhook (non-fatal if Evolution API doesn't support it yet)
+  // Evolution API v2 needs ~1-2 s to fully initialize a newly created Baileys instance
+  // before the /instance/connect endpoint is routed. Skip delay if instance pre-existed.
+  if (instanceExists) {
+    await sleep(1_500);
+  }
+
+  // ── Step 2: Register webhook (non-fatal) ─────────────────────────────────
   try {
     await evo.setWebhook(instanceName, webhookUrl);
   } catch (e) {
-    if (e instanceof EvolutionApiError) {
-      console.warn("[instance-manager] setWebhook failed (non-fatal):", e.message);
-    } else {
-      console.warn("[instance-manager] setWebhook failed (non-fatal)", e);
+    console.warn(
+      "[instance-manager] setWebhook failed (non-fatal):",
+      e instanceof EvolutionApiError ? e.message : e
+    );
+  }
+
+  // ── Step 3: Request pairing code — retry with backoff ────────────────────
+  // 404 after createInstance = instance not yet registered in Evolution router.
+  // Wait and retry. On 2nd 404: delete + recreate then try once more.
+  const phone = phoneNumber.trim();
+  let pairingCode = "";
+  let lastError: EvolutionApiError | null = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1) {
+      await sleep(attempt * 2_000); // 2 s on attempt 2, 4 s on attempt 3
+    }
+    try {
+      pairingCode = await evo.getPairingCode(instanceName, phone);
+      lastError = null;
+      break; // success
+    } catch (e) {
+      if (e instanceof EvolutionApiError) {
+        lastError = e;
+
+        // Wrong API key — never retry
+        if (e.httpStatus === 401) throw e;
+
+        // Instance not ready (404) — retry; on attempt 2 wipe and recreate
+        if (e.httpStatus === 404) {
+          console.warn(
+            `[instance-manager] getPairingCode 404 (attempt ${attempt}) — instance not ready yet`
+          );
+          if (attempt === 2) {
+            console.info("[instance-manager] deleting and recreating instance after persistent 404");
+            try {
+              await evo.deleteInstance(instanceName);
+              await sleep(1_000);
+              await evo.createInstance(instanceName);
+              await sleep(2_000);
+            } catch (recreateErr) {
+              console.warn("[instance-manager] recreate failed:", recreateErr);
+            }
+          }
+          continue;
+        }
+
+        // Wrong phone format or similar — no point retrying
+        console.error(
+          `[instance-manager] getPairingCode error (attempt ${attempt}):`,
+          e.message
+        );
+        if (attempt === 3) throw e;
+        continue;
+      }
+
+      // Raw Axios error that slipped past the interceptor
+      const status = (e as { response?: { status?: number } }).response?.status;
+      lastError = new EvolutionApiError(
+        `تعذر الحصول على رمز الإقران (${status ?? "network"})`,
+        status ?? 0
+      );
+      if (attempt === 3) throw lastError;
     }
   }
 
-  // Get pairing code — this can fail if phone format is wrong or instance is in bad state
-  let pairingCode: string;
-  try {
-    pairingCode = await evo.getPairingCode(instanceName, phoneNumber.trim());
-  } catch (e) {
-    if (e instanceof EvolutionApiError) throw e;
-    const status = (e as { response?: { status?: number } }).response?.status;
-    const msg    = e instanceof Error ? e.message : String(e);
-    throw new EvolutionApiError(
-      `تعذر الحصول على رمز الإقران: ${msg}`,
-      status ?? 0
-    );
+  if (!pairingCode) {
+    throw lastError ?? new EvolutionApiError("تعذر الحصول على رمز الإقران بعد عدة محاولات", 0);
   }
 
   // Upsert DB record
