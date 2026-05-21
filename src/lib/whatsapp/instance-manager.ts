@@ -65,26 +65,39 @@ export async function startInstanceConnection(
   // Create instance in Evolution API (idempotent — safe to call again)
   try {
     await evo.createInstance(instanceName);
+    console.info("[instance-manager] instance created", instanceName);
   } catch (e) {
-    // EvolutionApiError already has a clean Arabic message — re-throw as-is
-    if (e instanceof EvolutionApiError) throw e;
+    if (e instanceof EvolutionApiError) {
+      // 401 = wrong API key — fatal, stop immediately
+      if (e.httpStatus === 401) throw e;
 
-    // Evolution API v2 returns HTTP 409 when instance already exists — that's fine
-    const status = (e as { response?: { status?: number } }).response?.status;
-    const msg    = e instanceof Error ? e.message : String(e);
-    const isAlreadyExists =
-      status === 409 ||
-      msg.toLowerCase().includes("already") ||
-      msg.toLowerCase().includes("exists");
+      // 403 from createInstance usually means the instance already exists in
+      // Evolution API (returned when the instance is in a connected/connecting state).
+      // Fall through and attempt to get pairing code anyway.
+      if (e.httpStatus === 403) {
+        console.info(
+          "[instance-manager] createInstance returned 403 — assuming instance exists, proceeding.",
+          { instanceName, detail: e.message }
+        );
+        // continue — don't throw
+      } else {
+        // Any other EvolutionApiError (502, network, etc.) is fatal
+        throw e;
+      }
+    } else {
+      // Raw Axios error (interceptor did not convert it — e.g. 409 Conflict)
+      const status = (e as { response?: { status?: number } }).response?.status;
+      const msg    = e instanceof Error ? e.message : String(e);
+      const isAlreadyExists =
+        status === 409 ||
+        msg.toLowerCase().includes("already") ||
+        msg.toLowerCase().includes("exists");
 
-    if (!isAlreadyExists) {
-      throw new EvolutionApiError(
-        `تعذر إنشاء جلسة WhatsApp: ${msg}`,
-        status ?? 0
-      );
+      if (!isAlreadyExists) {
+        throw new EvolutionApiError(`تعذر إنشاء جلسة WhatsApp: ${msg}`, status ?? 0);
+      }
+      console.info("[instance-manager] instance already exists (409), proceeding", instanceName);
     }
-    // instance already exists → continue
-    console.info("[instance-manager] instance already exists, proceeding", instanceName);
   }
 
   // Register webhook (non-fatal if Evolution API doesn't support it yet)

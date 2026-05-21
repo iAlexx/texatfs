@@ -68,9 +68,17 @@ export function isEvolutionConfigured(): boolean {
   );
 }
 
+/** Remove surrounding quotes that Railway sometimes adds when copy-pasting values. */
+function stripQuotes(s: string): string {
+  return s.replace(/^["']|["']$/g, "");
+}
+
 function resolveEvolutionConfig(): EvolutionConfig {
-  const baseUrl = process.env.EVOLUTION_API_URL?.trim().replace(/\/$/, "");
-  const apiKey  = process.env.EVOLUTION_API_KEY?.trim();
+  const rawUrl = process.env.EVOLUTION_API_URL?.trim() ?? "";
+  const rawKey = process.env.EVOLUTION_API_KEY?.trim() ?? "";
+
+  const baseUrl = stripQuotes(rawUrl).replace(/\/$/, "");
+  const apiKey  = stripQuotes(rawKey);
 
   if (!baseUrl || !apiKey) {
     throw new EvolutionApiError(
@@ -78,6 +86,14 @@ function resolveEvolutionConfig(): EvolutionConfig {
       503
     );
   }
+
+  // Diagnostic log: shows first 6 chars of key + URL (safe for server logs)
+  console.info("[EvolutionClient] config loaded", {
+    baseUrl,
+    apiKeyPrefix: apiKey.slice(0, 6) + "…",
+    apiKeyLength: apiKey.length,
+  });
+
   return { baseUrl, apiKey };
 }
 
@@ -131,19 +147,51 @@ function makeClient(config: EvolutionConfig): AxiosInstance {
       const status: number =
         (err as { response?: { status?: number } }).response?.status ?? 0;
 
+      // Extract Evolution API's own error message from the response body (if present)
+      const rawBody = (err as { response?: { data?: unknown } }).response?.data;
+      const evolutionMsg: string | null =
+        rawBody && typeof rawBody === "object"
+          ? ((rawBody as Record<string, unknown>).message as string) ||
+            ((rawBody as Record<string, unknown>).error as string) ||
+            null
+          : null;
+
+      // Log every non-2xx for diagnostics
+      console.warn("[EvolutionClient] HTTP error", {
+        status,
+        evolutionMsg,
+        url: (err as { config?: { url?: string } }).config?.url ?? "?",
+      });
+
       if (status === 502 || status === 503 || status === 504) {
         throw new EvolutionApiError(
           `خدمة WhatsApp غير متوفرة حالياً (${status}) — تحقق من حالة خدمة Evolution API على Railway`,
           status
         );
       }
-      if (status === 401 || status === 403) {
+
+      // 401 = definitively wrong API key
+      if (status === 401) {
         throw new EvolutionApiError(
-          "مفتاح EVOLUTION_API_KEY غير صحيح أو منتهي الصلاحية",
-          status
+          "مفتاح EVOLUTION_API_KEY غير صحيح أو لم يُعيَّن بشكل صحيح — تأكد من تطابق المفتاح في كلا الخدمتين على Railway",
+          401
         );
       }
-      // Re-throw everything else (404, 422, etc.) as-is for callers to handle
+
+      // 403 = forbidden action (NOT necessarily wrong key)
+      // Evolution API returns 403 for many reasons: instance already connected,
+      // wrong phone format, endpoint not available in current state, etc.
+      if (status === 403) {
+        const detail = evolutionMsg
+          ? `: ${evolutionMsg}`
+          : "";
+        throw new EvolutionApiError(
+          `طلب مرفوض من Evolution API (403)${detail}`,
+          403
+        );
+      }
+
+      // Re-throw everything else (404, 409, 422, etc.) as-is for callers to handle
       throw err;
     }
   );
@@ -250,26 +298,49 @@ export class EvolutionClient {
 
   /**
    * Lightweight ping — verifies the Evolution API service is reachable.
-   * Returns true if the server responds with any HTTP 2xx/4xx (it's alive).
-   * Returns false on network errors or 5xx responses.
+   * GET / is a public endpoint; any 2xx/4xx (except 5xx) means the server is alive.
+   * NOTE: this does NOT verify the API key — use testAuth() for that.
    */
   async ping(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
     const start = Date.now();
     try {
-      // GET / is a public endpoint that returns API info without auth
       await this.client.get("/");
       return { ok: true, latencyMs: Date.now() - start };
     } catch (e) {
-      const status = (e as { response?: { status?: number } }).response?.status;
-      // 4xx means the server is up but rejected the request — still "alive"
-      if (status && status < 500) {
-        return { ok: true, latencyMs: Date.now() - start };
+      // Our interceptor already converted 401/403/5xx to EvolutionApiError
+      if (e instanceof EvolutionApiError) {
+        // Service is reachable if it returned a non-5xx HTTP status
+        const alive = e.httpStatus > 0 && e.httpStatus < 500;
+        return {
+          ok: alive,
+          latencyMs: Date.now() - start,
+          error: alive ? undefined : e.message,
+        };
       }
-      const msg =
-        e instanceof EvolutionApiError
-          ? e.message
-          : (e as { message?: string }).message ?? "unknown error";
+      const msg = (e as { message?: string }).message ?? "unknown error";
       return { ok: false, latencyMs: Date.now() - start, error: msg };
+    }
+  }
+
+  /**
+   * Verify the API key is accepted by Evolution API.
+   * Calls GET /instance/fetchInstances which requires a valid apikey header.
+   */
+  async testAuth(): Promise<{ valid: boolean; error?: string }> {
+    try {
+      await this.client.get("/instance/fetchInstances");
+      return { valid: true };
+    } catch (e) {
+      if (e instanceof EvolutionApiError) {
+        // 401 = definitely wrong key; 403 = forbidden (might still be valid key)
+        if (e.httpStatus === 401) {
+          return { valid: false, error: e.message };
+        }
+        // Any other error (404, 403, etc.) → key was accepted, endpoint might differ
+        return { valid: true };
+      }
+      const msg = (e as { message?: string }).message ?? "unknown";
+      return { valid: false, error: msg };
     }
   }
 

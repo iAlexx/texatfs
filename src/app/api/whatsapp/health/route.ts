@@ -23,19 +23,38 @@ export async function GET() {
   }
 
   const client = getEvolutionClient();
-  const result = await client.ping();
 
-  if (!result.ok) {
+  // Step 1: check the service is reachable (network-level)
+  const ping = await client.ping();
+  if (!ping.ok) {
     return Response.json(
       {
         ok: false,
         configured: true,
         reachable: false,
-        latencyMs: result.latencyMs,
-        error: result.error ?? "Evolution API لا تستجيب",
+        keyValid: false,
+        latencyMs: ping.latencyMs,
+        error: ping.error ?? "Evolution API لا تستجيب",
         hint:  "Check that the evolution-api Railway service is running and EVOLUTION_API_URL is correct.",
       },
       { status: 502 }
+    );
+  }
+
+  // Step 2: verify the API key is accepted by an authenticated endpoint
+  const auth = await client.testAuth();
+  if (!auth.valid) {
+    return Response.json(
+      {
+        ok: false,
+        configured: true,
+        reachable: true,
+        keyValid: false,
+        latencyMs: ping.latencyMs,
+        error: auth.error ?? "مفتاح EVOLUTION_API_KEY غير صحيح",
+        hint:  "Ensure EVOLUTION_API_KEY matches AUTHENTICATION_API_KEY on the evolution-api service (no surrounding quotes).",
+      },
+      { status: 401 }
     );
   }
 
@@ -43,6 +62,7 @@ export async function GET() {
     ok: true,
     configured: true,
     reachable: true,
-    latencyMs: result.latencyMs,
+    keyValid: true,
+    latencyMs: ping.latencyMs,
   });
 }

@@ -233,11 +233,15 @@ export function ProfilePage() {
         isDisconnecting={disconnectWa.isPending}
         onConnect={() => void handleConnect()}
         onDisconnect={() => void handleDisconnect()}
-        healthError={
-          whatsappHealth.data && !whatsappHealth.data.ok
-            ? whatsappHealth.data.error ?? "خدمة WhatsApp غير متوفرة"
-            : null
-        }
+        healthError={(() => {
+          const h = whatsappHealth.data;
+          if (!h || h.ok) return null;
+          // Differentiate: service unreachable vs wrong key
+          if (h.reachable === false) return h.error ?? "خدمة Evolution API غير متوفرة — تحقق من Railway";
+          if ((h as { keyValid?: boolean }).keyValid === false)
+            return "مفتاح EVOLUTION_API_KEY غير مطابق — تأكد من تطابقه في كلا الخدمتين بدون علامات اقتباس";
+          return h.error ?? "خدمة WhatsApp غير متوفرة";
+        })()}
       />
     </div>
   );
