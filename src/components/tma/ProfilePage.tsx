@@ -12,6 +12,7 @@ import {
   useWhatsAppConnect,
   useWhatsAppDisconnect,
   useWhatsAppStatusPoller,
+  useWhatsAppHealth,
 } from "@/hooks/use-whatsapp-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +55,7 @@ export function ProfilePage() {
   const [licenseKey, setLicenseKey] = useState("");
 
   // WhatsApp state
+  const whatsappHealth = useWhatsAppHealth();
   const whatsappStatus = useWhatsAppStatus();
   const connectWa = useWhatsAppConnect();
   const disconnectWa = useWhatsAppDisconnect();
@@ -231,6 +233,11 @@ export function ProfilePage() {
         isDisconnecting={disconnectWa.isPending}
         onConnect={() => void handleConnect()}
         onDisconnect={() => void handleDisconnect()}
+        healthError={
+          whatsappHealth.data && !whatsappHealth.data.ok
+            ? whatsappHealth.data.error ?? "خدمة WhatsApp غير متوفرة"
+            : null
+        }
       />
     </div>
   );
@@ -253,6 +260,7 @@ function WhatsAppSection({
   isDisconnecting,
   onConnect,
   onDisconnect,
+  healthError,
 }: {
   status: string;
   isConnected: boolean;
@@ -268,6 +276,7 @@ function WhatsAppSection({
   isDisconnecting: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
+  healthError: string | null;
 }) {
   return (
     <motion.section
@@ -288,6 +297,18 @@ function WhatsAppSection({
         </div>
         <StatusBadge status={status} />
       </div>
+
+      {/* Service-level health banner — shown before the state machine */}
+      {healthError && (
+        <div className="mx-5 mb-0 mt-3 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3">
+          <span className="shrink-0 text-base">🔌</span>
+          <div>
+            <p className="text-xs font-semibold text-amber-400">خدمة Evolution API غير متاحة</p>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-amber-300/80">{healthError}</p>
+            <p className="mt-1 text-[10px] text-steel-500">تحقق من إعدادات Railway → evolution-api service</p>
+          </div>
+        </div>
+      )}
 
       <div className="px-5 py-4">
         <AnimatePresence mode="wait">

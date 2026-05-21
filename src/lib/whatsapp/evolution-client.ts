@@ -249,6 +249,31 @@ export class EvolutionClient {
   }
 
   /**
+   * Lightweight ping — verifies the Evolution API service is reachable.
+   * Returns true if the server responds with any HTTP 2xx/4xx (it's alive).
+   * Returns false on network errors or 5xx responses.
+   */
+  async ping(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+    const start = Date.now();
+    try {
+      // GET / is a public endpoint that returns API info without auth
+      await this.client.get("/");
+      return { ok: true, latencyMs: Date.now() - start };
+    } catch (e) {
+      const status = (e as { response?: { status?: number } }).response?.status;
+      // 4xx means the server is up but rejected the request — still "alive"
+      if (status && status < 500) {
+        return { ok: true, latencyMs: Date.now() - start };
+      }
+      const msg =
+        e instanceof EvolutionApiError
+          ? e.message
+          : (e as { message?: string }).message ?? "unknown error";
+      return { ok: false, latencyMs: Date.now() - start, error: msg };
+    }
+  }
+
+  /**
    * Send a plain-text message to a phone number or group JID.
    * For personal numbers use: "9639XXXXXXXX@s.whatsapp.net"
    * For groups: "XXXXXXXXXX@g.us"

@@ -42,6 +42,31 @@ export interface WhatsAppConnectResponse {
 
 const STATUS_QUERY_KEY = "whatsapp-status";
 
+export interface WhatsAppHealthResponse {
+  ok: boolean;
+  configured: boolean;
+  reachable: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+/**
+ * Check if Evolution API is configured and reachable.
+ * Call once on mount to show a clear error before the user tries to connect.
+ */
+export function useWhatsAppHealth() {
+  return useQuery({
+    queryKey: ["whatsapp-health"],
+    queryFn: async () => {
+      const res = await fetch("/api/whatsapp/health");
+      return res.json() as Promise<WhatsAppHealthResponse>;
+    },
+    staleTime: 30_000,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
+}
+
 /** Fetch current WhatsApp status + fire groups count. */
 export function useWhatsAppStatus() {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
