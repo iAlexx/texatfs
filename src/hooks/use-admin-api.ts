@@ -35,20 +35,26 @@ export function useAdminSession() {
       postJson<{ ok: boolean; telegramUserId: number }>("/api/admin/me", {
         ...authBody(initData, telegramUserId),
       }),
+    staleTime: 300_000, // 5 min — no need to re-verify admin status on every navigation
     retry: false,
   });
 }
 
-export function useAdminUsers() {
+export function useAdminUsers(page = 1, search = "") {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
   return useQuery({
-    queryKey: ["admin", "users"],
+    queryKey: ["admin", "users", page, search],
     enabled: isReady && canAuthenticate,
     queryFn: () =>
       postJson<AdminUsersResponse>("/api/admin/users", {
         ...authBody(initData, telegramUserId),
+        page,
+        limit: 20,
+        search: search || undefined,
       }),
+    staleTime: 60_000,   // 1 min — avoids re-fetching when switching tabs
+    placeholderData: (prev) => prev, // keep previous page data while next loads
   });
 }
 

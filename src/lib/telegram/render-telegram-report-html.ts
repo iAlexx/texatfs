@@ -1,17 +1,15 @@
 import { formatMoney } from "@/lib/utils/format";
 
-export interface WhatsAppReportData {
+export interface TelegramReportData {
   ownerName: string;
-  ledgerDate: string;   // "YYYY-MM-DD"
-  /** Texas API cumulative balance (al_nihai from stats) */
+  agentLabel: string;    // Sub-agent username / email
+  ledgerDate: string;
   texasBalance: number;
   totalDeposit: number;
   totalWithdraw: number;
   ngr: number;
-  /** Cash payments from WhatsApp groups */
-  cashIn: number;       // 💰 total
-  cashOut: number;      // 📤 total
-  /** Final = Texas balance + cashIn - cashOut */
+  cashIn: number;
+  cashOut: number;
   finalBalance: number;
   generatedAt: string;
 }
@@ -46,7 +44,7 @@ function formatDate(iso: string): string {
   }
 }
 
-export function renderWhatsAppReportHtml(data: WhatsAppReportData): string {
+export function renderTelegramReportHtml(data: TelegramReportData): string {
   const dateLabel = formatDate(data.ledgerDate);
   const cashNet = data.cashIn - data.cashOut;
   const cashNetLabel = cashNet >= 0 ? `+${formatMoney(cashNet)}` : formatMoney(cashNet);
@@ -91,15 +89,15 @@ body{
 .hdr{padding:22px 20px 16px;border-bottom:1px solid rgba(255,255,255,.06)}
 .brand-row{display:flex;justify-content:space-between;align-items:flex-start}
 .brand{font-size:11px;letter-spacing:.28em;color:#c9a227;font-weight:700}
-.wa-badge{
+.tg-badge{
   font-size:10px;padding:3px 9px;border-radius:6px;
-  border:1px solid rgba(37,211,102,.45);color:#25d366;
+  border:1px solid rgba(38,155,255,.45);color:#279eff;
 }
 .title{font-size:21px;font-weight:700;margin-top:7px;color:#f0f2f5}
 .date{font-size:12px;color:#7d8b9a;margin-top:3px}
-.owner{font-size:12px;color:#9aa8b8;margin-top:8px}
+.owner{font-size:12px;color:#9aa8b8;margin-top:4px}
+.agent{font-size:13px;color:#c9a227;font-weight:600;margin-top:4px}
 
-/* Hero final balance */
 .hero{
   margin:18px 18px 0;padding:24px 18px;border-radius:16px;text-align:center;
   background:linear-gradient(145deg,#1a1a1e 0%,#08080a 40%,#16120c 100%);
@@ -112,14 +110,12 @@ body{
   text-shadow:0 0 32px rgba(201,162,39,.65),0 2px 0 rgba(0,0,0,.8);
 }
 
-/* Section headers */
 .section-title{
   font-size:10px;letter-spacing:.2em;color:#c9a227;font-weight:700;
   padding:12px 20px 4px;text-transform:uppercase;
 }
 .divider{height:1px;background:linear-gradient(to right,transparent,rgba(201,162,39,.2),transparent);margin:0 18px}
 
-/* Grid cells */
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 18px 16px}
 .cell{
   padding:12px 10px;border-radius:11px;
@@ -131,21 +127,14 @@ body{
   font-variant-numeric:tabular-nums;direction:ltr;text-align:left;color:#e8ecf1;
 }
 
-/* Cash section */
 .cash-section{
   margin:4px 18px 16px;padding:14px;border-radius:13px;
   background:rgba(184,255,60,.06);border:1px solid rgba(184,255,60,.2);
 }
 .cash-title{font-size:10px;color:#b8ff3c;font-weight:700;letter-spacing:.15em;margin-bottom:10px}
 .cash-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.cash-in{
-  padding:10px;border-radius:9px;
-  background:rgba(184,255,60,.08);border:1px solid rgba(184,255,60,.3);
-}
-.cash-out{
-  padding:10px;border-radius:9px;
-  background:rgba(196,92,92,.08);border:1px solid rgba(196,92,92,.3);
-}
+.cash-in{padding:10px;border-radius:9px;background:rgba(184,255,60,.08);border:1px solid rgba(184,255,60,.3);}
+.cash-out{padding:10px;border-radius:9px;background:rgba(196,92,92,.08);border:1px solid rgba(196,92,92,.3);}
 .cash-label{font-size:9px;color:#9aa8b8;margin-bottom:4px}
 .cash-value{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;direction:ltr;text-align:left}
 .net-row{
@@ -168,11 +157,12 @@ body{
     <header class="hdr">
       <div class="brand-row">
         <span class="brand">TEXAS FUNDS</span>
-        <span class="wa-badge">WhatsApp 🔥</span>
+        <span class="tg-badge">Telegram 📊</span>
       </div>
       <h1 class="title">التقرير اليومي</h1>
       <p class="date">${esc(dateLabel)}</p>
       <p class="owner">${esc(data.ownerName)}</p>
+      <p class="agent">👤 ${esc(data.agentLabel)}</p>
     </header>
 
     <section class="hero">

@@ -7,6 +7,7 @@ import {
 } from "@/lib/telegram/admin-panel";
 import { isAdmin, type TelegramUpdate } from "@/lib/telegram/bot-api";
 import { handleOnboardingMessage } from "@/lib/telegram/onboarding";
+import { initTrackingGroup } from "@/lib/telegram/forum-manager";
 
 function devLog(phase: string, data?: Record<string, unknown>): void {
   if (
@@ -24,6 +25,49 @@ export async function processTelegramUpdate(
   supabase: SupabaseClient,
   update: TelegramUpdate
 ): Promise<void> {
+  // ── Bot added to a Forum supergroup → initialise tracking topics ────────────
+  if (update.my_chat_member) {
+    const { chat, from, new_chat_member } = update.my_chat_member;
+
+    const botBecameAdmin =
+      new_chat_member.status === "administrator" ||
+      new_chat_member.status === "member";
+
+    if (botBecameAdmin && chat.type === "supergroup" && chat.is_forum) {
+      devLog("my_chat_member:forum", {
+        chatId: chat.id,
+        chatTitle: chat.title,
+        fromId: from.id,
+        status: new_chat_member.status,
+      });
+
+      // Look up the master user by their Telegram ID (who added the bot)
+      const { data: userRow } = await supabase
+        .from("users")
+        .select("id")
+        .eq("telegram_id", from.id)
+        .maybeSingle();
+
+      if (userRow?.id) {
+        // Fire-and-forget: topic creation takes 10–60s
+        void initTrackingGroup(
+          supabase,
+          userRow.id,
+          chat.id,
+          chat.title ?? "Texas Tracking"
+        ).catch((e) => {
+          console.error(
+            "[process-update] initTrackingGroup failed:",
+            e instanceof Error ? e.message : String(e)
+          );
+        });
+      } else {
+        devLog("my_chat_member:noUser", { fromId: from.id });
+      }
+    }
+    return;
+  }
+
   if (update.callback_query) {
     const cq = update.callback_query;
     const telegramUserId = cq.from.id;

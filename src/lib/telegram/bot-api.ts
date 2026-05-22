@@ -18,10 +18,32 @@ export interface TelegramCallbackQuery {
   data?: string;
 }
 
+/** Fired when the bot's own membership status changes in a chat. */
+export interface TelegramMyChatMember {
+  chat: {
+    id: number;
+    title?: string;
+    type: "private" | "group" | "supergroup" | "channel";
+    /** True when the supergroup is a Forum (Topics enabled). */
+    is_forum?: boolean;
+  };
+  from: { id: number; first_name?: string; username?: string };
+  date: number;
+  old_chat_member: { user: { id: number }; status: string };
+  new_chat_member: { user: { id: number }; status: string };
+}
+
+export interface TelegramForumTopic {
+  message_thread_id: number;
+  name: string;
+  icon_color: number;
+}
+
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
+  my_chat_member?: TelegramMyChatMember;
 }
 
 function botToken(): string {
@@ -157,4 +179,89 @@ export function isAdmin(telegramUserId: number): boolean {
 
 export function getAdminTelegramIds(): number[] {
   return [...parseAdminIds()];
+}
+
+// ─── Forum Topics (supergroup with is_forum = true) ───────────────────────────
+
+/**
+ * Create a Forum Topic in a supergroup.
+ * Requires the bot to be an admin with can_manage_topics permission.
+ */
+export async function createForumTopic(
+  chatId: number,
+  name: string
+): Promise<TelegramForumTopic> {
+  const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/createForumTopic`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, name }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram createForumTopic failed: ${res.status} ${body}`);
+  }
+
+  const json = (await res.json()) as { result?: TelegramForumTopic };
+  if (!json.result) throw new Error("Telegram createForumTopic: empty result");
+  return json.result;
+}
+
+/**
+ * Send a text message to a specific Forum Topic (message_thread_id).
+ */
+export async function sendMessageToTopic(
+  chatId: number,
+  threadId: number,
+  text: string,
+  options?: { parse_mode?: "HTML" | "Markdown" }
+): Promise<{ message_id: number }> {
+  const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_thread_id: threadId,
+      text,
+      parse_mode: options?.parse_mode,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram sendMessageToTopic failed: ${res.status} ${body}`);
+  }
+
+  const json = (await res.json()) as { result?: { message_id: number } };
+  return { message_id: json.result?.message_id ?? 0 };
+}
+
+/**
+ * Send a PNG photo to a specific Forum Topic (message_thread_id).
+ */
+export async function sendPhotoToTopic(
+  chatId: number,
+  threadId: number,
+  photo: Buffer,
+  caption?: string
+): Promise<void> {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("message_thread_id", String(threadId));
+  if (caption) form.append("caption", caption);
+  form.append(
+    "photo",
+    new Blob([new Uint8Array(photo)], { type: "image/png" }),
+    "daily-report.png"
+  );
+
+  const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/sendPhoto`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram sendPhotoToTopic failed: ${res.status} ${body}`);
+  }
 }

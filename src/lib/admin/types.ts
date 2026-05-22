@@ -15,6 +15,8 @@ export interface AdminUserRow {
 export interface AdminUsersResponse {
   users: AdminUserRow[];
   total: number;
+  page: number;
+  totalPages: number;
 }
 
 export interface GenerateLicenseResponse {

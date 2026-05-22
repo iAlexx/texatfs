@@ -1,19 +1,23 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
-import { Gift, KeyRound, MessageCircle, Shield, User, Users, Wifi, WifiOff, Loader2, CheckCircle2, Flame } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  CheckCircle2,
+  Gift,
+  KeyRound,
+  Loader2,
+  MessageCircle,
+  Send,
+  Shield,
+  User,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTelegram } from "@/components/providers/TelegramProvider";
 import { useHeroData, useRedeemLicense, useReferralData } from "@/hooks/use-tma-api";
 import { useLedgerSession, todayIsoDate } from "@/hooks/use-ledger-api";
-import {
-  useWhatsAppStatus,
-  useWhatsAppConnect,
-  useWhatsAppDisconnect,
-  useWhatsAppStatusPoller,
-  useWhatsAppHealth,
-} from "@/hooks/use-whatsapp-api";
+import { useTrackingStatus } from "@/hooks/use-telegram-tracking-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CircularProgress } from "@/components/ui/CircularProgress";
@@ -47,69 +51,18 @@ async function fireConfetti() {
 }
 
 export function ProfilePage() {
-  const { displayName } = useTelegram();
-  const hero = useHeroData();
+  const { displayName, telegramUserId } = useTelegram();
+  const hero     = useHeroData();
   const referral = useReferralData();
-  const session = useLedgerSession(todayIsoDate());
-  const redeem = useRedeemLicense();
+  const session  = useLedgerSession(todayIsoDate());
+  const redeem   = useRedeemLicense();
   const [licenseKey, setLicenseKey] = useState("");
 
-  // WhatsApp state
-  const whatsappHealth = useWhatsAppHealth();
-  const whatsappStatus = useWhatsAppStatus();
-  const connectWa = useWhatsAppConnect();
-  const disconnectWa = useWhatsAppDisconnect();
-  const [phone, setPhone] = useState("");
-  const [pairingCode, setPairingCode] = useState<string | null>(null);
-  const [connectError, setConnectError] = useState<string | null>(null);
+  const tracking = useTrackingStatus(telegramUserId);
 
-  const waStatus = whatsappStatus.data?.status ?? "disconnected";
-  const isConnecting = waStatus === "connecting" || waStatus === "creating";
-  const isConnected  = waStatus === "connected";
-
-  // Poll every 3s while connecting (and while we're waiting for pairing confirmation)
-  useWhatsAppStatusPoller(isConnecting || (connectWa.isSuccess && !isConnected && !!pairingCode));
-
-  // Auto-clear pairing code once connected
-  useEffect(() => {
-    if (isConnected && pairingCode) {
-      setPairingCode(null);
-      setConnectError(null);
-      toast.success("تم ربط واتساب بنجاح ✅");
-    }
-  }, [isConnected, pairingCode]);
-
-  async function handleConnect() {
-    const cleaned = phone.replace(/\D/g, "").trim();
-    if (!cleaned || cleaned.length < 7) {
-      setConnectError("أدخل رقم الهاتف بدون + (مثال: 963912345678)");
-      return;
-    }
-    setConnectError(null);
-    try {
-      const result = await connectWa.mutateAsync(cleaned);
-      setPairingCode(result.pairingCode);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : ar.errorGeneric;
-      setConnectError(msg);
-    }
-  }
-
-  async function handleDisconnect() {
-    try {
-      await disconnectWa.mutateAsync();
-      setPairingCode(null);
-      setPhone("");
-      setConnectError(null);
-      toast.success("تم قطع اتصال واتساب");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : ar.errorGeneric);
-    }
-  }
-
-  const user = hero.data?.user ?? session.data?.user;
-  const endDate = user?.subscription_end_date;
-  const percent = useMemo(() => subscriptionPercent(endDate), [endDate]);
+  const user     = hero.data?.user ?? session.data?.user;
+  const endDate  = user?.subscription_end_date;
+  const percent  = useMemo(() => subscriptionPercent(endDate), [endDate]);
   const daysLeft = useMemo(() => {
     if (!endDate) return 0;
     return Math.max(
@@ -140,6 +93,7 @@ export function ProfilePage() {
         <h1 className="text-2xl font-bold text-foreground">{ar.profileTitle}</h1>
       </header>
 
+      {/* ── Profile card ─────────────────────────────────────────────────────── */}
       <section className="glass-panel-gold mb-4 p-5">
         <div className="flex items-center gap-4">
           <CircularProgress
@@ -176,6 +130,7 @@ export function ProfilePage() {
         </div>
       </section>
 
+      {/* ── Referral ─────────────────────────────────────────────────────────── */}
       <section className="glass-inner mb-4 p-5">
         <div className="mb-3 flex items-center gap-2">
           <Gift className="h-5 w-5 text-gold" strokeWidth={1.5} />
@@ -195,6 +150,7 @@ export function ProfilePage() {
         </div>
       </section>
 
+      {/* ── License redeem ───────────────────────────────────────────────────── */}
       <section className="glass-panel-gold p-5">
         <div className="mb-4 flex items-center gap-2">
           <KeyRound className="h-5 w-5 text-gold" strokeWidth={1.5} />
@@ -217,297 +173,197 @@ export function ProfilePage() {
         </Button>
       </section>
 
-      {/* ── WhatsApp Automation ─────────────────────────────────────── */}
-      <WhatsAppSection
-        status={waStatus}
-        isConnected={isConnected}
-        isConnecting={isConnecting}
-        phone={phone}
-        setPhone={setPhone}
-        pairingCode={pairingCode}
-        connectError={connectError}
-        onClearError={() => setConnectError(null)}
-        fireGroupsCount={whatsappStatus.data?.fire_groups_count ?? 0}
-        connectedPhone={whatsappStatus.data?.phone_number ?? null}
-        isPending={connectWa.isPending}
-        isDisconnecting={disconnectWa.isPending}
-        onConnect={() => void handleConnect()}
-        onDisconnect={() => void handleDisconnect()}
-        healthError={(() => {
-          const h = whatsappHealth.data;
-          if (!h || h.ok) return null;
-          // Differentiate: service unreachable vs wrong key
-          if (h.reachable === false) return h.error ?? "خدمة Evolution API غير متوفرة — تحقق من Railway";
-          if ((h as { keyValid?: boolean }).keyValid === false)
-            return "مفتاح EVOLUTION_API_KEY غير مطابق — تأكد من تطابقه في كلا الخدمتين بدون علامات اقتباس";
-          return h.error ?? "خدمة WhatsApp غير متوفرة";
-        })()}
+      {/* ── Telegram Tracking System ─────────────────────────────────────────── */}
+      <TelegramTrackingSection
+        status={tracking.data}
+        isLoading={tracking.isLoading}
       />
     </div>
   );
 }
 
-/* ── WhatsApp Section Component ─────────────────────────────────────────── */
+/* ── TelegramTrackingSection ─────────────────────────────────────────────────── */
 
-function WhatsAppSection({
+function TelegramTrackingSection({
   status,
-  isConnected,
-  isConnecting,
-  phone,
-  setPhone,
-  pairingCode,
-  connectError,
-  onClearError,
-  fireGroupsCount,
-  connectedPhone,
-  isPending,
-  isDisconnecting,
-  onConnect,
-  onDisconnect,
-  healthError,
+  isLoading,
 }: {
-  status: string;
-  isConnected: boolean;
-  isConnecting: boolean;
-  phone: string;
-  setPhone: (v: string) => void;
-  pairingCode: string | null;
-  connectError: string | null;
-  onClearError: () => void;
-  fireGroupsCount: number;
-  connectedPhone: string | null;
-  isPending: boolean;
-  isDisconnecting: boolean;
-  onConnect: () => void;
-  onDisconnect: () => void;
-  healthError: string | null;
+  status: { active: boolean; chatTitle: string | null; topicCount: number } | undefined;
+  isLoading: boolean;
 }) {
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "";
+  const botInviteUrl = botUsername
+    ? `https://t.me/${botUsername}?startgroup=activate`
+    : "https://t.me/";
+
+  const isActive = status?.active ?? false;
+
   return (
     <motion.section
-      className="mt-4 overflow-hidden rounded-2xl border border-[#25d366]/25 bg-[#0d1f14]/80 backdrop-blur-md"
+      className="mt-4 overflow-hidden rounded-2xl border border-[#279eff]/25 bg-[#0d1525]/80 backdrop-blur-md"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#25d366]/15 ring-1 ring-[#25d366]/30">
-            <MessageCircle className="h-5 w-5 text-[#25d366]" strokeWidth={1.5} />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#279eff]/15 ring-1 ring-[#279eff]/30">
+            <Send className="h-5 w-5 text-[#279eff]" strokeWidth={1.5} />
           </div>
           <div>
-            <p className="font-semibold text-foreground">{ar.whatsappConnect}</p>
-            <p className="text-[10px] text-steel-500">Texas Funds Automation</p>
+            <p className="font-semibold text-foreground">تفعيل نظام التتبع عبر تلغرام</p>
+            <p className="text-[10px] text-steel-500">Texas Funds · Forum Topics</p>
           </div>
         </div>
-        <StatusBadge status={status} />
-      </div>
 
-      {/* Service-level health banner — shown before the state machine */}
-      {healthError && (
-        <div className="mx-5 mb-0 mt-3 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3">
-          <span className="shrink-0 text-base">🔌</span>
-          <div>
-            <p className="text-xs font-semibold text-amber-400">خدمة Evolution API غير متاحة</p>
-            <p className="mt-0.5 text-[10px] leading-relaxed text-amber-300/80">{healthError}</p>
-            <p className="mt-1 text-[10px] text-steel-500">تحقق من إعدادات Railway → evolution-api service</p>
-          </div>
-        </div>
-      )}
+        {/* Status badge */}
+        {isLoading ? (
+          <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
+            <Loader2 className="inline h-3 w-3 animate-spin" />
+          </span>
+        ) : isActive ? (
+          <span className="flex items-center gap-1.5 rounded-full bg-[#279eff]/15 px-3 py-1 text-[10px] font-semibold text-[#279eff] ring-1 ring-[#279eff]/30">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#279eff] animate-pulse" />
+            مفعّل
+          </span>
+        ) : (
+          <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
+            غير مفعّل
+          </span>
+        )}
+      </div>
 
       <div className="px-5 py-4">
         <AnimatePresence mode="wait">
-
-          {/* ── Connected ── */}
-          {isConnected ? (
+          {isActive ? (
+            /* ── Active state ── */
             <motion.div
-              key="connected"
+              key="active"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="space-y-4"
+              className="space-y-3"
             >
-              <div className="flex items-center gap-3 rounded-xl bg-[#25d366]/10 px-4 py-3 ring-1 ring-[#25d366]/25">
-                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#25d366]" />
+              <div className="flex items-center gap-3 rounded-xl bg-[#279eff]/10 px-4 py-3 ring-1 ring-[#279eff]/25">
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#279eff]" />
                 <div>
-                  <p className="text-sm font-semibold text-[#25d366]">{ar.whatsappConnected}</p>
-                  {connectedPhone && (
-                    <p className="font-mono text-xs text-steel-400 mt-0.5">{connectedPhone}</p>
+                  <p className="text-sm font-semibold text-[#279eff]">نظام التتبع مفعّل</p>
+                  {status?.chatTitle && (
+                    <p className="mt-0.5 text-xs text-steel-400">{status.chatTitle}</p>
                   )}
                 </div>
               </div>
 
-              {/* Fire groups count */}
               <div className="flex items-center justify-between rounded-xl bg-obsidian/50 px-4 py-3 ring-1 ring-white/[0.06]">
                 <div className="flex items-center gap-2 text-sm text-steel-400">
-                  <Flame className="h-4 w-4 text-gold" />
-                  {ar.whatsappFireGroups}
+                  <MessageCircle className="h-4 w-4 text-[#279eff]" />
+                  المواضيع المُنشأة
                 </div>
-                <span className="font-mono text-sm font-bold text-gold">
-                  {fireGroupsCount}
+                <span className="font-mono text-sm font-bold text-[#279eff]">
+                  {status?.topicCount ?? 0}
                 </span>
               </div>
 
-              {/* Instructions */}
               <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-1.5">
-                <p className="font-semibold text-steel-300 mb-2">كيف تستخدم البوت:</p>
-                <p>🔥 أضف <strong className="text-gold">🔥</strong> لاسم أي مجموعة لتستقبل التقرير اليومي</p>
-                <p>💰 اكتب <strong className="text-lime">💰 500</strong> لتسجيل كاش وصل منك</p>
-                <p>📤 اكتب <strong className="text-lime">📤 250</strong> لتسجيل كاش واصل إليك</p>
-                <p className="text-steel-500 mt-1">📊 يُرسل التقرير اليومي الساعة 4:00 صباحاً تلقائياً</p>
+                <p className="font-semibold text-steel-300 mb-2">كيف يعمل النظام:</p>
+                <p>📊 يُرسل التقرير اليومي الساعة <strong className="text-[#279eff]">4:00 صباحاً</strong> (دمشق) لكل وكيل في موضوعه الخاص</p>
+                <p>💰 اكتب <strong className="text-lime">💰 500</strong> في أي موضوع لتسجيل كاش وصل منك</p>
+                <p>📤 اكتب <strong className="text-lime">📤 250</strong> في أي موضوع لتسجيل كاش واصل إليك</p>
               </div>
-
-              <Button
-                variant="outline"
-                className="w-full border-destructive/40 text-accent-negative hover:bg-destructive/10"
-                disabled={isDisconnecting}
-                onClick={onDisconnect}
-              >
-                {isDisconnecting ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <WifiOff className="mr-2 h-4 w-4" />
-                )}
-                {ar.whatsappDisconnect}
-              </Button>
-            </motion.div>
-
-          ) : pairingCode ? (
-            /* ── Pairing code display ── */
-            <motion.div
-              key="pairing"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="space-y-4"
-            >
-              <div className="text-center">
-                <p className="text-xs text-steel-400 mb-3">{ar.whatsappPairingHint}</p>
-                <div className="inline-block rounded-2xl border border-[#25d366]/40 bg-[#25d366]/10 px-6 py-5 ring-1 ring-[#25d366]/20">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#25d366]/70 mb-2">
-                    {ar.whatsappPairingCode}
-                  </p>
-                  <p className="font-mono text-3xl font-bold tracking-[0.15em] text-[#25d366]">
-                    {pairingCode}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 rounded-xl bg-gold/5 px-4 py-3 ring-1 ring-gold/20">
-                <Loader2 className="h-4 w-4 animate-spin text-gold shrink-0" />
-                <p className="text-xs text-gold/90">{ar.whatsappConnecting}</p>
-              </div>
-
-              <ol className="space-y-2 text-[11px] text-steel-400 leading-relaxed">
-                <li className="flex gap-2"><span className="text-gold font-bold">1.</span> افتح واتساب على هاتفك</li>
-                <li className="flex gap-2"><span className="text-gold font-bold">2.</span> اضغط على النقاط الثلاث ← الأجهزة المرتبطة</li>
-                <li className="flex gap-2"><span className="text-gold font-bold">3.</span> اضغط "ربط جهاز" ← "ربط بالرمز الهاتفي"</li>
-                <li className="flex gap-2"><span className="text-gold font-bold">4.</span> أدخل الرمز أعلاه (صالح لمدة دقيقتين)</li>
-              </ol>
             </motion.div>
 
           ) : (
-            /* ── Disconnected / form ── */
+            /* ── Setup instructions ── */
             <motion.div
-              key="disconnected"
+              key="setup"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
               <p className="text-xs text-steel-400">
-                اربط حسابك على واتساب لتفعيل التقارير التلقائية وتتبع المدفوعات النقدية.
+                فعّل نظام التتبع لاستقبال تقارير يومية دقيقة لكل وكيل فرعي مباشرةً في مجموعة تلغرام خاصة بك.
               </p>
 
-              {/* Inline error — appears below description */}
-              <AnimatePresence>
-                {connectError && (
-                  <motion.div
-                    key="err"
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-3"
-                  >
-                    <span className="mt-0.5 shrink-0 text-base">⚠️</span>
-                    <div className="flex-1">
-                      <p className="text-xs leading-relaxed text-accent-negative">
-                        {connectError}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={onClearError}
-                        className="mt-1.5 text-[10px] text-steel-400 underline underline-offset-2"
-                      >
-                        إغلاق
-                      </button>
-                    </div>
-                  </motion.div>
+              {/* Step-by-step guide */}
+              <ol className="space-y-3">
+                {[
+                  {
+                    n: "1",
+                    text: (
+                      <>
+                        أنشئ مجموعة تلغرام جديدة وسمّها:{" "}
+                        <strong className="text-gold">اسمك - Texas Tracking 🔥</strong>
+                      </>
+                    ),
+                  },
+                  {
+                    n: "2",
+                    text: (
+                      <>
+                        افتح <strong className="text-steel-200">إعدادات المجموعة</strong> ← فعّل{" "}
+                        <strong className="text-[#279eff]">المواضيع (Topics / Forum)</strong>
+                      </>
+                    ),
+                  },
+                  {
+                    n: "3",
+                    text: (
+                      <>
+                        أضف البوت كـ<strong className="text-steel-200">مشرف</strong> مع صلاحيتَي{" "}
+                        <strong className="text-lime">إدارة المواضيع</strong> و{" "}
+                        <strong className="text-lime">نشر الرسائل</strong>
+                      </>
+                    ),
+                  },
+                  {
+                    n: "4",
+                    text: (
+                      <>
+                        بمجرد إضافة البوت سيُنشئ تلقائياً موضوعاً لكل وكيل فرعي وسيُرسل لك رسالة تأكيد.
+                      </>
+                    ),
+                  },
+                ].map((step) => (
+                  <li key={step.n} className="flex gap-3 text-[11px] text-steel-400 leading-relaxed">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#279eff]/20 text-[10px] font-bold text-[#279eff]">
+                      {step.n}
+                    </span>
+                    <span>{step.text}</span>
+                  </li>
+                ))}
+              </ol>
+
+              {/* Bot invite button */}
+              <a
+                href={botInviteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(
+                  "flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3",
+                  "bg-[#279eff] text-white font-semibold text-sm",
+                  "hover:bg-[#1a8fe0] active:bg-[#0d7acc]",
+                  "transition-colors duration-150",
+                  !botUsername && "pointer-events-none opacity-50"
                 )}
-              </AnimatePresence>
-
-              <div>
-                <label className="mb-1.5 block text-[11px] text-steel-400">
-                  رقم الهاتف (بدون +)
-                </label>
-                <Input
-                  value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value.replace(/\D/g, ""));
-                    if (connectError) onClearError();
-                  }}
-                  placeholder={ar.whatsappPhonePlaceholder}
-                  inputMode="tel"
-                  className="border-steel-border/80 bg-obsidian/60 font-mono text-sm"
-                  dir="ltr"
-                  disabled={isPending}
-                />
-              </div>
-
-              <Button
-                className="w-full gap-2 bg-[#25d366] text-white hover:bg-[#1db954] active:bg-[#1aa34a] disabled:opacity-60"
-                disabled={isPending || !phone.trim()}
-                onClick={onConnect}
               >
-                {isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    جاري الاتصال بـ Evolution API…
-                  </>
-                ) : (
-                  <>
-                    <Wifi className="h-4 w-4" />
-                    {ar.whatsappConnect}
-                  </>
-                )}
-              </Button>
+                <Send className="h-4 w-4" />
+                إضافة البوت إلى المجموعة
+              </a>
+
+              {!botUsername && (
+                <p className="text-center text-[10px] text-amber-400">
+                  يرجى تعيين <code className="font-mono">NEXT_PUBLIC_TELEGRAM_BOT_USERNAME</code> في متغيرات Railway
+                </p>
+              )}
+
+              <p className="text-center text-[10px] text-steel-500">
+                تنتظر اتصال البوت… ستتحدث هذه الصفحة تلقائياً بمجرد التفعيل.
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
     </motion.section>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "connected") {
-    return (
-      <span className="flex items-center gap-1.5 rounded-full bg-[#25d366]/15 px-3 py-1 text-[10px] font-semibold text-[#25d366] ring-1 ring-[#25d366]/30">
-        <span className="h-1.5 w-1.5 rounded-full bg-[#25d366] animate-pulse" />
-        متصل
-      </span>
-    );
-  }
-  if (status === "connecting" || status === "creating") {
-    return (
-      <span className="flex items-center gap-1.5 rounded-full bg-gold/10 px-3 py-1 text-[10px] font-semibold text-gold ring-1 ring-gold/25">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        جاري الربط
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
-      {ar.whatsappDisconnected}
-    </span>
   );
 }
