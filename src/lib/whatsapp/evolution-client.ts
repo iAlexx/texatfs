@@ -234,12 +234,21 @@ export class EvolutionClient {
     this.client = makeClient(this.config);
   }
 
-  /** Create a new instance (no QR — pairing code flow). */
-  async createInstance(instanceName: string): Promise<EvolutionInstanceInfo> {
+  /**
+   * Create a new instance in pairing-code mode.
+   * phoneNumber MUST be supplied so Evolution API v2 initialises the socket
+   * in pairing-code mode (not QR mode). Without it GET /instance/connect
+   * always returns {"count":0} regardless of the qrcode:false flag.
+   */
+  async createInstance(
+    instanceName: string,
+    phoneNumber: string
+  ): Promise<EvolutionInstanceInfo> {
     const res = await this.client.post<EvolutionInstanceInfo>(
       "/instance/create",
       {
         instanceName,
+        number: phoneNumber,          // ← required for pairing-code mode in v2
         qrcode: false,
         integration: "WHATSAPP-BAILEYS",
       }

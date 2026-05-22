@@ -62,16 +62,21 @@ export async function startInstanceConnection(
 ): Promise<{ instanceName: string; pairingCode: string }> {
   const evo = getEvolutionClient();
   const instanceName = instanceNameForUser(userId);
-  const webhookUrl = resolveWebhookUrl();
+  const webhookUrl   = resolveWebhookUrl();
+
+  // phone is needed at createInstance time (Evolution API v2 requires it in
+  // the create body to switch the socket into pairing-code mode, not QR mode)
+  const phone = phoneNumber.trim();
 
   // ── Step 1: Ensure instance exists in Evolution API ─────────────────────
   // If createInstance returns 403 "name already in use", the instance is stuck
-  // (e.g. created with a broken webhook config). Auto-heal: delete + recreate.
+  // (e.g. created without the phone number, so it's in QR mode).
+  // Auto-heal: delete + recreate WITH the phone number.
   let instanceExists = false;
   try {
-    await evo.createInstance(instanceName);
+    await evo.createInstance(instanceName, phone);   // ← phone required
     instanceExists = true;
-    console.info("[instance-manager] instance created:", instanceName);
+    console.info("[instance-manager] instance created:", instanceName, "phone:", phone);
   } catch (e) {
     if (e instanceof EvolutionApiError) {
       if (e.httpStatus === 401) throw e; // wrong API key — fatal
@@ -81,7 +86,7 @@ export async function startInstanceConnection(
         e.message.toLowerCase().includes("already in use");
 
       if (isNameInUse || e.httpStatus === 409) {
-        // Corrupted/stuck instance — wipe it and start clean
+        // Stuck/corrupted instance — wipe and recreate WITH phone number
         console.warn(
           "[instance-manager] instance name already in use — deleting and recreating:",
           instanceName
@@ -92,16 +97,19 @@ export async function startInstanceConnection(
           console.warn("[instance-manager] deleteInstance failed (continuing):", delErr);
         }
         await sleep(1_500);
-        await evo.createInstance(instanceName);
+        await evo.createInstance(instanceName, phone);  // ← phone required
         instanceExists = true;
         console.info("[instance-manager] instance recreated after auto-heal:", instanceName);
-      } else if (e.httpStatus === 403) {
-        // 403 for any other reason — assume exists, proceed
-        console.info("[instance-manager] createInstance 403 (not name conflict) — assuming exists:", instanceName);
-        instanceExists = true;
-      } else if (e.httpStatus === 404) {
-        // Shouldn't happen on create, but treat as non-fatal
-        console.info("[instance-manager] createInstance 404 — assuming exists:", instanceName);
+      } else if (e.httpStatus === 403 || e.httpStatus === 404) {
+        // Other 403/404 — assume instance exists but may be in wrong mode
+        // Force-wipe to ensure it was created with the correct phone number
+        console.warn(
+          "[instance-manager] createInstance returned", e.httpStatus,
+          "— force-wiping to ensure pairing-code mode:", instanceName
+        );
+        try { await evo.deleteInstance(instanceName); } catch { /* ignore */ }
+        await sleep(1_000);
+        await evo.createInstance(instanceName, phone);  // ← phone required
         instanceExists = true;
       } else {
         throw e; // 502, network, etc. — fatal
@@ -118,23 +126,18 @@ export async function startInstanceConnection(
       if (!alreadyExists) {
         throw new EvolutionApiError(`تعذر إنشاء جلسة WhatsApp: ${msg}`, status ?? 0);
       }
-      // Treat as stuck instance — delete and recreate
-      console.warn("[instance-manager] instance conflict (409/raw) — auto-healing:", instanceName);
-      try {
-        await evo.deleteInstance(instanceName);
-      } catch (delErr) {
-        console.warn("[instance-manager] deleteInstance failed (continuing):", delErr);
-      }
+      // Delete and recreate with phone number
+      console.warn("[instance-manager] instance conflict — auto-healing with phone:", instanceName);
+      try { await evo.deleteInstance(instanceName); } catch { /* ignore */ }
       await sleep(1_500);
-      await evo.createInstance(instanceName);
+      await evo.createInstance(instanceName, phone);  // ← phone required
       instanceExists = true;
-      console.info("[instance-manager] instance recreated after raw-conflict heal:", instanceName);
+      console.info("[instance-manager] instance recreated after conflict heal:", instanceName);
     }
   }
 
-  // Evolution API v2 needs time to build the internal Baileys socket and sync
-  // to its database before the /instance/connect endpoint becomes available.
-  // 3.5 s covers the typical PostgreSQL-backed initialization window.
+  // Evolution API v2 needs time to start the Baileys socket and connect to
+  // WhatsApp before the pairing code can be generated. 3.5 s initial buffer.
   if (instanceExists) {
     await sleep(3_500);
   }
@@ -155,11 +158,10 @@ export async function startInstanceConnection(
   //   attempt 2 — +2 500 ms
   //   attempt 3 — +3 500 ms
   //   attempt 4 — +4 500 ms
-  //   attempt 5 — delete + recreate instance, then +4 000 ms (last resort)
+  //   attempt 5 — delete + recreate WITH phone, then +4 000 ms (last resort)
   const RETRY_DELAYS_MS = [0, 2_500, 3_500, 4_500, 4_000];
   const MAX_ATTEMPTS = 5;
 
-  const phone = phoneNumber.trim();
   let pairingCode = "";
   let lastError: EvolutionApiError | null = null;
 
@@ -167,13 +169,13 @@ export async function startInstanceConnection(
     const delayMs = RETRY_DELAYS_MS[attempt - 1] ?? 3_000;
 
     if (attempt > 1) {
-      // On the last attempt: wipe the instance and start fresh
+      // Last resort: wipe and recreate WITH the phone number (ensures pairing mode)
       if (attempt === MAX_ATTEMPTS) {
-        console.info("[instance-manager] last attempt — deleting and recreating instance");
+        console.info("[instance-manager] last attempt — deleting and recreating with phone");
         try {
           await evo.deleteInstance(instanceName);
           await sleep(1_500);
-          await evo.createInstance(instanceName);
+          await evo.createInstance(instanceName, phone);  // ← phone required
           console.info("[instance-manager] instance recreated for final attempt");
         } catch (recreateErr) {
           console.warn("[instance-manager] recreate failed (continuing anyway):", recreateErr);
