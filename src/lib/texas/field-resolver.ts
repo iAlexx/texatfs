@@ -36,6 +36,7 @@ let _statsFieldsLogged = false;
 /**
  * Validate that all configured field-name candidates exist in the first real
  * stats record and log which key each field resolved to (or warn if none found).
+ * Also dumps ALL keys from the record so missing fields are easy to spot.
  * Runs exactly once per process lifecycle.
  */
 export function logFieldMappingDiagnosticsOnce(
@@ -44,22 +45,27 @@ export function logFieldMappingDiagnosticsOnce(
   if (_statsFieldsLogged) return;
   _statsFieldsLogged = true;
 
+  // Dump every key so the developer can update the mapping config immediately
+  const allKeys = Object.keys(statsRow);
+  console.info("[field-resolver] stats row — all keys:", JSON.stringify(allKeys));
+
   const checks: { name: string; keys: readonly string[] }[] = [
-    { name: "tebat (totalDeposit)",       keys: statsRecordMapping.totalDeposit  },
-    { name: "suhoubat (totalWithdraw)",   keys: statsRecordMapping.totalWithdraw },
-    { name: "al_harq (ngr)",             keys: statsRecordMapping.ngr           },
-    { name: "affiliateId",               keys: statsRecordMapping.affiliateId   },
+    { name: "affiliateId",              keys: statsRecordMapping.affiliateId   },
+    { name: "balance / currentWallet",  keys: walletMapping.balance            },
+    { name: "tebat (totalDeposit)",     keys: statsRecordMapping.totalDeposit  },
+    { name: "suhoubat (totalWithdraw)", keys: statsRecordMapping.totalWithdraw },
+    { name: "al_harq (ngr)",            keys: statsRecordMapping.ngr           },
   ];
 
   for (const { name, keys } of checks) {
     const found = keys.find((k) => statsRow[k] !== undefined);
     if (found) {
-      console.info(`[field-resolver] "${name}" → key="${found}" value=${JSON.stringify(statsRow[found])}`);
+      console.info(
+        `[field-resolver] "${name}" ✓ key="${found}" value=${JSON.stringify(statsRow[found])}`
+      );
     } else {
-      const available = Object.keys(statsRow).slice(0, 20);
       console.warn(
-        `[field-resolver] "${name}" NOT FOUND — tried [${keys.join(", ")}]. ` +
-          `Row keys: [${available.join(", ")}]`
+        `[field-resolver] "${name}" ✗ NOT FOUND — tried [${keys.join(", ")}]`
       );
     }
   }

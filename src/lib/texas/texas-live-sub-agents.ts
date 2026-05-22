@@ -37,19 +37,41 @@ export interface TexasSubAgentsPayload {
   };
 }
 
-function childLabel(child: TexasChildRecord): string {
-  return (
-    child.username?.trim() ||
-    child.email?.trim() ||
-    child.affiliateId
-  );
+/**
+ * Resolve a display label from a child record.
+ * Live API returns different name fields depending on the endpoint version:
+ *   getChildren     → username, email
+ *   getSubAgentStatistics → userName, name, lastName, email
+ */
+function resolveLabel(record: Record<string, unknown>): string {
+  const candidates = [
+    record.username,
+    record.userName,
+    record.name,
+    record.affiliateUsername,
+    record.email,
+  ];
+  for (const v of candidates) {
+    const s = typeof v === "string" ? v.trim() : "";
+    if (s) return s;
+  }
+  return String(record.affiliateId ?? record.agentId ?? "");
 }
 
+function childLabel(child: TexasChildRecord): string {
+  return resolveLabel(child as Record<string, unknown>);
+}
+
+/**
+ * Build a Map<affiliateId, statsRecord> from the statistics endpoint records.
+ * Tries multiple possible ID field names to handle API field-name drift.
+ */
 function indexStatisticsByAffiliate(
   records: SubAgentStatisticsRecord[]
 ): Map<string, SubAgentStatisticsRecord> {
   const map = new Map<string, SubAgentStatisticsRecord>();
   for (const row of records) {
+    // pickAffiliateId already tries ["affiliateId", "agentId", "id"]
     const id = pickAffiliateId(row);
     if (id) map.set(id, row);
   }

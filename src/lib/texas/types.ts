@@ -43,33 +43,52 @@ export interface TexasPagedResult<TRecord> {
 }
 
 /**
- * Per-row statistics from getSubAgentStatistics.
- * Field names marked INFERRED — confirm against a live response before production.
+ * Per-row record from getSubAgentStatistics.
+ *
+ * Live-confirmed keys (2026-05-22):
+ *   left, right, level, parent, affiliateId, name, lastName, userName,
+ *   gender, countryCode, city, cellPhone, address, zipCode, email,
+ *   statusId, isOnline, mainCurrency, agentRole, currentWallet
+ *
+ * Financial totals (totalDeposit / totalWithdraw / ngr) appear only in
+ * result.total (aggregate footer), NOT in individual per-row records.
  */
 export interface SubAgentStatisticsRecord {
+  // Identity — confirmed present
   affiliateId: string;
-  username?: string;
+  agentId?: string;
+
+  // Profile fields — confirmed present in per-row records
+  name?: string;
+  lastName?: string;
+  userName?: string;
+  username?: string;           // alias used by some endpoints
   affiliateUsername?: string;
+  email?: string;
+  agentRole?: string;
   mainCurrency?: string;
   currency?: string;
+  isOnline?: boolean | string;
+  statusId?: string | number;
 
-  /** INFERRED — possible keys: totalDeposit | depositsTotal | depositTotal */
-  totalDeposit?: string;
-  depositsTotal?: string;
-  depositTotal?: string;
+  // Wallet — confirmed present in per-row records as "currentWallet"
+  currentWallet?: string | number;
+  balance?: string | number;
+  availableWallet?: string | number;
 
-  /** INFERRED — possible keys: totalWithdraw | withdrawTotal | withdrawalsTotal */
-  totalWithdraw?: string;
-  withdrawTotal?: string;
-  withdrawalsTotal?: string;
+  // Financial totals — present in aggregate footer (result.total), NOT per-row
+  // Kept here so pickNumeric can find them if a future API version adds them per-row
+  totalDeposit?: string | number;
+  depositsTotal?: string | number;
+  depositTotal?: string | number;
+  totalWithdraw?: string | number;
+  withdrawTotal?: string | number;
+  withdrawalsTotal?: string | number;
+  ngr?: string | number;
+  NGR?: string | number;
+  netGamingRevenue?: string | number;
+  burn?: string | number;
 
-  /** INFERRED — NGR / burn */
-  ngr?: string;
-  NGR?: string;
-  netGamingRevenue?: string;
-  burn?: string;
-
-  balance?: string;
   [key: string]: unknown;
 }
 

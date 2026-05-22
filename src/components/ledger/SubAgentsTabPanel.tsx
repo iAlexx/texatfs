@@ -211,36 +211,45 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 }
 
 function AgentLedgerMiniGrid({ metrics }: { metrics: TexasLiveLedgerMetrics }) {
-  const rows = [
-    { label: ar.suhoubat, value: metrics.suhoubat },
-    { label: ar.alFarq, value: metrics.al_farq },
-    { label: ar.alHarq, value: metrics.al_harq },
-    { label: ar.waselMenho, value: metrics.wasel_menho },
-    { label: ar.waselEleih, value: metrics.wasel_eleih },
-    { label: ar.baqiQadim, value: metrics.baqi_qadim },
-    { label: ar.alNihai, value: metrics.al_nihai, highlight: true },
+  const rows: { label: string; value: number; highlight?: boolean; dimIfZero?: boolean }[] = [
+    { label: ar.tebat,      value: metrics.tebat,        dimIfZero: true },
+    { label: ar.suhoubat,   value: metrics.suhoubat,     dimIfZero: true },
+    { label: ar.alFarq,     value: metrics.al_farq },
+    { label: ar.alHarq,     value: metrics.al_harq,      dimIfZero: true },
+    { label: ar.waselMenho, value: metrics.wasel_menho,  dimIfZero: true },
+    { label: ar.waselEleih, value: metrics.wasel_eleih,  dimIfZero: true },
+    { label: ar.baqiQadim,  value: metrics.baqi_qadim },
+    { label: ar.alNihai,    value: metrics.al_nihai,     highlight: true },
   ];
 
   return (
     <div className="mt-2 grid grid-cols-2 gap-1 rounded-lg border border-white/[0.05] bg-obsidian/40 p-2">
-      {rows.map((row) => (
-        <motion.div
-          key={row.label}
-          className="flex justify-between gap-1 text-[10px]"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <span className="text-steel-500">{row.label}</span>
-          <span
-            className={cn(
-              "font-mono tabular-nums",
-              row.highlight ? "font-semibold text-gold" : "text-steel-300"
-            )}
+      {rows.map((row) => {
+        const isZero = row.value === 0;
+        const display = isZero && row.dimIfZero ? "—" : formatMoney(row.value);
+        return (
+          <motion.div
+            key={row.label}
+            className="flex justify-between gap-1 text-[10px]"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
           >
-            {formatMoney(row.value)}
-          </span>
-        </motion.div>
-      ))}
+            <span className="text-steel-500">{row.label}</span>
+            <span
+              className={cn(
+                "font-mono tabular-nums",
+                row.highlight
+                  ? "font-semibold text-gold"
+                  : isZero && row.dimIfZero
+                    ? "text-steel-600"
+                    : "text-steel-300"
+              )}
+            >
+              {display}
+            </span>
+          </motion.div>
+        );
+      })}
     </div>
   );
 }

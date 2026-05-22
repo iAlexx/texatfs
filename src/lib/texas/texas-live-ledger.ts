@@ -66,12 +66,15 @@ export function metricsFromTexasSources(
   const wasel_menho  = roundMoney(transfers?.withdrawsFromAgent ?? 0);
   const baqi_qadim   = 0;
 
-  // Prefer real-time wallet balance as al_nihai (most accurate)
+  // al_nihai priority:
+  //   1. getAgentWalletByAgentId result (most precise, called in detail view)
+  //   2. currentWallet / balance from the stats row (confirmed present in per-row records)
+  //   3. Computed formula fallback (al_farq + transfers)
   const walletRow     = (wallet ?? {}) as Record<string, unknown>;
   const walletBalance = wallet
-    ? pickNumeric(walletRow, walletMapping.balance)
+    ? pickNumeric(walletRow, walletMapping.balance)      // uses currentWallet-first mapping
     : stats
-      ? pickNumeric(row, ["balance"])
+      ? pickNumeric(row, walletMapping.balance)          // same mapping — currentWallet from stats row
       : null;
 
   const al_nihai =
