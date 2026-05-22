@@ -1,6 +1,7 @@
 import { computeAlFarq, computeAlNihai, roundMoney } from "@/lib/accounting/formulas";
 import type { DailyLedger } from "@/lib/supabase/database.types";
 import {
+  logFieldMappingDiagnosticsOnce,
   pickNumeric,
   pickString,
   statsRecordMapping,
@@ -52,6 +53,9 @@ export function metricsFromTexasSources(
   transfers?: TransferSummaryPerAgent | null
 ): TexasLiveLedgerMetrics {
   const row = (stats ?? {}) as Record<string, unknown>;
+
+  // One-time diagnostic per process lifecycle — logs resolved field keys
+  if (stats) logFieldMappingDiagnosticsOnce(row);
 
   const tebat    = stats ? pickNumeric(row, statsRecordMapping.totalDeposit)  : 0;
   const suhoubat = stats ? pickNumeric(row, statsRecordMapping.totalWithdraw) : 0;

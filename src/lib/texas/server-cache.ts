@@ -7,6 +7,7 @@
 interface Entry<T> {
   data: T;
   expiresAt: number;
+  createdAt: number;
 }
 
 const store = new Map<string, Entry<unknown>>();
@@ -29,16 +30,22 @@ function schedulePrune() {
 
 export function serverCacheGet<T>(key: string): T | null {
   const entry = store.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    store.delete(key);
+  const now = Date.now();
+  if (!entry) {
+    console.info("[server-cache] MISS", { key });
     return null;
   }
+  if (now > entry.expiresAt) {
+    store.delete(key);
+    console.info("[server-cache] EXPIRED", { key, ageMs: now - entry.createdAt });
+    return null;
+  }
+  console.info("[server-cache] HIT", { key, ageMs: now - entry.createdAt });
   return entry.data as T;
 }
 
 export function serverCacheSet<T>(key: string, data: T, ttlMs: number): void {
-  store.set(key, { data, expiresAt: Date.now() + ttlMs });
+  store.set(key, { data, expiresAt: Date.now() + ttlMs, createdAt: Date.now() });
   schedulePrune();
 }
 

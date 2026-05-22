@@ -37,7 +37,11 @@ export class TexasSessionService {
     const password = normalizeTexasPassword(credentials.password);
 
     const cached = findValidTokenOf(username, password, new Date());
-    if (cached) return cached;
+    if (cached) {
+      console.info("[texas-auth] session from cache", { username });
+      return cached;
+    }
+    console.info("[texas-auth] fresh sign-in required (cache miss)", { username });
 
     const baseUrl = getTexasApiBaseUrl();
     let lastError = "unknown";

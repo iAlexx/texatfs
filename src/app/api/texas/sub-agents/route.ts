@@ -10,7 +10,9 @@ export const runtime = "nodejs";
 /** sub-agents fetches are slow (multiple Texas API calls) — allow up to 30s */
 export const maxDuration = 30;
 
-const SUB_AGENTS_TTL_MS = 30_000; // 30 seconds — balance changes must appear quickly
+// 90 seconds — Railway single-instance keeps data fresh enough while saving
+// expensive Puppeteer cold-starts. Users can force-refresh if needed.
+const SUB_AGENTS_TTL_MS = 90_000;
 
 interface Body extends LedgerAuthInput {
   ledgerDate?: string;
