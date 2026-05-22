@@ -65,6 +65,8 @@ export async function startInstanceConnection(
   const webhookUrl = resolveWebhookUrl();
 
   // ── Step 1: Ensure instance exists in Evolution API ─────────────────────
+  // If createInstance returns 403 "name already in use", the instance is stuck
+  // (e.g. created with a broken webhook config). Auto-heal: delete + recreate.
   let instanceExists = false;
   try {
     await evo.createInstance(instanceName);
@@ -74,10 +76,32 @@ export async function startInstanceConnection(
     if (e instanceof EvolutionApiError) {
       if (e.httpStatus === 401) throw e; // wrong API key — fatal
 
-      // 403: Evolution API returns this when the instance name is already taken
-      // 404: shouldn't happen on create, but treat as non-fatal
-      if (e.httpStatus === 403 || e.httpStatus === 404) {
-        console.info("[instance-manager] createInstance →", e.httpStatus, "— assuming exists:", instanceName);
+      const isNameInUse =
+        e.httpStatus === 403 &&
+        e.message.toLowerCase().includes("already in use");
+
+      if (isNameInUse || e.httpStatus === 409) {
+        // Corrupted/stuck instance — wipe it and start clean
+        console.warn(
+          "[instance-manager] instance name already in use — deleting and recreating:",
+          instanceName
+        );
+        try {
+          await evo.deleteInstance(instanceName);
+        } catch (delErr) {
+          console.warn("[instance-manager] deleteInstance failed (continuing):", delErr);
+        }
+        await sleep(1_500);
+        await evo.createInstance(instanceName);
+        instanceExists = true;
+        console.info("[instance-manager] instance recreated after auto-heal:", instanceName);
+      } else if (e.httpStatus === 403) {
+        // 403 for any other reason — assume exists, proceed
+        console.info("[instance-manager] createInstance 403 (not name conflict) — assuming exists:", instanceName);
+        instanceExists = true;
+      } else if (e.httpStatus === 404) {
+        // Shouldn't happen on create, but treat as non-fatal
+        console.info("[instance-manager] createInstance 404 — assuming exists:", instanceName);
         instanceExists = true;
       } else {
         throw e; // 502, network, etc. — fatal
@@ -89,12 +113,22 @@ export async function startInstanceConnection(
       const alreadyExists =
         status === 409 ||
         msg.toLowerCase().includes("already") ||
+        msg.toLowerCase().includes("in use") ||
         msg.toLowerCase().includes("exists");
       if (!alreadyExists) {
         throw new EvolutionApiError(`تعذر إنشاء جلسة WhatsApp: ${msg}`, status ?? 0);
       }
+      // Treat as stuck instance — delete and recreate
+      console.warn("[instance-manager] instance conflict (409/raw) — auto-healing:", instanceName);
+      try {
+        await evo.deleteInstance(instanceName);
+      } catch (delErr) {
+        console.warn("[instance-manager] deleteInstance failed (continuing):", delErr);
+      }
+      await sleep(1_500);
+      await evo.createInstance(instanceName);
       instanceExists = true;
-      console.info("[instance-manager] instance already exists (409):", instanceName);
+      console.info("[instance-manager] instance recreated after raw-conflict heal:", instanceName);
     }
   }
 

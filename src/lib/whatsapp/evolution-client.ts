@@ -385,6 +385,10 @@ export class EvolutionClient {
    * Register a webhook for message events on the instance.
    * Call once after connecting.
    */
+  /**
+   * Evolution API v2 requires the webhook config nested under a "webhook" key.
+   * v1 sent flat JSON — v2 rejects that with HTTP 400 "instance requires property webhook".
+   */
   async setWebhook(
     instanceName: string,
     webhookUrl: string
@@ -392,10 +396,12 @@ export class EvolutionClient {
     await this.client.post(
       `/webhook/set/${encodeURIComponent(instanceName)}`,
       {
-        url: webhookUrl,
-        webhook_by_events: false,
-        webhook_base64: false,
-        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+        webhook: {
+          url: webhookUrl,
+          enabled: true,
+          webhookByEvents: false,
+          events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+        },
       }
     );
   }
