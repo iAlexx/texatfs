@@ -17,7 +17,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTelegram } from "@/components/providers/TelegramProvider";
 import { useHeroData, useRedeemLicense, useReferralData } from "@/hooks/use-tma-api";
 import { useLedgerSession, todayIsoDate } from "@/hooks/use-ledger-api";
-import { useTrackingStatus } from "@/hooks/use-telegram-tracking-api";
+import {
+  useTrackingStatus,
+  useAutoCreateTracking,
+  type AutoCreateResult,
+} from "@/hooks/use-telegram-tracking-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CircularProgress } from "@/components/ui/CircularProgress";
@@ -58,7 +62,9 @@ export function ProfilePage() {
   const redeem   = useRedeemLicense();
   const [licenseKey, setLicenseKey] = useState("");
 
-  const tracking = useTrackingStatus(telegramUserId);
+  const tracking    = useTrackingStatus(telegramUserId);
+  const autoCreate  = useAutoCreateTracking();
+  const [autoResult, setAutoResult] = useState<AutoCreateResult | null>(null);
 
   const user     = hero.data?.user ?? session.data?.user;
   const endDate  = user?.subscription_end_date;
@@ -177,6 +183,24 @@ export function ProfilePage() {
       <TelegramTrackingSection
         status={tracking.data}
         isLoading={tracking.isLoading}
+        isCreating={autoCreate.isPending}
+        createError={
+          autoCreate.error instanceof Error ? autoCreate.error.message : null
+        }
+        autoResult={autoResult}
+        onAutoCreate={() => {
+          autoCreate.mutate(undefined, {
+            onSuccess: (r) => {
+              setAutoResult(r);
+              toast.success("تم إنشاء المجموعة! جاري إنشاء المواضيع في الخلفية…");
+            },
+            onError: (err) => {
+              toast.error(
+                err.message ?? "فشل الإنشاء التلقائي. جرّب الإعداد اليدوي."
+              );
+            },
+          });
+        }}
       />
     </div>
   );
@@ -187,10 +211,19 @@ export function ProfilePage() {
 function TelegramTrackingSection({
   status,
   isLoading,
+  isCreating,
+  createError,
+  autoResult,
+  onAutoCreate,
 }: {
-  status: { active: boolean; chatTitle: string | null; topicCount: number } | undefined;
+  status: { active: boolean; chatTitle: string | null; topicCount: number; chatId?: number | null } | undefined;
   isLoading: boolean;
+  isCreating: boolean;
+  createError: string | null;
+  autoResult: AutoCreateResult | null;
+  onAutoCreate: () => void;
 }) {
+  const [manualOpen, setManualOpen] = useState(false);
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "";
   const botInviteUrl = botUsername
     ? `https://t.me/${botUsername}?startgroup=activate`
@@ -198,25 +231,33 @@ function TelegramTrackingSection({
 
   const isActive = status?.active ?? false;
 
+  // Derive the group link from either the latest auto-create result or the
+  // persisted status (so the link survives a page refresh).
+  const groupLink = (() => {
+    const id = autoResult?.chatId ?? status?.chatId ?? null;
+    if (!id) return null;
+    const bare = String(Math.abs(id)).substring(3);
+    return `https://t.me/c/${bare}`;
+  })();
+
   return (
     <motion.section
       className="mt-4 overflow-hidden rounded-2xl border border-[#279eff]/25 bg-[#0d1525]/80 backdrop-blur-md"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#279eff]/15 ring-1 ring-[#279eff]/30">
             <Send className="h-5 w-5 text-[#279eff]" strokeWidth={1.5} />
           </div>
           <div>
-            <p className="font-semibold text-foreground">تفعيل نظام التتبع عبر تلغرام</p>
+            <p className="font-semibold text-foreground">نظام التتبع عبر تلغرام</p>
             <p className="text-[10px] text-steel-500">Texas Funds · Forum Topics</p>
           </div>
         </div>
 
-        {/* Status badge */}
         {isLoading ? (
           <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
             <Loader2 className="inline h-3 w-3 animate-spin" />
@@ -233,10 +274,12 @@ function TelegramTrackingSection({
         )}
       </div>
 
+      {/* ── Body ───────────────────────────────────────────────────────────── */}
       <div className="px-5 py-4">
         <AnimatePresence mode="wait">
+
+          {/* ════════════════════ ACTIVE STATE ════════════════════ */}
           {isActive ? (
-            /* ── Active state ── */
             <motion.div
               key="active"
               initial={{ opacity: 0, y: 6 }}
@@ -244,36 +287,56 @@ function TelegramTrackingSection({
               exit={{ opacity: 0 }}
               className="space-y-3"
             >
+              {/* Activation banner */}
               <div className="flex items-center gap-3 rounded-xl bg-[#279eff]/10 px-4 py-3 ring-1 ring-[#279eff]/25">
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-[#279eff]" />
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-[#279eff]">نظام التتبع مفعّل</p>
                   {status?.chatTitle && (
-                    <p className="mt-0.5 text-xs text-steel-400">{status.chatTitle}</p>
+                    <p className="mt-0.5 truncate text-xs text-steel-400">{status.chatTitle}</p>
                   )}
                 </div>
               </div>
 
+              {/* Stats row */}
               <div className="flex items-center justify-between rounded-xl bg-obsidian/50 px-4 py-3 ring-1 ring-white/[0.06]">
                 <div className="flex items-center gap-2 text-sm text-steel-400">
                   <MessageCircle className="h-4 w-4 text-[#279eff]" />
-                  المواضيع المُنشأة
+                  مواضيع الوكلاء
                 </div>
                 <span className="font-mono text-sm font-bold text-[#279eff]">
                   {status?.topicCount ?? 0}
                 </span>
               </div>
 
+              {/* Group link */}
+              {groupLink && (
+                <a
+                  href={groupLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    "flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5",
+                    "border border-[#279eff]/30 bg-[#279eff]/10 text-[#279eff] text-xs font-semibold",
+                    "hover:bg-[#279eff]/20 transition-colors"
+                  )}
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  فتح مجموعة التتبع
+                </a>
+              )}
+
+              {/* Usage hints */}
               <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-1.5">
                 <p className="font-semibold text-steel-300 mb-2">كيف يعمل النظام:</p>
-                <p>📊 يُرسل التقرير اليومي الساعة <strong className="text-[#279eff]">4:00 صباحاً</strong> (دمشق) لكل وكيل في موضوعه الخاص</p>
-                <p>💰 اكتب <strong className="text-lime">💰 500</strong> في أي موضوع لتسجيل كاش وصل منك</p>
-                <p>📤 اكتب <strong className="text-lime">📤 250</strong> في أي موضوع لتسجيل كاش واصل إليك</p>
+                <p>📊 التقرير اليومي الساعة <strong className="text-[#279eff]">4:00 ص</strong> (دمشق) في موضوع كل وكيل</p>
+                <p>💰 <strong className="text-lime">💰 500</strong> في موضوع الوكيل → كاش وصل منك</p>
+                <p>📤 <strong className="text-lime">📤 250</strong> في موضوع الوكيل → كاش واصل إليك</p>
               </div>
             </motion.div>
 
           ) : (
-            /* ── Setup instructions ── */
+            /* ════════════════════ INACTIVE STATE ════════════════════ */
             <motion.div
               key="setup"
               initial={{ opacity: 0, y: 6 }}
@@ -285,80 +348,149 @@ function TelegramTrackingSection({
                 فعّل نظام التتبع لاستقبال تقارير يومية دقيقة لكل وكيل فرعي مباشرةً في مجموعة تلغرام خاصة بك.
               </p>
 
-              {/* Step-by-step guide */}
-              <ol className="space-y-3">
-                {[
-                  {
-                    n: "1",
-                    text: (
-                      <>
-                        أنشئ مجموعة تلغرام جديدة وسمّها:{" "}
-                        <strong className="text-gold">اسمك - Texas Tracking 🔥</strong>
-                      </>
-                    ),
-                  },
-                  {
-                    n: "2",
-                    text: (
-                      <>
-                        افتح <strong className="text-steel-200">إعدادات المجموعة</strong> ← فعّل{" "}
-                        <strong className="text-[#279eff]">المواضيع (Topics / Forum)</strong>
-                      </>
-                    ),
-                  },
-                  {
-                    n: "3",
-                    text: (
-                      <>
-                        أضف البوت كـ<strong className="text-steel-200">مشرف</strong> مع صلاحيتَي{" "}
-                        <strong className="text-lime">إدارة المواضيع</strong> و{" "}
-                        <strong className="text-lime">نشر الرسائل</strong>
-                      </>
-                    ),
-                  },
-                  {
-                    n: "4",
-                    text: (
-                      <>
-                        بمجرد إضافة البوت سيُنشئ تلقائياً موضوعاً لكل وكيل فرعي وسيُرسل لك رسالة تأكيد.
-                      </>
-                    ),
-                  },
-                ].map((step) => (
-                  <li key={step.n} className="flex gap-3 text-[11px] text-steel-400 leading-relaxed">
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#279eff]/20 text-[10px] font-bold text-[#279eff]">
-                      {step.n}
-                    </span>
-                    <span>{step.text}</span>
-                  </li>
-                ))}
-              </ol>
-
-              {/* Bot invite button */}
-              <a
-                href={botInviteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  "flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3",
-                  "bg-[#279eff] text-white font-semibold text-sm",
-                  "hover:bg-[#1a8fe0] active:bg-[#0d7acc]",
-                  "transition-colors duration-150",
-                  !botUsername && "pointer-events-none opacity-50"
-                )}
+              {/* ── Primary CTA: Auto-create ──────────────────────────── */}
+              <Button
+                variant="gold"
+                className="w-full gap-2 text-sm"
+                disabled={isCreating}
+                onClick={onAutoCreate}
               >
-                <Send className="h-4 w-4" />
-                إضافة البوت إلى المجموعة
-              </a>
+                {isCreating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>جاري إنشاء المجموعة وتفعيل المواضيع تلقائياً… ⚡</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    إنشاء نظام التتبع (تلقائي)
+                  </>
+                )}
+              </Button>
 
-              {!botUsername && (
-                <p className="text-center text-[10px] text-amber-400">
-                  يرجى تعيين <code className="font-mono">NEXT_PUBLIC_TELEGRAM_BOT_USERNAME</code> في متغيرات Railway
-                </p>
+              {isCreating && (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-center text-[10px] text-[#279eff]/80 leading-relaxed"
+                >
+                  يتم إنشاء المجموعة، تفعيل Forum mode، إضافة البوت، وترقيته لمشرف…
+                  <br />
+                  قد يستغرق هذا 5–10 ثوانٍ.
+                </motion.p>
               )}
 
+              {/* Error message */}
+              {createError && !isCreating && (
+                <motion.p
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-xl bg-destructive/10 px-3 py-2.5 text-center text-[11px] text-accent-negative ring-1 ring-destructive/20"
+                >
+                  {createError}
+                </motion.p>
+              )}
+
+              {/* ── Collapsible manual instructions ─────────────────────── */}
+              <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setManualOpen((v) => !v)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-[11px] text-steel-400 hover:text-steel-300 transition-colors"
+                >
+                  <span>طريقة التفعيل اليدوي (إذا واجهت مشكلة)</span>
+                  <motion.span
+                    animate={{ rotate: manualOpen ? 180 : 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="text-steel-500"
+                  >
+                    ▾
+                  </motion.span>
+                </button>
+
+                <AnimatePresence>
+                  {manualOpen && (
+                    <motion.div
+                      key="manual"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.22, ease: "easeInOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="border-t border-white/[0.06] px-4 pb-4 pt-3 space-y-3">
+                        <ol className="space-y-3">
+                          {[
+                            {
+                              n: "1",
+                              text: (
+                                <>
+                                  أنشئ مجموعة جديدة وسمّها:{" "}
+                                  <strong className="text-gold">اسمك - Texas Tracking 🔥</strong>
+                                </>
+                              ),
+                            },
+                            {
+                              n: "2",
+                              text: (
+                                <>
+                                  افتح <strong className="text-steel-200">إعدادات المجموعة</strong> ← فعّل{" "}
+                                  <strong className="text-[#279eff]">المواضيع (Topics / Forum)</strong>
+                                </>
+                              ),
+                            },
+                            {
+                              n: "3",
+                              text: (
+                                <>
+                                  أضف البوت كـ<strong className="text-steel-200">مشرف</strong> مع{" "}
+                                  <strong className="text-lime">إدارة المواضيع</strong> و{" "}
+                                  <strong className="text-lime">نشر الرسائل</strong>
+                                </>
+                              ),
+                            },
+                            {
+                              n: "4",
+                              text: <>بمجرد إضافة البوت سيُنشئ المواضيع تلقائياً ويُرسل تأكيداً.</>,
+                            },
+                          ].map((step) => (
+                            <li key={step.n} className="flex gap-3 text-[11px] text-steel-400 leading-relaxed">
+                              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#279eff]/20 text-[10px] font-bold text-[#279eff]">
+                                {step.n}
+                              </span>
+                              <span>{step.text}</span>
+                            </li>
+                          ))}
+                        </ol>
+
+                        <a
+                          href={botInviteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={cn(
+                            "flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5",
+                            "border border-[#279eff]/40 bg-[#279eff]/10 text-[#279eff] text-sm font-semibold",
+                            "hover:bg-[#279eff]/20 transition-colors",
+                            !botUsername && "pointer-events-none opacity-50"
+                          )}
+                        >
+                          <Send className="h-4 w-4" />
+                          إضافة البوت يدوياً
+                        </a>
+
+                        {!botUsername && (
+                          <p className="text-center text-[10px] text-amber-400">
+                            عيّن <code className="font-mono">NEXT_PUBLIC_TELEGRAM_BOT_USERNAME</code> في Railway
+                          </p>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <p className="text-center text-[10px] text-steel-500">
-                تنتظر اتصال البوت… ستتحدث هذه الصفحة تلقائياً بمجرد التفعيل.
+                ستتحدث هذه الصفحة تلقائياً بمجرد التفعيل.
               </p>
             </motion.div>
           )}
