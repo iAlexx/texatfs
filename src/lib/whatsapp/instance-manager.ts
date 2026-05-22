@@ -137,9 +137,35 @@ export async function startInstanceConnection(
   }
 
   // Evolution API v2 needs time to start the Baileys socket and connect to
-  // WhatsApp before the pairing code can be generated. 3.5 s initial buffer.
+  // WhatsApp before the pairing code can be generated.
+  // Poll connection state so we know exactly when the socket moves from "close".
   if (instanceExists) {
-    await sleep(3_500);
+    await sleep(2_000); // short initial buffer
+
+    // Poll up to 15 s for the socket to leave the "close" state
+    let socketState = "close";
+    for (let poll = 1; poll <= 15; poll++) {
+      try {
+        socketState = await evo.getConnectionState(instanceName);
+      } catch {
+        socketState = "close";
+      }
+      console.info(
+        `[DEBUG-WHATSAPP] socket state poll ${poll}/15: ${socketState}`,
+        instanceName
+      );
+      if (socketState !== "close") break;
+      await sleep(1_000);
+    }
+
+    if (socketState === "close") {
+      console.warn(
+        "[DEBUG-WHATSAPP] socket still 'close' after 15 s — " +
+          "WhatsApp may be unreachable from Railway (IP block?) or " +
+          "Evolution API DB is not properly configured.",
+        instanceName
+      );
+    }
   }
 
   // ── Step 2: Register webhook (non-fatal) ─────────────────────────────────
