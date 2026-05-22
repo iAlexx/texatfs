@@ -98,10 +98,11 @@ export async function startInstanceConnection(
     }
   }
 
-  // Evolution API v2 needs ~1-2 s to fully initialize a newly created Baileys instance
-  // before the /instance/connect endpoint is routed. Skip delay if instance pre-existed.
+  // Evolution API v2 needs time to build the internal Baileys socket and sync
+  // to its database before the /instance/connect endpoint becomes available.
+  // 3.5 s covers the typical PostgreSQL-backed initialization window.
   if (instanceExists) {
-    await sleep(1_500);
+    await sleep(3_500);
   }
 
   // ── Step 2: Register webhook (non-fatal) ─────────────────────────────────
@@ -114,20 +115,44 @@ export async function startInstanceConnection(
     );
   }
 
-  // ── Step 3: Request pairing code — retry with backoff ────────────────────
-  // 404 after createInstance = instance not yet registered in Evolution router.
-  // Wait and retry. On 2nd 404: delete + recreate then try once more.
+  // ── Step 3: Request pairing code — 5-attempt backoff strategy ────────────
+  // Delay schedule (milliseconds between attempts, starting from attempt 2):
+  //   attempt 1 — immediately (after the 3.5 s initial delay above)
+  //   attempt 2 — +2 500 ms
+  //   attempt 3 — +3 500 ms
+  //   attempt 4 — +4 500 ms
+  //   attempt 5 — delete + recreate instance, then +4 000 ms (last resort)
+  const RETRY_DELAYS_MS = [0, 2_500, 3_500, 4_500, 4_000];
+  const MAX_ATTEMPTS = 5;
+
   const phone = phoneNumber.trim();
   let pairingCode = "";
   let lastError: EvolutionApiError | null = null;
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const delayMs = RETRY_DELAYS_MS[attempt - 1] ?? 3_000;
+
     if (attempt > 1) {
-      await sleep(attempt * 2_000); // 2 s on attempt 2, 4 s on attempt 3
+      // On the last attempt: wipe the instance and start fresh
+      if (attempt === MAX_ATTEMPTS) {
+        console.info("[instance-manager] last attempt — deleting and recreating instance");
+        try {
+          await evo.deleteInstance(instanceName);
+          await sleep(1_500);
+          await evo.createInstance(instanceName);
+          console.info("[instance-manager] instance recreated for final attempt");
+        } catch (recreateErr) {
+          console.warn("[instance-manager] recreate failed (continuing anyway):", recreateErr);
+        }
+      }
+      console.info(`[instance-manager] waiting ${delayMs} ms before attempt ${attempt}`);
+      await sleep(delayMs);
     }
+
     try {
       pairingCode = await evo.getPairingCode(instanceName, phone);
       lastError = null;
+      console.info(`[instance-manager] pairing code obtained on attempt ${attempt}`);
       break; // success
     } catch (e) {
       if (e instanceof EvolutionApiError) {
@@ -136,31 +161,20 @@ export async function startInstanceConnection(
         // Wrong API key — never retry
         if (e.httpStatus === 401) throw e;
 
-        // Instance not ready (404) — retry; on attempt 2 wipe and recreate
         if (e.httpStatus === 404) {
           console.warn(
-            `[instance-manager] getPairingCode 404 (attempt ${attempt}) — instance not ready yet`
+            `[instance-manager] getPairingCode 404 (attempt ${attempt}/${MAX_ATTEMPTS}) — instance not ready yet`
           );
-          if (attempt === 2) {
-            console.info("[instance-manager] deleting and recreating instance after persistent 404");
-            try {
-              await evo.deleteInstance(instanceName);
-              await sleep(1_000);
-              await evo.createInstance(instanceName);
-              await sleep(2_000);
-            } catch (recreateErr) {
-              console.warn("[instance-manager] recreate failed:", recreateErr);
-            }
-          }
+          // Continue to next attempt (delay + optional wipe already handled above)
           continue;
         }
 
-        // Wrong phone format or similar — no point retrying
+        // Other error (422 bad phone, 403, etc.) — log and retry unless on last attempt
         console.error(
-          `[instance-manager] getPairingCode error (attempt ${attempt}):`,
+          `[instance-manager] getPairingCode error (attempt ${attempt}/${MAX_ATTEMPTS}):`,
           e.message
         );
-        if (attempt === 3) throw e;
+        if (attempt === MAX_ATTEMPTS) throw e;
         continue;
       }
 
@@ -170,7 +184,7 @@ export async function startInstanceConnection(
         `تعذر الحصول على رمز الإقران (${status ?? "network"})`,
         status ?? 0
       );
-      if (attempt === 3) throw lastError;
+      if (attempt === MAX_ATTEMPTS) throw lastError;
     }
   }
 

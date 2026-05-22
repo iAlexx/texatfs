@@ -16,7 +16,9 @@ import { isEvolutionConfigured, EvolutionApiError } from "@/lib/whatsapp/evoluti
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+// 60 s — allows the full 5-attempt pairing code retry loop to complete
+// (3.5 s initial + up to ~18 s of backoff + 4 s wipe/recreate = ~26 s worst case)
+export const maxDuration = 60;
 
 interface Body extends LedgerAuthInput {
   phone: string;
