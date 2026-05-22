@@ -159,11 +159,12 @@ function makeClient(config: EvolutionConfig): AxiosInstance {
             null
           : null;
 
-      // Log every non-2xx for diagnostics
-      console.warn("[EvolutionClient] HTTP error", {
+      // Full raw dump — critical for diagnosing pairing-code failures
+      console.log("[DEBUG-WHATSAPP] interceptor caught HTTP error", {
         status,
-        evolutionMsg,
         url: (err as { config?: { url?: string } }).config?.url ?? "?",
+        evolutionMsg,
+        fullBody: JSON.stringify(rawBody ?? null),
       });
 
       if (status === 502 || status === 503 || status === 504) {

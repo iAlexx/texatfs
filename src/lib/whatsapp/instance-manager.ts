@@ -155,6 +155,24 @@ export async function startInstanceConnection(
       console.info(`[instance-manager] pairing code obtained on attempt ${attempt}`);
       break; // success
     } catch (e) {
+      // ── Full raw diagnostic dump ─────────────────────────────────────────
+      const rawStatus =
+        (e instanceof EvolutionApiError
+          ? e.httpStatus
+          : (e as { response?: { status?: number } }).response?.status) ?? "none";
+      const rawBody =
+        (e as { response?: { data?: unknown } }).response?.data ?? null;
+      console.log(
+        `[DEBUG-WHATSAPP] attempt=${attempt}/${MAX_ATTEMPTS} ` +
+          `instance=${instanceName} phone=${phone} ` +
+          `status=${String(rawStatus)}`
+      );
+      console.log(
+        "[DEBUG-WHATSAPP] raw Evolution API response body:",
+        JSON.stringify(rawBody ?? (e instanceof Error ? e.message : String(e)), null, 2)
+      );
+      // ─────────────────────────────────────────────────────────────────────
+
       if (e instanceof EvolutionApiError) {
         lastError = e;
 
@@ -163,15 +181,14 @@ export async function startInstanceConnection(
 
         if (e.httpStatus === 404) {
           console.warn(
-            `[instance-manager] getPairingCode 404 (attempt ${attempt}/${MAX_ATTEMPTS}) — instance not ready yet`
+            `[DEBUG-WHATSAPP] 404 → instance not ready yet (attempt ${attempt}/${MAX_ATTEMPTS})`
           );
-          // Continue to next attempt (delay + optional wipe already handled above)
           continue;
         }
 
         // Other error (422 bad phone, 403, etc.) — log and retry unless on last attempt
         console.error(
-          `[instance-manager] getPairingCode error (attempt ${attempt}/${MAX_ATTEMPTS}):`,
+          `[DEBUG-WHATSAPP] non-404 error (attempt ${attempt}/${MAX_ATTEMPTS}):`,
           e.message
         );
         if (attempt === MAX_ATTEMPTS) throw e;
