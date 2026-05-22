@@ -150,14 +150,29 @@ function makeClient(config: EvolutionConfig): AxiosInstance {
       const status: number =
         (err as { response?: { status?: number } }).response?.status ?? 0;
 
-      // Extract Evolution API's own error message from the response body (if present)
+      // Extract Evolution API's own error message from the response body.
+      // Evolution API v2 uses several different shapes:
+      //   { message: "..." }                        — simple
+      //   { error: "Forbidden", response: { message: ["..."] } }  — 403 shape
+      //   { message: ["..."] }                      — array variant
       const rawBody = (err as { response?: { data?: unknown } }).response?.data;
-      const evolutionMsg: string | null =
-        rawBody && typeof rawBody === "object"
-          ? ((rawBody as Record<string, unknown>).message as string) ||
-            ((rawBody as Record<string, unknown>).error as string) ||
-            null
-          : null;
+      const evolutionMsg: string | null = (() => {
+        if (!rawBody || typeof rawBody !== "object") return null;
+        const b = rawBody as Record<string, unknown>;
+        // Direct string message
+        if (typeof b.message === "string" && b.message) return b.message;
+        // Direct array message (first element)
+        if (Array.isArray(b.message) && typeof b.message[0] === "string") return b.message[0] as string;
+        // Nested response.message array — the 403 "name already in use" shape
+        const nested = b.response as Record<string, unknown> | undefined;
+        if (nested) {
+          if (typeof nested.message === "string" && nested.message) return nested.message;
+          if (Array.isArray(nested.message) && typeof nested.message[0] === "string") return nested.message[0] as string;
+        }
+        // Fallback: error field
+        if (typeof b.error === "string" && b.error) return b.error;
+        return null;
+      })();
 
       // Full raw dump — critical for diagnosing pairing-code failures
       console.log("[DEBUG-WHATSAPP] interceptor caught HTTP error", {
@@ -235,15 +250,18 @@ export class EvolutionClient {
   /**
    * Request pairing code for a phone number.
    * Phone must be digits only, international format (e.g. 963912345678).
-   * Evolution API v2 returns either `pairingCode` or `code` depending on build.
+   *
+   * Evolution API v2 uses GET /instance/connect/{name}?number={phone}
+   * (POST /instance/connect is not registered → "Cannot POST" 404).
+   * Response shape: { pairingCode: "XXXXXXXX" } or { code: "XXXXXXXX" }
    */
   async getPairingCode(
     instanceName: string,
     phoneNumber: string
   ): Promise<string> {
-    const res = await this.client.post<EvolutionPairingCodeResponse>(
+    const res = await this.client.get<EvolutionPairingCodeResponse>(
       `/instance/connect/${encodeURIComponent(instanceName)}`,
-      { number: phoneNumber }
+      { params: { number: phoneNumber } }
     );
     const code = res.data?.pairingCode ?? res.data?.code;
     if (!code) {
