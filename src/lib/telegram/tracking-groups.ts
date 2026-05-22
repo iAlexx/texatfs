@@ -25,6 +25,7 @@ export interface TrackingStatus {
   chatTitle: string | null;
   chatId: number | null;
   topicCount: number;
+  inviteLink: string | null;
 }
 
 // ─── Group helpers ────────────────────────────────────────────────────────────
@@ -33,14 +34,20 @@ export async function upsertTrackingGroup(
   supabase: SupabaseClient,
   userId: string,
   chatId: number,
-  chatTitle: string
+  chatTitle: string,
+  inviteLink?: string
 ): Promise<TrackingGroup> {
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    chat_id: chatId,
+    chat_title: chatTitle,
+    is_active: true,
+  };
+  if (inviteLink) payload.invite_link = inviteLink;
+
   const { data, error } = await supabase
     .from("telegram_tracking_groups")
-    .upsert(
-      { user_id: userId, chat_id: chatId, chat_title: chatTitle, is_active: true },
-      { onConflict: "user_id", ignoreDuplicates: false }
-    )
+    .upsert(payload, { onConflict: "user_id", ignoreDuplicates: false })
     .select()
     .single();
 
@@ -149,7 +156,13 @@ export async function getTrackingStatusForUser(
 ): Promise<TrackingStatus> {
   const group = await getTrackingGroupByUserId(supabase, userId);
   if (!group) {
-    return { active: false, chatTitle: null, chatId: null, topicCount: 0 };
+    return {
+      active: false,
+      chatTitle: null,
+      chatId: null,
+      topicCount: 0,
+      inviteLink: null,
+    };
   }
 
   const { count, error } = await supabase
@@ -164,5 +177,55 @@ export async function getTrackingStatusForUser(
     chatTitle: group.chat_title,
     chatId: group.chat_id,
     topicCount: count ?? 0,
+    inviteLink: (group as TrackingGroup & { invite_link?: string }).invite_link ?? null,
+  };
+}
+
+// ─── Topic lookup by thread ID ────────────────────────────────────────────────
+
+export interface AgentTopicLookup {
+  userId: string;
+  affiliateId: string;
+  username: string;
+}
+
+/**
+ * Resolves the sub-agent and master user associated with a specific
+ * Forum Topic thread ID inside a given Telegram group.
+ *
+ * Used by the cash payment handler to identify which agent a ✅/🛑
+ * message applies to.
+ */
+export async function getAgentByTopicId(
+  supabase: SupabaseClient,
+  chatId: number,
+  topicId: number
+): Promise<AgentTopicLookup | null> {
+  // 1. Resolve the group record from chat_id
+  const { data: group, error: gErr } = await supabase
+    .from("telegram_tracking_groups")
+    .select("id, user_id")
+    .eq("chat_id", chatId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (gErr) throw gErr;
+  if (!group) return null;
+
+  // 2. Resolve the agent topic record from group_id + topic_id
+  const { data: topic, error: tErr } = await supabase
+    .from("telegram_agent_topics")
+    .select("affiliate_id, username")
+    .eq("group_id", group.id)
+    .eq("topic_id", topicId)
+    .maybeSingle();
+
+  if (tErr) throw tErr;
+  if (!topic) return null;
+
+  return {
+    userId: group.user_id as string,
+    affiliateId: topic.affiliate_id as string,
+    username: topic.username as string,
   };
 }

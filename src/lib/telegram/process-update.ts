@@ -8,6 +8,10 @@ import {
 import { isAdmin, type TelegramUpdate } from "@/lib/telegram/bot-api";
 import { handleOnboardingMessage } from "@/lib/telegram/onboarding";
 import { initTrackingGroup } from "@/lib/telegram/forum-manager";
+import {
+  handleCashMessage,
+  handleCashCallback,
+} from "@/lib/telegram/cash-handler";
 
 function devLog(phase: string, data?: Record<string, unknown>): void {
   if (
@@ -41,7 +45,6 @@ export async function processTelegramUpdate(
         status: new_chat_member.status,
       });
 
-      // Look up the master user by their Telegram ID (who added the bot)
       const { data: userRow } = await supabase
         .from("users")
         .select("id")
@@ -49,7 +52,6 @@ export async function processTelegramUpdate(
         .maybeSingle();
 
       if (userRow?.id) {
-        // Fire-and-forget: topic creation takes 10–60s
         void initTrackingGroup(
           supabase,
           userRow.id,
@@ -68,37 +70,43 @@ export async function processTelegramUpdate(
     return;
   }
 
+  // ── Callback queries ─────────────────────────────────────────────────────────
   if (update.callback_query) {
     const cq = update.callback_query;
-    const telegramUserId = cq.from.id;
-    if (!isAdmin(telegramUserId)) {
-      devLog("callbackDenied", { telegramUserId });
+    const data = cq.data ?? "";
+
+    // Cash payment confirm / cancel — any group member may trigger these
+    if (data.startsWith("cc|") || data === "cx") {
+      await handleCashCallback(supabase, cq);
       return;
     }
-    const chatId = cq.message?.chat.id;
-    const messageId = cq.message?.message_id;
-    const data = cq.data ?? "";
-    if (chatId && messageId && data.startsWith("adm:")) {
-      await handleAdminCallback(
-        supabase,
-        chatId,
-        messageId,
-        data,
-        cq.id
-      );
+
+    // Admin panel callbacks — restricted to admins
+    if (data.startsWith("adm:")) {
+      if (!isAdmin(cq.from.id)) {
+        devLog("callbackDenied", { telegramUserId: cq.from.id });
+        return;
+      }
+      const chatId   = cq.message?.chat.id;
+      const messageId = cq.message?.message_id;
+      if (chatId && messageId) {
+        await handleAdminCallback(supabase, chatId, messageId, data, cq.id);
+      }
     }
+
     return;
   }
 
+  // ── Messages ─────────────────────────────────────────────────────────────────
   const message = update.message;
   if (!message?.text || !message.from) {
     devLog("skip", { reason: "no text or from", update_id: update.update_id });
     return;
   }
 
-  const text = message.text.trim();
+  const text          = message.text.trim();
   const telegramUserId = message.from.id;
-  const chatId = message.chat.id;
+  const chatId        = message.chat.id;
 
   devLog("message", {
     update_id: update.update_id,
@@ -107,6 +115,15 @@ export async function processTelegramUpdate(
     textPreview: text.slice(0, 80),
   });
 
+  // ── Cash triggers: ✅/🛑 in group forum threads ─────────────────────────────
+  // Only process in groups (not private chats). handleCashMessage checks
+  // message.chat.type internally and returns false for private messages.
+  if (message.chat.type !== "private" && message.message_thread_id) {
+    const handled = await handleCashMessage(supabase, message);
+    if (handled) return;
+  }
+
+  // ── Admin commands (private or group) ───────────────────────────────────────
   if (text === "/admin" || text.startsWith("/admin@")) {
     if (!isAdmin(telegramUserId)) return;
     await sendAdminPanel(chatId, supabase);
@@ -128,5 +145,6 @@ export async function processTelegramUpdate(
     return;
   }
 
+  // ── Onboarding (private DMs only) ────────────────────────────────────────────
   await handleOnboardingMessage(supabase, message);
 }

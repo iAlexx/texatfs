@@ -108,6 +108,8 @@ export interface AutoCreateResult {
   /** Telegram Bot API chat_id (negative, e.g. –1001234567890). */
   chatId: number;
   chatTitle: string;
+  /** Permanent t.me/+XXXX invite link. Empty string if export failed. */
+  inviteLink: string;
 }
 
 // ── Core automation function ──────────────────────────────────────────────────
@@ -160,6 +162,7 @@ export async function autoCreateTelegramTrackerGroup(
 
     // ── Step A: Create supergroup ───────────────────────────────────────────
     let inputChannel: Api.InputChannel;
+    let inputPeer: Api.InputPeerChannel;
     let chatId: number;
 
     try {
@@ -180,9 +183,15 @@ export async function autoCreateTelegramTrackerGroup(
         );
       }
 
+      const accessHash = gbi(rawChannel.accessHash ?? BigInt(0));
       inputChannel = new Api.InputChannel({
         channelId: gbi(rawChannel.id),
-        accessHash: gbi(rawChannel.accessHash ?? BigInt(0)),
+        accessHash,
+      });
+      // InputPeerChannel is required for messages.ExportChatInvite
+      inputPeer = new Api.InputPeerChannel({
+        channelId: gbi(rawChannel.id),
+        accessHash,
       });
       chatId = toBotApiChatId(rawChannel.id);
       console.info("[userbot] A ✓ group created", { title, chatId });
@@ -269,7 +278,25 @@ export async function autoCreateTelegramTrackerGroup(
       throw wrapError(err, "فشل ترقية البوت لمشرف");
     }
 
-    return { chatId, chatTitle: title };
+    // ── Step E: Export permanent invite link ────────────────────────────────
+    // Produces a t.me/+XXXX link that non-members can use to join.
+    // Non-fatal — falls back to empty string so the caller can compute a
+    // t.me/c/ fallback link.
+    let inviteLink = "";
+    try {
+      const inviteResult = await client.invoke(
+        new Api.messages.ExportChatInvite({ peer: inputPeer })
+      );
+      inviteLink = ((inviteResult as unknown) as { link?: string }).link ?? "";
+      console.info("[userbot] E ✓ invite link:", inviteLink);
+    } catch (err) {
+      console.warn(
+        "[userbot] ExportChatInvite failed (non-fatal):",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+
+    return { chatId, chatTitle: title, inviteLink };
   } finally {
     // Always disconnect to free the socket — never let it linger in Railway.
     try {

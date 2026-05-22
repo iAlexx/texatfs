@@ -2,9 +2,14 @@ const TELEGRAM_API = "https://api.telegram.org";
 
 export interface TelegramMessage {
   message_id: number;
-  chat: { id: number };
+  chat: {
+    id: number;
+    type: "private" | "group" | "supergroup" | "channel";
+  };
   from?: { id: number; first_name?: string; last_name?: string; username?: string };
   text?: string;
+  /** Present in messages sent inside a Forum Topic thread. */
+  message_thread_id?: number;
 }
 
 export interface TelegramInlineKeyboard {
@@ -14,7 +19,12 @@ export interface TelegramInlineKeyboard {
 export interface TelegramCallbackQuery {
   id: string;
   from: { id: number; first_name?: string };
-  message?: { message_id: number; chat: { id: number } };
+  message?: {
+    message_id: number;
+    chat: { id: number };
+    /** Present when the keyboard message lives inside a Forum Topic. */
+    message_thread_id?: number;
+  };
   data?: string;
 }
 
@@ -209,12 +219,16 @@ export async function createForumTopic(
 
 /**
  * Send a text message to a specific Forum Topic (message_thread_id).
+ * Supports inline keyboard markup for confirmation flows.
  */
 export async function sendMessageToTopic(
   chatId: number,
   threadId: number,
   text: string,
-  options?: { parse_mode?: "HTML" | "Markdown" }
+  options?: {
+    parse_mode?: "HTML" | "Markdown";
+    reply_markup?: TelegramInlineKeyboard;
+  }
 ): Promise<{ message_id: number }> {
   const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/sendMessage`, {
     method: "POST",
@@ -224,6 +238,7 @@ export async function sendMessageToTopic(
       message_thread_id: threadId,
       text,
       parse_mode: options?.parse_mode,
+      reply_markup: options?.reply_markup,
     }),
   });
 
@@ -234,6 +249,18 @@ export async function sendMessageToTopic(
 
   const json = (await res.json()) as { result?: { message_id: number } };
   return { message_id: json.result?.message_id ?? 0 };
+}
+
+/** Delete a message. Fails silently if already deleted or bot lacks permission. */
+export async function deleteMessage(
+  chatId: number,
+  messageId: number
+): Promise<void> {
+  await fetch(`${TELEGRAM_API}/bot${botToken()}/deleteMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+  }).catch(() => undefined);
 }
 
 /**

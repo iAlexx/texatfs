@@ -16,31 +16,11 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-/**
- * maxDuration covers the 4 gramjs steps (~2–8 s) + Commands topic creation
- * + DM dispatch. Topic creation per sub-agent runs fire-and-forget in the
- * background so it does NOT count against this limit.
- */
 export const maxDuration = 30;
-
-// ── Private link helper ───────────────────────────────────────────────────────
-
-/**
- * Converts a Bot API chat_id (-1001234567890) to a t.me/c/ invite link.
- * Works for private supergroups created via the userbot.
- */
-function toGroupLink(chatId: number): string {
-  // Remove the leading -100 prefix to get the bare channel ID
-  const bare = String(Math.abs(chatId)).substring(3);
-  return `https://t.me/c/${bare}`;
-}
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
-  let chatId: number | undefined;
-  let chatTitle: string | undefined;
-
   try {
     const body = (await request.json()) as LedgerAuthInput;
     const { user } = await resolveLedgerUser(body);
@@ -48,81 +28,101 @@ export async function POST(request: Request) {
     const masterName =
       user.display_name?.trim() || user.texas_username?.trim() || "Master";
 
-    // ── 1. Run the 4-step automated group setup via userbot ─────────────────
-    const result = await autoCreateTelegramTrackerGroup(user.id, masterName);
-    chatId = result.chatId;
-    chatTitle = result.chatTitle;
+    // ── 1. 4-step automated group setup via userbot ─────────────────────────
+    const { chatId, chatTitle, inviteLink } =
+      await autoCreateTelegramTrackerGroup(user.id, masterName);
 
     const supabase = getSupabaseServiceClient();
 
-    // ── 2. Persist the group record ─────────────────────────────────────────
+    // ── 2. Persist group record (include invite link) ───────────────────────
     const group = await upsertTrackingGroup(
       supabase,
       user.id,
       chatId,
-      chatTitle
+      chatTitle,
+      inviteLink || undefined
     );
 
-    // ── 3. Create the "Commands" (أوامر) topic via Bot API ──────────────────
-    // The bot is now an admin — it can create topics immediately.
+    // ── 3. Create "⚙️ أوامر البوت" topic + send rich welcome message ────────
     let commandsTopicId: number | null = null;
     try {
       const cmdTopic = await createForumTopic(chatId, "⚙️ أوامر البوت");
       commandsTopicId = cmdTopic.message_thread_id;
 
-      // Pin a welcome message in the Commands topic
-      await sendMessageToTopic(
-        chatId,
-        commandsTopicId,
-        [
-          "👑 <b>مرحباً بك في لوحة تحكم Texas Funds</b>",
-          "",
-          "📌 <b>هذا الموضوع مخصص للتواصل مع البوت وإدارة النظام.</b>",
-          "",
-          "💰 اكتب <code>💰 500</code> في موضوع أي وكيل لتسجيل كاش وصل منه",
-          "📤 اكتب <code>📤 250</code> في موضوع أي وكيل لتسجيل كاش واصل إليه",
-          "📊 سيُرسل التقرير اليومي الساعة <b>4:00 صباحاً</b> (دمشق) في كل موضوع تلقائياً",
-          "",
-          "⏳ <i>جاري إنشاء مواضيع الوكلاء الفرعيين في الخلفية…</i>",
-        ].join("\n"),
-        { parse_mode: "HTML" }
-      );
+      const welcomeLines = [
+        "👑 <b>مرحباً بك في Texas Funds — نظام التتبع عبر تلغرام</b>",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📋 <b>كيف يعمل النظام؟</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "سيتم إنشاء <b>موضوع (Topic) مستقل</b> لكل وكيل فرعي في هذه المجموعة.",
+        "كل موضوع يحمل اسم بريد الوكيل، على سبيل المثال:",
+        "<code>agent.demo@texas.com</code>",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "💸 <b>تسجيل المعاملات النقدية</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "اكتب الأمر في موضوع الوكيل المعني مباشرةً:",
+        "",
+        "✅ <b>واصل منك</b> — أنت أرسلت مبلغاً للوكيل",
+        "   مثال: <code>✅90000</code>",
+        "",
+        "🛑 <b>واصل الك</b> — الوكيل أرسل لك مبلغاً",
+        "   مثال: <code>🛑45000</code>",
+        "",
+        "سيطلب منك البوت تأكيد كل عملية قبل حفظها.",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📊 <b>التقرير اليومي</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "كل يوم في الساعة <b>4:00 صباحاً</b> (توقيت دمشق)",
+        "يُرسل البوت تقريراً مالياً مفصّلاً لكل وكيل في موضوعه.",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "⏳ <i>جاري الآن: إنشاء مواضيع الوكلاء الفرعيين…",
+        "ستصلك رسالة تأكيد هنا فور الانتهاء.</i>",
+      ].join("\n");
+
+      await sendMessageToTopic(chatId, commandsTopicId, welcomeLines, {
+        parse_mode: "HTML",
+      });
     } catch (topicErr) {
-      // Non-fatal — topic creation may fail if the bot has a slight delay
-      // in receiving admin rights. initTrackingGroup will retry topic creation.
       console.warn(
         "[auto-create] Commands topic creation failed (non-fatal):",
         topicErr instanceof Error ? topicErr.message : String(topicErr)
       );
     }
 
-    // ── 4. Notify the master's private DM with the group link ───────────────
+    // ── 4. Send DM to master with the real invite link ──────────────────────
     if (user.telegram_id) {
-      const groupLink = toGroupLink(chatId);
+      const linkLine = inviteLink
+        ? `🔗 <a href="${inviteLink}">رابط الانضمام للمجموعة</a>`
+        : `📌 المجموعة: ${chatTitle}`;
+
       void sendTelegramMessage(
         user.telegram_id,
         [
           `🎉 <b>تم إنشاء مجموعة التتبع بنجاح!</b>`,
           "",
-          `📌 <b>المجموعة:</b> ${chatTitle}`,
-          `🔗 <a href="${groupLink}">فتح المجموعة</a>`,
+          `📌 الاسم: <b>${chatTitle}</b>`,
+          linkLine,
           "",
-          "⏳ <i>جاري إنشاء موضوع خاص لكل وكيل فرعي… ستصلك رسالة تأكيد في المجموعة خلال دقيقتين.</i>",
+          "⏳ <i>جاري إنشاء موضوع لكل وكيل فرعي…",
+          "ستصلك رسالة تأكيد في موضوع الأوامر خلال دقيقتين.</i>",
         ].join("\n"),
         { parse_mode: "HTML" }
       ).catch((e) =>
         console.warn(
-          "[auto-create] DM to master failed (non-fatal):",
+          "[auto-create] DM failed (non-fatal):",
           e instanceof Error ? e.message : String(e)
         )
       );
     }
 
-    // ── 5. Fire-and-forget: create per-agent topics in the background ───────
-    // initTrackingGroup uses Puppeteer (Texas sign-in) and may take 60–120 s.
-    // Railway keeps the Node process alive after the response, so this WILL
-    // complete — it is not orphaned. The Commands topic welcome message above
-    // already informs the user that creation is in progress.
+    // ── 5. Fire-and-forget: create per-agent topics ─────────────────────────
     void initTrackingGroup(supabase, user.id, chatId, chatTitle).catch((e) => {
       console.error(
         "[auto-create] initTrackingGroup error:",
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
       chatTitle,
       groupId: group.id,
       commandsTopicId,
-      groupLink: toGroupLink(chatId),
+      inviteLink: inviteLink || null,
     });
   } catch (err) {
     if (err instanceof LedgerAuthError) {

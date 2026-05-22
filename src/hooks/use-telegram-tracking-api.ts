@@ -8,6 +8,7 @@ export interface TrackingStatus {
   chatTitle: string | null;
   chatId: number | null;
   topicCount: number;
+  inviteLink: string | null;
 }
 
 export interface AutoCreateResult {
@@ -16,7 +17,7 @@ export interface AutoCreateResult {
   chatTitle: string;
   groupId: string;
   commandsTopicId: number | null;
-  groupLink: string;
+  inviteLink: string | null;
 }
 
 export interface AutoCreateError extends Error {
