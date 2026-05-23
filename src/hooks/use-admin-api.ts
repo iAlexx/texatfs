@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTelegram } from "@/components/providers/TelegramProvider";
-import type { AdminUsersResponse, GenerateLicenseResponse } from "@/lib/admin/types";
+import type { AdminHealthStatus, AdminUsersResponse, GenerateLicenseResponse } from "@/lib/admin/types";
 import type { LicenseDurationMonths } from "@/lib/admin/auth";
 
 function authBody(initData: string, telegramUserId: number | null) {
@@ -75,5 +75,20 @@ export function useGenerateLicense() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
     },
+  });
+}
+
+export function useAdminHealth() {
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
+
+  return useQuery({
+    queryKey: ["admin", "health"],
+    enabled: isReady && canAuthenticate,
+    queryFn: () =>
+      postJson<AdminHealthStatus>("/api/admin/health", {
+        ...authBody(initData, telegramUserId),
+      }),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }

@@ -7,75 +7,132 @@
  * Always returns 200 OK quickly; heavy work runs in the background.
  */
 import { NextResponse } from "next/server";
+import { captureError } from "@/lib/observability/capture-error";
+import { createLogger } from "@/lib/observability/logger";
+import { recordWebhookFailure } from "@/lib/observability/webhook-events";
+import { shouldProcessWebhookEvent } from "@/lib/observability/webhook-dedup";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   normaliseWhatsAppWebhook,
   normaliseWhatsAppPrivateWebhook,
-  type RawWhatsAppWebhook,
 } from "@/lib/whatsapp/webhook-types";
-import { handleWhatsAppCashEvent } from "@/lib/whatsapp/cash-handler";
-import { handleWhatsAppOnboardingPrivate } from "@/lib/whatsapp/onboarding-handler";
+import { parseWhatsAppWebhook, type ParsedWhatsAppWebhook } from "@/lib/validation/whatsapp";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
+const log = createLogger("whatsapp/webhook");
+
 async function processWebhookPayload(
   supabase: ReturnType<typeof getSupabaseServiceClient>,
-  raw: RawWhatsAppWebhook
+  raw: ParsedWhatsAppWebhook,
+  requestId: string
 ): Promise<void> {
-  const privateMsg = normaliseWhatsAppPrivateWebhook(raw);
+  const [{ handleWhatsAppOnboardingPrivate }, { handleWhatsAppCashEvent }] =
+    await Promise.all([
+      import("@/lib/whatsapp/onboarding-handler"),
+      import("@/lib/whatsapp/cash-handler"),
+    ]);
+
+  const privateMsg = normaliseWhatsAppPrivateWebhook(raw as import("@/lib/whatsapp/webhook-types").RawWhatsAppWebhook);
   if (privateMsg) {
+    if (
+      !shouldProcessWebhookEvent(
+        "whatsapp",
+        `private:${privateMsg.messageId}`
+      )
+    ) {
+      log.info("duplicate private message skipped", {
+        requestId,
+        messageId: privateMsg.messageId,
+      });
+      return;
+    }
+
     try {
       const handled = await handleWhatsAppOnboardingPrivate(supabase, privateMsg);
       if (handled) return;
     } catch (e) {
-      console.error(
-        "[whatsapp/webhook] onboarding error:",
-        e instanceof Error ? e.message : String(e)
-      );
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error("onboarding error", { requestId, error: msg });
+      recordWebhookFailure({
+        source: "whatsapp",
+        step: "onboarding",
+        message: msg,
+        requestId,
+      });
+      void captureError(e, { scope: "whatsapp/webhook", requestId, tags: { step: "onboarding" } });
     }
   }
 
-  const groupMsg = normaliseWhatsAppWebhook(raw);
+  const groupMsg = normaliseWhatsAppWebhook(raw as import("@/lib/whatsapp/webhook-types").RawWhatsAppWebhook);
   if (groupMsg) {
+    if (
+      !shouldProcessWebhookEvent("whatsapp", `group:${groupMsg.messageId}`)
+    ) {
+      log.info("duplicate group message skipped", {
+        requestId,
+        messageId: groupMsg.messageId,
+      });
+      return;
+    }
+
     try {
       await handleWhatsAppCashEvent(supabase, groupMsg);
     } catch (e) {
-      console.error(
-        "[whatsapp/webhook] cash handler error:",
-        e instanceof Error ? e.message : String(e)
-      );
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error("cash handler error", { requestId, error: msg });
+      recordWebhookFailure({
+        source: "whatsapp",
+        step: "cash",
+        message: msg,
+        requestId,
+      });
+      void captureError(e, { scope: "whatsapp/webhook", requestId, tags: { step: "cash" } });
     }
   }
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const requestId = crypto.randomUUID();
+
   const expected = process.env.WHATSAPP_WEBHOOK_SECRET;
   if (expected) {
     const provided =
       request.headers.get("x-webhook-secret") ??
       request.headers.get("x-webhook-signature");
     if (provided !== expected) {
-      console.warn("[whatsapp/webhook] rejected: secret mismatch");
+      log.warn("rejected: secret mismatch", { requestId });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
 
-  let raw: RawWhatsAppWebhook;
+  let rawJson: unknown;
   try {
-    raw = (await request.json()) as RawWhatsAppWebhook;
+    rawJson = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  const parsed = parseWhatsAppWebhook(rawJson);
+  if (!parsed.ok) {
+    log.warn("invalid webhook payload", { requestId, error: parsed.error });
+    return NextResponse.json({ ok: true, skipped: true });
+  }
+
   const supabase = getSupabaseServiceClient();
-  void processWebhookPayload(supabase, raw).catch((e) => {
-    console.error(
-      "[whatsapp/webhook] async handler error:",
-      e instanceof Error ? e.message : String(e)
-    );
+  void processWebhookPayload(supabase, parsed.data, requestId).catch((e) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("async handler error", { requestId, error: msg });
+    recordWebhookFailure({
+      source: "whatsapp",
+      step: "async",
+      message: msg,
+      requestId,
+    });
+    void captureError(e, { scope: "whatsapp/webhook", requestId });
   });
 
   return NextResponse.json({ ok: true });

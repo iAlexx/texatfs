@@ -6,22 +6,45 @@ export const maxDuration = 300;
 
 import { NextResponse } from "next/server";
 import type { TelegramUpdate } from "@/lib/telegram/bot-api";
+import { captureError } from "@/lib/observability/capture-error";
+import { createLogger } from "@/lib/observability/logger";
+import {
+  recordWebhookFailure,
+} from "@/lib/observability/webhook-events";
+import { shouldProcessWebhookEvent } from "@/lib/observability/webhook-dedup";
+import { parseTelegramUpdate } from "@/lib/validation/telegram";
+
+const log = createLogger("telegram/webhook");
 
 export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (secret) {
     const header = request.headers.get("x-telegram-bot-api-secret-token");
     if (header !== secret) {
-      console.warn("[telegram/webhook] rejected: secret token mismatch");
+      log.warn("rejected: secret token mismatch", { requestId });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
 
-  let update: TelegramUpdate;
+  let raw: unknown;
   try {
-    update = (await request.json()) as TelegramUpdate;
+    raw = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = parseTelegramUpdate(raw);
+  if (!parsed.ok) {
+    log.warn("invalid update payload", { requestId, error: parsed.error });
+    return NextResponse.json({ ok: true, skipped: true });
+  }
+
+  const update = parsed.data;
+  if (!shouldProcessWebhookEvent("telegram", String(update.update_id))) {
+    log.info("duplicate update skipped", { requestId, updateId: update.update_id });
+    return NextResponse.json({ ok: true, duplicate: true });
   }
 
   const [{ getSupabaseServiceClient }, { processTelegramUpdate }] =
@@ -31,24 +54,31 @@ export async function POST(request: Request) {
     ]);
 
   const supabase = getSupabaseServiceClient();
-
-  // Telegram requires a fast 200; Puppeteer sign-in can take 1–3 minutes.
   const processAsync = process.env.TELEGRAM_WEBHOOK_ASYNC !== "false";
 
-  if (processAsync) {
-    void processTelegramUpdate(supabase, update).catch((e) => {
-      const msg = e instanceof Error ? e.message : "Webhook error";
-      console.error("[telegram/webhook] async handler failed", msg, e);
+  const handleError = (e: unknown) => {
+    const msg = e instanceof Error ? e.message : "Webhook error";
+    log.error("handler failed", { requestId, error: msg });
+    recordWebhookFailure({
+      source: "telegram",
+      step: "processUpdate",
+      message: msg,
+      requestId,
     });
+    void captureError(e, { scope: "telegram/webhook", requestId });
+  };
+
+  if (processAsync) {
+    void processTelegramUpdate(supabase, update as TelegramUpdate).catch(handleError);
     return NextResponse.json({ ok: true });
   }
 
   try {
-    await processTelegramUpdate(supabase, update);
+    await processTelegramUpdate(supabase, update as TelegramUpdate);
     return NextResponse.json({ ok: true });
   } catch (e) {
+    handleError(e);
     const msg = e instanceof Error ? e.message : "Webhook error";
-    console.error("[telegram/webhook]", msg, e);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

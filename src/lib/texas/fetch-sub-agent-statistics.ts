@@ -4,6 +4,10 @@ import type {
   TexasFilterMap,
   TexasPagedRequest,
 } from "@/lib/texas/types";
+import { createLogger } from "@/lib/observability/logger";
+import { parseTexasStatisticsResponse } from "@/lib/validation/texas-response";
+
+const log = createLogger("texas/fetch-stats");
 
 const DEFAULT_PAGE_SIZE = 1000;
 
@@ -66,18 +70,29 @@ export async function fetchAllSubAgentStatistics(
     pagesFetched += 1;
     lastResponse = response.data;
 
-    if (!response.data?.status) {
+    const validated = parseTexasStatisticsResponse(response.data);
+    if (!validated.ok) {
+      log.warn("invalid Texas statistics page", {
+        start,
+        error: validated.error,
+      });
+      throw new Error(
+        `getSubAgentStatistics invalid response at start=${start}: ${validated.error}`
+      );
+    }
+
+    if (!validated.data.status) {
       throw new Error(
         `getSubAgentStatistics failed at start=${start}: status=false`
       );
     }
 
-    const pageRecords = coerceRecordsArray(response.data.result?.records);
+    const pageRecords = coerceRecordsArray(validated.data.result?.records);
     if (pageRecords.length) {
       allRecords.push(...pageRecords);
     }
 
-    const totalRaw = response.data.result?.totalRecordsCount ?? "0";
+    const totalRaw = String(validated.data.result?.totalRecordsCount ?? "0");
     totalRecords = parseInt(totalRaw, 10);
     if (Number.isNaN(totalRecords)) totalRecords = allRecords.length;
 

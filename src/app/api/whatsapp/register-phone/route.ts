@@ -3,7 +3,9 @@ import {
   resolveLedgerUserIdOnly,
   LedgerAuthError,
 } from "@/lib/ledger/resolve-user";
-import type { LedgerAuthInput } from "@/lib/ledger/types";
+import { createLogger } from "@/lib/observability/logger";
+import { captureError } from "@/lib/observability/capture-error";
+import { parseRegisterPhoneBody } from "@/lib/validation/onboarding";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import {
@@ -18,40 +20,34 @@ export const runtime = "nodejs";
 /** Short timeout — no Puppeteer or blocking external calls on this route. */
 export const maxDuration = 15;
 
+const log = createLogger("whatsapp/register-phone");
+
 const WELCOME_DM = `👋 أهلاً بك في نظام Texas المالي الموحد!
 
 🛡️ لحماية حسابك ومجموعاتك من الحظر، يرجى التكرم بالخطوات التالية فوراً:
 1️⃣ احفظ رقم هذا البوت في جهات اتصال جوالك الآن.
 2️⃣ قم بالرد على هذه الرسالة الخاصة بإرسال هذا الإيموجي تحديداً: 😎  لتأكيد الحفظ وتفعيل النظام تلقائياً.`;
 
-/** Non-blocking welcome DM — failures must never affect the API response. */
 function sendWelcomeDmInBackground(jid: string): void {
   void sendWhatsAppMessage(jid, WELCOME_DM).catch((err) => {
-    console.error(
-      "[register-phone] welcome DM failed (non-fatal):",
-      err instanceof Error ? err.message : String(err)
-    );
+    log.warn("welcome DM failed (non-fatal)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   });
 }
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as LedgerAuthInput & {
-      phone?: string;
-      countryCode?: string;
-    };
-
-    const { userId } = await resolveLedgerUserIdOnly(body);
-
-    const rawPhone = String(body.phone ?? "").trim();
-    if (!rawPhone) {
-      return NextResponse.json(
-        { error: "رقم الهاتف مطلوب." },
-        { status: 400 }
-      );
+    const rawBody = await request.json().catch(() => null);
+    const parsed = parseRegisterPhoneBody(rawBody);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
 
-    const cc = normalizePhoneDigits(String(body.countryCode ?? "963"));
+    const { userId } = await resolveLedgerUserIdOnly(parsed.data);
+
+    const rawPhone = parsed.data.phone;
+    const cc = normalizePhoneDigits(String(parsed.data.countryCode ?? "963"));
     let digits = normalizePhoneDigits(rawPhone);
 
     if (digits.startsWith("0")) {
@@ -99,7 +95,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     const msg = err instanceof Error ? err.message : "Server error";
-    console.error("[register-phone] error:", msg);
+    log.error("register failed", { error: msg });
+    void captureError(err, { scope: "whatsapp/register-phone" });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

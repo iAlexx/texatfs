@@ -4,6 +4,7 @@ import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { useAdminSession } from "@/hooks/use-admin-api";
 import { LicenseGenerator } from "@/components/admin/LicenseGenerator";
 import { UsersTable } from "@/components/admin/UsersTable";
+import { HealthPanel } from "@/components/admin/HealthPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function AdminDashboard() {
@@ -54,15 +55,19 @@ export function AdminDashboard() {
       </header>
 
       <Tabs defaultValue="licenses" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-2 bg-muted/60">
+        <TabsList className="grid w-full max-w-lg grid-cols-3 bg-muted/60">
           <TabsTrigger value="licenses">Licenses</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="health">Health</TabsTrigger>
         </TabsList>
         <TabsContent value="licenses" className="mt-6">
           <LicenseGenerator />
         </TabsContent>
         <TabsContent value="users" className="mt-6">
           <UsersTable />
+        </TabsContent>
+        <TabsContent value="health" className="mt-6">
+          <HealthPanel />
         </TabsContent>
       </Tabs>
     </div>

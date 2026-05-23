@@ -4,15 +4,15 @@
  * Sends text messages to a WASenderAPI-style gateway using a Bearer token.
  * Supports quoting/replying to an existing message — required by our cash
  * confirmation state machine.
- *
- * Required env vars:
- *   WHATSAPP_API_TOKEN   — Bearer token for the gateway provider.
- *   WHATSAPP_API_URL     — (optional) override base URL. Defaults to
- *                          https://api.wasenderapi.com
  */
+import { createLogger } from "@/lib/observability/logger";
+import { retryAsync } from "@/lib/utils/async-retry";
+
+const log = createLogger("whatsapp/client");
 
 const DEFAULT_BASE_URL = "https://api.wasenderapi.com";
-const SEND_TIMEOUT_MS  = 10_000;
+const SEND_TIMEOUT_MS = 10_000;
+const MAX_SEND_ATTEMPTS = 2;
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -54,33 +54,22 @@ function getBaseUrl(): string {
 // ── Send result ───────────────────────────────────────────────────────────────
 
 export interface WhatsAppSendResult {
-  /** Provider-assigned message ID (used for reply tracking). */
   messageId: string;
-  /** Raw provider response for debugging. */
   raw: unknown;
 }
 
 interface SendMessageOptions {
-  /** Quote/reply to a previous message in the same chat. */
   quotedMessageId?: string;
 }
 
-/**
- * Send a text message to a WhatsApp chat (private or group).
- *
- * @param chatId  Group id like "120363023948721938@g.us" or user JID.
- * @param text    Message body. WhatsApp formatting (*bold*, _italic_) supported.
- */
-export async function sendWhatsAppMessage(
+async function sendWhatsAppMessageOnce(
   chatId: string,
   text: string,
   options: SendMessageOptions = {}
 ): Promise<WhatsAppSendResult> {
   const token = getToken();
-  const url   = `${getBaseUrl()}/api/send-message`;
+  const url = `${getBaseUrl()}/api/send-message`;
 
-  // Build provider-compatible payload. We include both common aliases so the
-  // request works with WASenderAPI as well as similar Bearer-token gateways.
   const payload: Record<string, unknown> = {
     to: chatId,
     chatId,
@@ -89,22 +78,22 @@ export async function sendWhatsAppMessage(
   };
   if (options.quotedMessageId) {
     payload.reply_to_message_id = options.quotedMessageId;
-    payload.quotedMessageId     = options.quotedMessageId;
+    payload.quotedMessageId = options.quotedMessageId;
   }
 
   const controller = new AbortController();
-  const timeout    = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
 
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: {
-        "Content-Type":  "application/json",
-        Authorization:   `Bearer ${token}`,
-        Accept:          "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
       },
-      body:   JSON.stringify(payload),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
   } catch (err) {
@@ -125,10 +114,10 @@ export async function sendWhatsAppMessage(
 
   if (!res.ok) {
     const errMsg = extractErrorMessage(body) ?? `HTTP ${res.status}`;
-    console.error("[whatsapp] sendMessage failed", {
+    log.warn("sendMessage failed", {
       status: res.status,
-      chatId,
-      preview: typeof body === "string" ? body.slice(0, 200) : body,
+      chatIdSuffix: chatId.slice(-8),
+      preview: typeof body === "string" ? body.slice(0, 120) : undefined,
     });
     if (res.status === 401 || res.status === 403) {
       throw new WhatsAppError(`WhatsApp auth failed: ${errMsg}`, "auth", res.status);
@@ -139,14 +128,33 @@ export async function sendWhatsAppMessage(
     throw new WhatsAppError(`WhatsApp gateway error: ${errMsg}`, "upstream", res.status);
   }
 
-  const messageId = extractMessageId(body);
-  return { messageId, raw: body };
+  return { messageId: extractMessageId(body), raw: body };
 }
 
 /**
- * Reply to a previous message by quoting it.
- * Convenience wrapper around sendWhatsAppMessage.
+ * Send a text message to a WhatsApp chat (private or group).
+ * Retries once on transient network/5xx errors only.
  */
+export async function sendWhatsAppMessage(
+  chatId: string,
+  text: string,
+  options: SendMessageOptions = {}
+): Promise<WhatsAppSendResult> {
+  return retryAsync(() => sendWhatsAppMessageOnce(chatId, text, options), {
+    maxAttempts: MAX_SEND_ATTEMPTS,
+    baseDelayMs: 1500,
+    label: "whatsapp-send",
+    shouldRetry: (err) => {
+      if (err instanceof WhatsAppError) {
+        if (err.code === "rate_limit" || err.code === "auth") return false;
+        if (err.code === "network") return true;
+        if (err.code === "upstream" && err.status && err.status >= 500) return true;
+      }
+      return false;
+    },
+  });
+}
+
 export function replyToWhatsAppMessage(
   chatId: string,
   quotedMessageId: string,
@@ -155,24 +163,17 @@ export function replyToWhatsAppMessage(
   return sendWhatsAppMessage(chatId, text, { quotedMessageId });
 }
 
-// ── Response parsing ──────────────────────────────────────────────────────────
-
 function extractMessageId(body: unknown): string {
   if (!body || typeof body !== "object") return "";
   const b = body as Record<string, unknown>;
 
-  // Common locations across providers:
-  //   { messageId: "..." }
-  //   { data: { messageId: "..." } }
-  //   { data: { key: { id: "..." } } }
-  //   { result: { id: "..." } }
   if (typeof b.messageId === "string") return b.messageId;
-  if (typeof b.id        === "string") return b.id;
+  if (typeof b.id === "string") return b.id;
 
   const data = (b.data ?? b.result) as Record<string, unknown> | undefined;
   if (data && typeof data === "object") {
     if (typeof data.messageId === "string") return data.messageId;
-    if (typeof data.id        === "string") return data.id;
+    if (typeof data.id === "string") return data.id;
     const key = data.key as Record<string, unknown> | undefined;
     if (key && typeof key.id === "string") return key.id;
   }
@@ -185,6 +186,6 @@ function extractErrorMessage(body: unknown): string | null {
   if (typeof body !== "object") return String(body);
   const b = body as Record<string, unknown>;
   if (typeof b.message === "string") return b.message;
-  if (typeof b.error   === "string") return b.error;
+  if (typeof b.error === "string") return b.error;
   return null;
 }

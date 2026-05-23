@@ -23,3 +23,5 @@ export interface GenerateLicenseResponse {
   key: string;
   duration_months: string;
 }
+
+export type { AdminHealthStatus } from "@/lib/observability/health-status";

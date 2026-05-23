@@ -5,6 +5,7 @@
  * Group spawning runs in an isolated background job (see group-spawn-job.ts).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createLogger } from "@/lib/observability/logger";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import { jidToPhoneDigits } from "@/lib/whatsapp/phone";
 import {
@@ -13,6 +14,8 @@ import {
 } from "@/lib/whatsapp/onboarding-users";
 import { scheduleGroupSpawnJob } from "@/lib/whatsapp/group-spawn-job";
 import type { WhatsAppPrivateMessage } from "@/lib/whatsapp/webhook-types";
+
+const log = createLogger("whatsapp/onboarding");
 
 /** U+1F60E — must match exactly what we ask users to send in the welcome DM. */
 const VERIFY_EMOJI = "\u{1F60E}";
@@ -35,10 +38,9 @@ function containsVerifyEmoji(text: string): boolean {
 
 function sendDmInBackground(chatId: string, text: string, label: string): void {
   void sendWhatsAppMessage(chatId, text).catch((e) => {
-    console.error(
-      `[onboarding] ${label} failed:`,
-      e instanceof Error ? e.message : String(e)
-    );
+    log.warn(`${label} failed`, {
+      error: e instanceof Error ? e.message : String(e),
+    });
   });
 }
 
@@ -72,10 +74,7 @@ export async function handleWhatsAppOnboardingPrivate(
     sendDmInBackground(msg.chatId, VERIFIED_DM, "verification reply");
 
     if (!user.whatsapp_phone) {
-      console.error(
-        "[onboarding] user missing whatsapp_phone after match",
-        user.id
-      );
+      log.error("user missing whatsapp_phone after match", { userId: user.id });
       return true;
     }
 
@@ -83,10 +82,9 @@ export async function handleWhatsAppOnboardingPrivate(
 
     return true;
   } catch (err) {
-    console.error(
-      "[onboarding] handler error (non-fatal):",
-      err instanceof Error ? err.message : String(err)
-    );
+    log.error("handler error (non-fatal)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }
