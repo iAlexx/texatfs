@@ -5,7 +5,7 @@
  *   type "2" = Deposit TO agent   → agent received money from master = wasel_eleih
  *   type "3" = Withdraw FROM agent → agent sent money to master      = wasel_menho
  */
-import type { AxiosInstance } from "axios";
+import type { TexasHttpClient } from "@/lib/texas/texas-http-client";
 import type { TexasFilterMap } from "@/lib/texas/types";
 
 export interface TransferRecord {
@@ -75,7 +75,7 @@ function resolveType(record: TransferRecord): string {
  * Unknown affiliateIds are omitted — use getOrZero() to read.
  */
 export async function fetchAgentsTransfers(
-  client: AxiosInstance,
+  client: TexasHttpClient,
   options: {
     /** ISO date "YYYY-MM-DD" — filter transfers for a specific day */
     date?: string;

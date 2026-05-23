@@ -1,4 +1,4 @@
-import type { AxiosInstance } from "axios";
+import type { TexasHttpClient } from "@/lib/texas/texas-http-client";
 import type {
   AgentAllWalletsResponse,
   SubAgentStatisticsResponse,
@@ -85,7 +85,7 @@ export class TexasSyncService {
     };
   }
 
-  async fetchAgentWallet(client: AxiosInstance) {
+  async fetchAgentWallet(client: TexasHttpClient) {
     const response = await client.post<AgentAllWalletsResponse>(
       "/Agent/getAgentAllWallets"
     );
@@ -98,7 +98,7 @@ export class TexasSyncService {
   }
 
   async fetchAllSubAgentStatistics(
-    client: AxiosInstance,
+    client: TexasHttpClient,
     options: {
       pageSize?: number;
       extraFilter?: TexasFilterMap;

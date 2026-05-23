@@ -1,4 +1,3 @@
-import type { AxiosInstance } from "axios";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { TexasSessionService } from "@/lib/services/TexasSessionService";
 import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
@@ -6,6 +5,10 @@ import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
 import { requireUserCredentials } from "@/lib/scraper/resolve-user-credentials";
 import type { AppUser } from "@/lib/supabase/database.types";
+import {
+  toTexasPlainObject,
+  type TexasHttpClient,
+} from "@/lib/texas/texas-http-client";
 
 export class TexasLiveApiError extends Error {
   constructor(
@@ -17,18 +20,30 @@ export class TexasLiveApiError extends Error {
   }
 }
 
+function safeErrorMessage(err: unknown): string {
+  if (err instanceof TexasLiveApiError) return err.message;
+  if (err instanceof LedgerAuthError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "تعذر الاتصال بلوحة تكساس";
+}
+
+/** Next.js-safe JSON response — always a plain serializable object. */
+export function texasJsonResponse(data: unknown, status = 200): Response {
+  return Response.json(toTexasPlainObject(data), { status });
+}
+
 export async function withAuthenticatedTexasClient(
   supabase: SupabaseClient,
   auth: LedgerAuthInput,
-  run: (ctx: { user: AppUser; client: AxiosInstance }) => Promise<Response>
+  run: (ctx: { user: AppUser; client: TexasHttpClient }) => Promise<Response>
 ): Promise<Response> {
   try {
     const { user, subscriptionActive } = await resolveLedgerUser(auth);
 
     if (!subscriptionActive) {
-      return Response.json(
+      return texasJsonResponse(
         { error: "انتهى الاشتراك", subscription_active: false },
-        { status: 402 }
+        402
       );
     }
 
@@ -43,17 +58,29 @@ export async function withAuthenticatedTexasClient(
       password: creds.password,
     });
 
-    return await run({ user, client });
+    const response = await run({ user, client });
+
+    // Belt-and-suspenders: clone body through JSON if handler returned data
+    if (response.headers.get("content-type")?.includes("application/json")) {
+      try {
+        const clone = response.clone();
+        const raw = (await clone.json()) as unknown;
+        return texasJsonResponse(raw, response.status);
+      } catch {
+        return response;
+      }
+    }
+
+    return response;
   } catch (e) {
     if (e instanceof LedgerAuthError) {
-      return Response.json({ error: e.message }, { status: e.status });
+      return texasJsonResponse({ error: e.message }, e.status);
     }
     if (e instanceof TexasLiveApiError) {
-      return Response.json({ error: e.message }, { status: e.status });
+      return texasJsonResponse({ error: e.message }, e.status);
     }
-    const message =
-      e instanceof Error ? e.message : "تعذر الاتصال بلوحة تكساس";
+    const message = safeErrorMessage(e);
     console.error("[withAuthenticatedTexasClient]", message);
-    return Response.json({ error: message }, { status: 500 });
+    return texasJsonResponse({ error: message }, 500);
   }
 }

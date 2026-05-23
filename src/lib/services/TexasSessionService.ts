@@ -1,12 +1,11 @@
-import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
-import { getApiClientFromToken, getTexasApiBaseUrl } from "@/app/utils/api-client";
+import { cookiesToHeader, fromToken, toToken } from "@/app/utils/token-manager";
+import { getTexasApiBaseUrl } from "@/app/utils/api-client";
 import {
   findValidTokenOf,
   invalidateToken,
   storeTexasSession,
   texasSessionCacheKey,
 } from "@/app/utils/token-cache";
-import { cookiesToHeader, fromToken, toToken } from "@/app/utils/token-manager";
 import {
   buildTexasSignInUrls,
   getTexasSignInErrorMessage,
@@ -19,6 +18,11 @@ import {
   isTexasBrowserLoginEnabled,
   isTexasBrowserLoginFallbackEnabled,
 } from "@/lib/texas/texas-browser-config";
+import {
+  createTexasHttpClient,
+  wrapTexasHttpClientWithRefresh,
+  type TexasHttpClient,
+} from "@/lib/texas/texas-http-client";
 import { coalesceTexasSignIn } from "@/lib/texas/texas-sign-in-flight";
 import type { TexasCredentials } from "@/lib/texas/types";
 
@@ -35,18 +39,15 @@ interface HttpSignInAttempt {
   bodyPreview: string;
 }
 
-type RetriableAxiosConfig = InternalAxiosRequestConfig & {
-  __texasSessionRetried?: boolean;
-};
-
 /**
- * Multi-tenant Texas authentication.
+ * Multi-tenant Texas authentication + undici HTTP client builder.
  *
  * Policy:
  *  • Valid cached session (55 min) → HTTP only, no Chromium.
  *  • Cache miss → HTTP sign-in first; Puppeteer only if HTTP fails.
- *  • Concurrent sign-ins for the same user → singleflight (one launch).
- *  • HTTP 401 on API calls → invalidate cache, re-auth (HTTP first), retry once.
+ *  • Concurrent sign-ins → singleflight.
+ *  • All Texas API calls → undici (never Next.js fetch / axios).
+ *  • HTTP 401 → invalidate + re-auth + retry once.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -67,9 +68,6 @@ export class TexasSessionService {
     );
   }
 
-  /**
-   * HTTP-first fresh sign-in. Puppeteer is the last resort on cache miss.
-   */
   private async signInFresh(
     username: string,
     password: string
@@ -80,8 +78,6 @@ export class TexasSessionService {
 
     const baseUrl = getTexasApiBaseUrl();
     let lastError = "unknown";
-
-    // HTTP sign-in uses undici only (see texas-http-sign-in.ts) — never Next.js fetch.
 
     const httpAttempt = await this.tryHttpSignIn(username, password);
     if (httpAttempt.ok) {
@@ -188,51 +184,36 @@ export class TexasSessionService {
     };
   }
 
-  async getClient(credentials: TexasCredentials): Promise<AxiosInstance> {
+  private clientFromToken(token: string): TexasHttpClient {
+    return createTexasHttpClient(cookiesToHeader(fromToken(token)));
+  }
+
+  /**
+   * Authenticated undici client for all Texas portal API calls.
+   */
+  async getClient(credentials: TexasCredentials): Promise<TexasHttpClient> {
     const username = normalizeTexasUsername(credentials.username);
     const password = normalizeTexasPassword(credentials.password);
+
     const token = await this.signIn(credentials);
-    const client = getApiClientFromToken(token);
+    let client = this.clientFromToken(token);
 
-    client.interceptors.response.use(
-      (response) => response,
-      async (error: unknown) => {
-        const axiosErr = error as {
-          response?: { status?: number };
-          config?: RetriableAxiosConfig;
-        };
-        const status = axiosErr.response?.status;
-        const config = axiosErr.config;
-
-        if (
-          status === 401 &&
-          config &&
-          !config.__texasSessionRetried
-        ) {
-          console.warn("[texas-auth] HTTP 401 — invalidating session", {
-            username,
-          });
-          invalidateToken(username, password);
-          config.__texasSessionRetried = true;
-
-          const newToken = await this.signIn(credentials);
-          config.headers = config.headers ?? {};
-          config.headers.Cookie = cookiesToHeader(fromToken(newToken));
-          return client.request(config);
-        }
-
-        return Promise.reject(error);
-      }
-    );
-
-    return client;
+    return wrapTexasHttpClientWithRefresh(client, async () => {
+      console.warn("[texas-auth] HTTP 401 — invalidating session", {
+        username,
+      });
+      invalidateToken(username, password);
+      const newToken = await this.signIn(credentials);
+      client = this.clientFromToken(newToken);
+      return client;
+    });
   }
 
-  getClientFromToken(token: string): AxiosInstance {
-    return getApiClientFromToken(token);
+  getClientFromToken(token: string): TexasHttpClient {
+    return this.clientFromToken(token);
   }
 
-  async refresh(credentials: TexasCredentials): Promise<AxiosInstance> {
+  async refresh(credentials: TexasCredentials): Promise<TexasHttpClient> {
     invalidateToken(
       normalizeTexasUsername(credentials.username),
       normalizeTexasPassword(credentials.password)
@@ -250,8 +231,6 @@ export class TexasSessionService {
 
     await this.signIn({ username, password });
 
-    // Puppeteer sign-in already validated the dashboard session; axios wallet
-    // probes are often blocked by Cloudflare on Railway even with valid cookies.
     if (isTexasBrowserLoginEnabled()) {
       console.info(
         "[TexasSessionService] verifyAgentAccount: sign-in OK, skipping HTTP wallet probe",
@@ -261,7 +240,6 @@ export class TexasSessionService {
     }
 
     const client = await this.getClient({ username, password });
-
     const { data } = await client.post<TexasApiEnvelope<unknown[]>>(
       "/Agent/getAgentAllWallets",
       {}

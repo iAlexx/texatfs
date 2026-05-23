@@ -1,4 +1,4 @@
-import type { AxiosInstance } from "axios";
+import type { TexasHttpClient } from "@/lib/texas/texas-http-client";
 import { fetchAllSubAgentStatistics } from "@/lib/texas/fetch-sub-agent-statistics";
 import { fetchAllTexasChildren } from "@/lib/texas/fetch-texas-children";
 import {
@@ -83,7 +83,7 @@ function indexStatisticsByAffiliate(
  * All three calls run in parallel.
  */
 export async function fetchTexasSubAgentsLive(
-  client: AxiosInstance,
+  client: TexasHttpClient,
   ledgerDate: string
 ): Promise<TexasSubAgentsPayload> {
   const [{ records: children }, { response: statsResponse }, transfersMap] =
@@ -147,7 +147,7 @@ function roundAgg(n: number): number {
 }
 
 export async function fetchTexasAgentWallet(
-  client: AxiosInstance,
+  client: TexasHttpClient,
   affiliateId: string,
   currencyCode: string
 ): Promise<import("@/lib/texas/types").TexasAgentWalletResult | null> {
@@ -165,7 +165,7 @@ export async function fetchTexasAgentWallet(
  * getAgentsTransfers in parallel.
  */
 export async function fetchTexasAgentDetailLive(
-  client: AxiosInstance,
+  client: TexasHttpClient,
   affiliateId: string,
   currencyCode: string,
   ledgerDate: string

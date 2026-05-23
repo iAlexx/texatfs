@@ -1,4 +1,4 @@
-import type { AxiosInstance } from "axios";
+import type { TexasHttpClient } from "@/lib/texas/texas-http-client";
 import type {
   SubAgentStatisticsResponse,
   TexasFilterMap,
@@ -33,7 +33,7 @@ const DEFAULT_CURRENCY_FILTER: TexasFilterMap = {
  * Paginated fetch for getSubAgentStatistics — no Puppeteer / session imports.
  */
 export async function fetchAllSubAgentStatistics(
-  client: AxiosInstance,
+  client: TexasHttpClient,
   options: {
     pageSize?: number;
     extraFilter?: TexasFilterMap;

@@ -1,4 +1,4 @@
-import type { AxiosInstance } from "axios";
+import type { TexasHttpClient } from "@/lib/texas/texas-http-client";
 import type {
   TexasChildRecord,
   TexasChildrenResponse,
@@ -21,7 +21,7 @@ function coerceRecordsArray(value: unknown): TexasChildRecord[] {
  * Paginated fetch for POST /Agent/getChildren (direct sub-agents in Texas dashboard).
  */
 export async function fetchAllTexasChildren(
-  client: AxiosInstance,
+  client: TexasHttpClient,
   options: { pageSize?: number } = {}
 ): Promise<{
   records: TexasChildRecord[];

@@ -1,7 +1,7 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { fetchTexasSubAgentsLive, type TexasSubAgentsPayload } from "@/lib/texas/texas-live-sub-agents";
-import { withAuthenticatedTexasClient } from "@/lib/texas/with-authenticated-texas-client";
+import { withAuthenticatedTexasClient, texasJsonResponse } from "@/lib/texas/with-authenticated-texas-client";
 import { serverCacheGet, serverCacheSet } from "@/lib/texas/server-cache";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     if (!body.forceRefresh) {
       const cached = serverCacheGet<TexasSubAgentsPayload>(cacheKey);
       if (cached) {
-        return Response.json({ ...cached, _cached: true }, { status: 200 });
+        return texasJsonResponse({ ...cached, _cached: true }, 200);
       }
     }
 
@@ -44,6 +44,6 @@ export async function POST(request: Request) {
 
     serverCacheSet(cacheKey, payload, SUB_AGENTS_TTL_MS);
 
-    return Response.json(payload, { status: 200 });
+    return texasJsonResponse(payload, 200);
   });
 }
