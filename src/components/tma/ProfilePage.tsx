@@ -1,32 +1,23 @@
-"use client";
+﻿"use client";
 
 import { useMemo, useState } from "react";
 import {
-  CheckCircle2,
   Gift,
   KeyRound,
-  Loader2,
   MessageCircle,
-  Send,
   Shield,
   User,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useTelegram } from "@/components/providers/TelegramProvider";
 import { useHeroData, useRedeemLicense, useReferralData } from "@/hooks/use-tma-api";
 import { useLedgerSession, todayIsoDate } from "@/hooks/use-ledger-api";
-import {
-  useTrackingStatus,
-  useAutoCreateTracking,
-  type AutoCreateResult,
-} from "@/hooks/use-telegram-tracking-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CircularProgress } from "@/components/ui/CircularProgress";
 import { ar } from "@/lib/i18n/ar";
-import { cn } from "@/lib/utils/cn";
 
 function roleLabel(role: string): string {
   if (role === "master") return ar.roleMaster;
@@ -55,16 +46,12 @@ async function fireConfetti() {
 }
 
 export function ProfilePage() {
-  const { displayName, telegramUserId } = useTelegram();
+  const { displayName } = useTelegram();
   const hero     = useHeroData();
   const referral = useReferralData();
   const session  = useLedgerSession(todayIsoDate());
   const redeem   = useRedeemLicense();
   const [licenseKey, setLicenseKey] = useState("");
-
-  const tracking    = useTrackingStatus(telegramUserId);
-  const autoCreate  = useAutoCreateTracking();
-  const [autoResult, setAutoResult] = useState<AutoCreateResult | null>(null);
 
   const user     = hero.data?.user ?? session.data?.user;
   const endDate  = user?.subscription_end_date;
@@ -179,219 +166,78 @@ export function ProfilePage() {
         </Button>
       </section>
 
-      {/* ── Telegram Tracking System ─────────────────────────────────────────── */}
-      <TelegramTrackingSection
-        status={tracking.data}
-        isLoading={tracking.isLoading}
-        isCreating={autoCreate.isPending}
-        createError={
-          autoCreate.error instanceof Error ? autoCreate.error.message : null
-        }
-        autoResult={autoResult}
-        onAutoCreate={() => {
-          autoCreate.mutate(undefined, {
-            onSuccess: (r) => {
-              setAutoResult(r);
-              toast.success("تم إنشاء المجموعة! جاري إنشاء المواضيع في الخلفية…");
-            },
-            onError: (err) => {
-              toast.error(
-                err.message ?? "فشل الإنشاء التلقائي. جرّب الإعداد اليدوي."
-              );
-            },
-          });
-        }}
-      />
+      {/* ── WhatsApp Tracking System ──────────────────────────────────────── */}
+      <WhatsAppTrackingInfo />
     </div>
   );
 }
 
-/* ── TelegramTrackingSection ─────────────────────────────────────────────────── */
-
-function TelegramTrackingSection({
-  status,
-  isLoading,
-  isCreating,
-  createError,
-  autoResult,
-  onAutoCreate,
-}: {
-  status: { active: boolean; chatTitle: string | null; topicCount: number; chatId?: number | null; inviteLink?: string | null } | undefined;
-  isLoading: boolean;
-  isCreating: boolean;
-  createError: string | null;
-  autoResult: AutoCreateResult | null;
-  onAutoCreate: () => void;
-}) {
-  const isActive = status?.active ?? false;
-
-  // Prefer the real t.me/+XXXX invite link; fall back to t.me/c/ internal link
-  const groupLink = (() => {
-    const real = status?.inviteLink ?? autoResult?.inviteLink ?? null;
-    if (real) return real;
-    const id = status?.chatId ?? autoResult?.chatId ?? null;
-    if (!id) return null;
-    return `https://t.me/c/${String(Math.abs(id)).substring(3)}`;
-  })();
+/* ── WhatsAppTrackingInfo ──────────────────────────────────────────────────── */
+/**
+ * Centralised WhatsApp tracking system info card.
+ * No interactive setup — sub-agent ↔ group mappings are administered server-side.
+ */
+function WhatsAppTrackingInfo() {
+  const supportNumber = process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER ?? "";
+  const supportLink = supportNumber
+    ? `https://wa.me/${supportNumber.replace(/[^\d]/g, "")}`
+    : null;
 
   return (
     <motion.section
-      className="mt-4 overflow-hidden rounded-2xl border border-[#279eff]/25 bg-[#0d1525]/80 backdrop-blur-md"
+      className="mt-4 overflow-hidden rounded-2xl border border-emerald-500/25 bg-[#0a1410]/80 backdrop-blur-md"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#279eff]/15 ring-1 ring-[#279eff]/30">
-            <Send className="h-5 w-5 text-[#279eff]" strokeWidth={1.5} />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 ring-1 ring-emerald-500/30">
+            <MessageCircle className="h-5 w-5 text-emerald-400" strokeWidth={1.5} />
           </div>
           <div>
-            <p className="font-semibold text-foreground">نظام التتبع عبر تلغرام</p>
-            <p className="text-[10px] text-steel-500">Texas Funds · Forum Topics</p>
+            <p className="font-semibold text-foreground">نظام التتبع عبر واتساب</p>
+            <p className="text-[10px] text-steel-500">Texas Funds · WhatsApp Tracking</p>
           </div>
         </div>
-
-        {isLoading ? (
-          <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
-            <Loader2 className="inline h-3 w-3 animate-spin" />
-          </span>
-        ) : isActive ? (
-          <span className="flex items-center gap-1.5 rounded-full bg-[#279eff]/15 px-3 py-1 text-[10px] font-semibold text-[#279eff] ring-1 ring-[#279eff]/30">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#279eff] animate-pulse" />
-            مفعّل
-          </span>
-        ) : (
-          <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
-            غير مفعّل
-          </span>
-        )}
+        <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          متصل
+        </span>
       </div>
 
-      {/* ── Body ───────────────────────────────────────────────────────────── */}
-      <div className="px-5 py-4">
-        <AnimatePresence mode="wait">
+      <div className="space-y-3 px-5 py-4">
+        <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-2">
+          <p className="font-semibold text-steel-300 mb-1">كيف يعمل النظام:</p>
+          <p>
+            📱 يتم ربط كل وكيل فرعي بمجموعة واتساب مخصصة، تتم إدارة الربط مركزياً
+            من قِبل فريق الدعم.
+          </p>
+          <p>
+            ✅ اكتب <strong className="text-emerald-400">✅90000</strong> في مجموعة الوكيل لتسجيل
+            مبلغ <em>واصل منك</em>
+          </p>
+          <p>
+            🛑 اكتب <strong className="text-rose-400">🛑45000</strong> في مجموعة الوكيل لتسجيل
+            مبلغ <em>واصل الك</em>
+          </p>
+          <p>
+            ثم رُد على رسالة تأكيد البوت بكتابة{" "}
+            <strong className="text-emerald-400">1</strong> للتأكيد أو{" "}
+            <strong className="text-rose-400">2</strong> للإلغاء.
+          </p>
+        </div>
 
-          {/* ════════════════════ ACTIVE STATE ════════════════════ */}
-          {isActive ? (
-            <motion.div
-              key="active"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="space-y-3"
-            >
-              {/* Activation banner */}
-              <div className="flex items-center gap-3 rounded-xl bg-[#279eff]/10 px-4 py-3 ring-1 ring-[#279eff]/25">
-                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#279eff]" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-[#279eff]">نظام التتبع مفعّل</p>
-                  {status?.chatTitle && (
-                    <p className="mt-0.5 truncate text-xs text-steel-400">{status.chatTitle}</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Stats row */}
-              <div className="flex items-center justify-between rounded-xl bg-obsidian/50 px-4 py-3 ring-1 ring-white/[0.06]">
-                <div className="flex items-center gap-2 text-sm text-steel-400">
-                  <MessageCircle className="h-4 w-4 text-[#279eff]" />
-                  مواضيع الوكلاء
-                </div>
-                <span className="font-mono text-sm font-bold text-[#279eff]">
-                  {status?.topicCount ?? 0}
-                </span>
-              </div>
-
-              {/* Group link */}
-              {groupLink && (
-                <a
-                  href={groupLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(
-                    "flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5",
-                    "border border-[#279eff]/30 bg-[#279eff]/10 text-[#279eff] text-xs font-semibold",
-                    "hover:bg-[#279eff]/20 transition-colors"
-                  )}
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  فتح مجموعة التتبع
-                </a>
-              )}
-
-              {/* Usage hints */}
-              <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-1.5">
-                <p className="font-semibold text-steel-300 mb-2">كيف يعمل النظام:</p>
-                <p>📊 التقرير اليومي الساعة <strong className="text-[#279eff]">4:00 ص</strong> (دمشق) في موضوع كل وكيل</p>
-                <p>💰 <strong className="text-lime">💰 500</strong> في موضوع الوكيل → كاش وصل منك</p>
-                <p>📤 <strong className="text-lime">📤 250</strong> في موضوع الوكيل → كاش واصل إليك</p>
-              </div>
-            </motion.div>
-
-          ) : (
-            /* ════════════════════ INACTIVE STATE ════════════════════ */
-            <motion.div
-              key="setup"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="space-y-4"
-            >
-              <p className="text-xs text-steel-400">
-                فعّل نظام التتبع لاستقبال تقارير يومية دقيقة لكل وكيل فرعي مباشرةً في مجموعة تلغرام خاصة بك.
-              </p>
-
-              {/* ── Primary CTA: Auto-create ──────────────────────────── */}
-              <Button
-                variant="gold"
-                className="w-full gap-2 text-sm"
-                disabled={isCreating}
-                onClick={onAutoCreate}
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>جاري إنشاء المجموعة وتفعيل المواضيع تلقائياً… ⚡</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="h-4 w-4" />
-                    إنشاء مجموعة جاهزة
-                  </>
-                )}
-              </Button>
-
-              {isCreating && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-center text-[10px] text-[#279eff]/80 leading-relaxed"
-                >
-                  يتم إنشاء المجموعة، تفعيل Forum mode، إضافة البوت، وترقيته لمشرف…
-                  <br />
-                  قد يستغرق هذا 5–10 ثوانٍ.
-                </motion.p>
-              )}
-
-              {/* Error message */}
-              {createError && !isCreating && (
-                <motion.p
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="rounded-xl bg-destructive/10 px-3 py-2.5 text-center text-[11px] text-accent-negative ring-1 ring-destructive/20"
-                >
-                  {createError}
-                </motion.p>
-              )}
-
-
-              <p className="text-center text-[10px] text-steel-500">
-                ستتحدث هذه الصفحة تلقائياً بمجرد التفعيل.
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {supportLink && (
+          <a
+            href={supportLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />
+            التواصل مع الدعم لربط مجموعة جديدة
+          </a>
+        )}
       </div>
     </motion.section>
   );

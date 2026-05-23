@@ -11,9 +11,6 @@ const puppeteerExternals = [
   "puppeteer-extra-plugin-user-data-dir",
 ];
 
-/** gramjs (telegram package) uses native Node crypto/net — must not be bundled by webpack. */
-const gramjsExternals = ["telegram", "telegram/sessions", "telegram/extensions"];
-
 const puppeteerTraceIncludes = [
   "./scripts/puppeteer-runtime.cjs",
   "./node_modules/puppeteer-core/**",
@@ -39,8 +36,8 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   experimental: {
-    // Next.js 14 — keeps puppeteer-* and gramjs out of the webpack server bundle
-    serverComponentsExternalPackages: [...puppeteerExternals, ...gramjsExternals],
+    // Next.js 14 — keeps puppeteer-* out of the webpack server bundle
+    serverComponentsExternalPackages: puppeteerExternals,
     outputFileTracingIncludes: {
       "/api/*": puppeteerTraceIncludes,
       "/api/**/*": puppeteerTraceIncludes,
@@ -55,7 +52,6 @@ const nextConfig = {
       config.externals = [
         ...(Array.isArray(prev) ? prev : prev ? [prev] : []),
         ...puppeteerExternals,
-        ...gramjsExternals,
       ];
     }
     return config;
