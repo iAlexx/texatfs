@@ -27,13 +27,27 @@ async function processWebhookPayload(
 ): Promise<void> {
   const privateMsg = normaliseWhatsAppPrivateWebhook(raw);
   if (privateMsg) {
-    const handled = await handleWhatsAppOnboardingPrivate(supabase, privateMsg);
-    if (handled) return;
+    try {
+      const handled = await handleWhatsAppOnboardingPrivate(supabase, privateMsg);
+      if (handled) return;
+    } catch (e) {
+      console.error(
+        "[whatsapp/webhook] onboarding error:",
+        e instanceof Error ? e.message : String(e)
+      );
+    }
   }
 
   const groupMsg = normaliseWhatsAppWebhook(raw);
   if (groupMsg) {
-    await handleWhatsAppCashEvent(supabase, groupMsg);
+    try {
+      await handleWhatsAppCashEvent(supabase, groupMsg);
+    } catch (e) {
+      console.error(
+        "[whatsapp/webhook] cash handler error:",
+        e instanceof Error ? e.message : String(e)
+      );
+    }
   }
 }
 

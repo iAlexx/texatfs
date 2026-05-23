@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
-import { resolveLedgerUser, LedgerAuthError } from "@/lib/ledger/resolve-user";
+import {
+  resolveLedgerUserIdOnly,
+  LedgerAuthError,
+} from "@/lib/ledger/resolve-user";
 import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { sendWhatsAppMessage, WhatsAppError } from "@/lib/whatsapp/client";
+import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import {
   normalizePhoneDigits,
   isValidPhoneDigits,
@@ -12,13 +15,24 @@ import { setUserWhatsAppPhone } from "@/lib/whatsapp/onboarding-users";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+/** Short timeout — no Puppeteer or blocking external calls on this route. */
+export const maxDuration = 15;
 
 const WELCOME_DM = `👋 أهلاً بك في نظام Texas المالي الموحد!
 
 🛡️ لحماية حسابك ومجموعاتك من الحظر، يرجى التكرم بالخطوات التالية فوراً:
 1️⃣ احفظ رقم هذا البوت في جهات اتصال جوالك الآن.
 2️⃣ قم بالرد على هذه الرسالة الخاصة بإرسال هذا الإيموجي تحديداً: 😎  لتأكيد الحفظ وتفعيل النظام تلقائياً.`;
+
+/** Non-blocking welcome DM — failures must never affect the API response. */
+function sendWelcomeDmInBackground(jid: string): void {
+  void sendWhatsAppMessage(jid, WELCOME_DM).catch((err) => {
+    console.error(
+      "[register-phone] welcome DM failed (non-fatal):",
+      err instanceof Error ? err.message : String(err)
+    );
+  });
+}
 
 export async function POST(request: Request) {
   try {
@@ -27,7 +41,7 @@ export async function POST(request: Request) {
       countryCode?: string;
     };
 
-    const { user } = await resolveLedgerUser(body);
+    const { userId } = await resolveLedgerUserIdOnly(body);
 
     const rawPhone = String(body.phone ?? "").trim();
     if (!rawPhone) {
@@ -60,7 +74,7 @@ export async function POST(request: Request) {
       .from("users")
       .select("id")
       .eq("whatsapp_phone", digits)
-      .neq("id", user.id)
+      .neq("id", userId)
       .maybeSingle();
 
     if (phoneOwner) {
@@ -70,25 +84,10 @@ export async function POST(request: Request) {
       );
     }
 
-    await setUserWhatsAppPhone(supabase, user.id, digits, "PENDING_EMOJI");
+    // CRITICAL: persist phone + status before any WhatsApp/Texas/Puppeteer work.
+    await setUserWhatsAppPhone(supabase, userId, digits, "PENDING_EMOJI");
 
-    const jid = phoneToWhatsAppJid(digits);
-    try {
-      await sendWhatsAppMessage(jid, WELCOME_DM);
-    } catch (err) {
-      if (err instanceof WhatsAppError) {
-        console.error("[register-phone] DM failed:", err.message, err.code);
-        return NextResponse.json(
-          {
-            error:
-              "تم حفظ الرقم لكن تعذّر إرسال رسالة واتساب. تحقق من صحة الرقم أو حالة البوابة.",
-            code: err.code,
-          },
-          { status: 502 }
-        );
-      }
-      throw err;
-    }
+    sendWelcomeDmInBackground(phoneToWhatsAppJid(digits));
 
     return NextResponse.json({
       success: true,

@@ -11,9 +11,7 @@ import {
 } from "@/lib/whatsapp/groups-api";
 import { upsertAgentGroup } from "@/lib/whatsapp/agent-groups";
 import { phoneToWhatsAppJid } from "@/lib/whatsapp/phone";
-import { requireUserCredentials } from "@/lib/scraper/resolve-user-credentials";
-import { TexasSessionService } from "@/lib/services/TexasSessionService";
-import { fetchAllTexasChildren } from "@/lib/texas/fetch-texas-children";
+import { fetchTexasChildrenSafe } from "@/lib/whatsapp/texas-children-fetch";
 import type { TexasChildRecord } from "@/lib/texas/types";
 
 /** Compulsory anti-ban pacing between group creations. */
@@ -51,22 +49,10 @@ export async function spawnAgentGroupsForMaster(
   const stats = { created: 0, skipped: 0, failed: 0 };
   const masterJid = phoneToWhatsAppJid(masterPhoneDigits);
 
-  let children: TexasChildRecord[] = [];
-  try {
-    const creds = await requireUserCredentials(supabase, userId);
-    const session = new TexasSessionService();
-    const token = await session.signIn({
-      username: creds.username,
-      password: creds.password,
-    });
-    const client = session.getClientFromToken(token);
-    const result = await fetchAllTexasChildren(client);
-    children = result.records;
-  } catch (err) {
-    console.error(
-      "[group-spawner] Texas sub-agents fetch failed:",
-      err instanceof Error ? err.message : String(err)
-    );
+  const texasFetch = await fetchTexasChildrenSafe(supabase, userId);
+  const children: TexasChildRecord[] = texasFetch.records;
+
+  if (!texasFetch.ok) {
     await sendWhatsAppMessage(
       masterJid,
       "⚠️ تعذّر جلب قائمة الوكلاء من تكساس. يرجى التأكد من ربط حساب Texas ثم إعادة المحاولة من الدعم."

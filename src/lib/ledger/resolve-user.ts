@@ -22,9 +22,8 @@ export interface ResolvedLedgerUser {
   subscriptionActive: boolean;
 }
 
-export async function resolveLedgerUser(
-  input: LedgerAuthInput
-): Promise<ResolvedLedgerUser> {
+/** Resolve Telegram user id from TMA initData — no Supabase or Puppeteer. */
+export function resolveTelegramIdFromInput(input: LedgerAuthInput): number {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const isDev = process.env.NODE_ENV === "development";
   let telegramId = input.telegramUserId ?? null;
@@ -55,6 +54,40 @@ export async function resolveLedgerUser(
     throw new LedgerAuthError("Could not resolve Telegram user", 400);
   }
 
+  return telegramId;
+}
+
+/**
+ * Lightweight auth for WhatsApp registration — one Supabase read, no subscription
+ * check, never touches Texas/Puppeteer.
+ */
+export async function resolveLedgerUserIdOnly(
+  input: LedgerAuthInput
+): Promise<{ userId: string }> {
+  const telegramId = resolveTelegramIdFromInput(input);
+  const supabase = getSupabaseServiceClient();
+
+  const { data: userRow, error: userError } = await supabase
+    .from("users")
+    .select("id")
+    .eq("telegram_id", telegramId)
+    .maybeSingle();
+
+  if (userError) throw userError;
+  if (!userRow) {
+    throw new LedgerAuthError(
+      "User not linked to Telegram account. Send /start to the bot.",
+      404
+    );
+  }
+
+  return { userId: userRow.id as string };
+}
+
+export async function resolveLedgerUser(
+  input: LedgerAuthInput
+): Promise<ResolvedLedgerUser> {
+  const telegramId = resolveTelegramIdFromInput(input);
   const supabase = getSupabaseServiceClient();
   const subscription = new SubscriptionService(supabase);
 

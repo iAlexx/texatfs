@@ -48,14 +48,17 @@ const NAVIGATION_TIMEOUT_MS = 60_000;
 const LOGIN_TIMEOUT_MS = 90_000;
 const BROWSER_PROTOCOL_TIMEOUT_MS = 120_000;
 
+/** Aggressive memory-saving flags for Railway containers (reduces OOM/SIGKILL). */
 const RAILWAY_CHROMIUM_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
-  "--disable-gpu",
-  "--no-zygote",
-  "--disable-software-rasterizer",
+  "--disable-accelerated-2d-canvas",
   "--no-first-run",
+  "--no-zygote",
+  "--single-process",
+  "--disable-gpu",
+  "--disable-software-rasterizer",
   "--disable-blink-features=AutomationControlled",
   "--disable-crash-reporter",
   "--disable-breakpad",
