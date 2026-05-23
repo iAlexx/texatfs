@@ -1,20 +1,18 @@
-import { computeAlFarq, computeAlNihai, roundMoney } from "@/lib/accounting/formulas";
+import { computeAlFarq, computeAlHarqFromAlFarq, computeAlNihai, roundMoney } from "@/lib/accounting/formulas";
 import type { DailyLedger } from "@/lib/supabase/database.types";
 import {
   logFieldMappingDiagnosticsOnce,
-  pickNumeric,
   pickStatsRecordMetrics,
   pickString,
   statsRecordMapping,
-  walletMapping,
 } from "@/lib/texas/field-resolver";
-import type {
-  SubAgentStatisticsRecord,
-  TexasAgentWalletResult,
-} from "@/lib/texas/types";
-import type { TransferSummaryPerAgent } from "@/lib/texas/fetch-agents-transfers";
+import type { SubAgentStatisticsRecord } from "@/lib/texas/types";
 
-/** Display metrics sourced live from Texas API (cumulative panel values). */
+/**
+ * Live sub-agent panel metrics.
+ * Texas portal: tebat, suhoubat, al_farq, al_harq (= al_farq).
+ * Wasel + final balance come from master daily_ledgers / WhatsApp — not Texas transfers.
+ */
 export interface TexasLiveLedgerMetrics {
   tebat: number;
   suhoubat: number;
@@ -35,53 +33,31 @@ export function texasRoleLabel(roleCode: string | undefined): string {
 }
 
 /**
- * Build metrics from Texas API sources.
- *
- * Field mapping:
- *   tebat         = cumulative totalDeposit  (from getSubAgentStatistics)
- *   suhoubat      = cumulative totalWithdraw (from getSubAgentStatistics)
- *   al_farq       = tebat − suhoubat         (computed)
- *   al_harq       = cumulative NGR/burn      (from getSubAgentStatistics)
- *   wasel_eleih   = deposits master→agent    (from getAgentsTransfers type=2)
- *   wasel_menho   = withdraws master←agent   (from getAgentsTransfers type=3)
- *   baqi_qadim    = 0 (no historical snapshot for live sub-agents)
- *   al_nihai      = wallet balance            (from getAgentWalletByAgentId)
- *                   Falls back to formula when wallet unavailable.
+ * Texas portal fields only for live sub-agent rows.
+ * Wasel fields are zero — sourced exclusively from WhatsApp `transactions` on the master ledger.
  */
 export function metricsFromTexasSources(
-  stats: SubAgentStatisticsRecord | null,
-  wallet: TexasAgentWalletResult | null,
-  transfers?: TransferSummaryPerAgent | null
+  stats: SubAgentStatisticsRecord | null
 ): TexasLiveLedgerMetrics {
   const row = (stats ?? {}) as Record<string, unknown>;
 
-  // One-time diagnostic per process lifecycle — logs resolved field keys
   if (stats) logFieldMappingDiagnosticsOnce(row);
 
-  const { totalDeposit: tebat, totalWithdraw: suhoubat, ngr: al_harq } = stats
+  const { totalDeposit: tebat, totalWithdraw: suhoubat } = stats
     ? pickStatsRecordMetrics(row)
-    : { totalDeposit: 0, totalWithdraw: 0, ngr: 0 };
+    : { totalDeposit: 0, totalWithdraw: 0 };
+
   const al_farq = computeAlFarq(tebat, suhoubat);
-
-  const wasel_eleih  = roundMoney(transfers?.depositsToAgent   ?? 0);
-  const wasel_menho  = roundMoney(transfers?.withdrawsFromAgent ?? 0);
-  const baqi_qadim   = 0;
-
-  // al_nihai priority:
-  //   1. getAgentWalletByAgentId result (most precise, called in detail view)
-  //   2. currentWallet / balance from the stats row (confirmed present in per-row records)
-  //   3. Computed formula fallback (al_farq + transfers)
-  const walletRow     = (wallet ?? {}) as Record<string, unknown>;
-  const walletBalance = wallet
-    ? pickNumeric(walletRow, walletMapping.balance)      // uses currentWallet-first mapping
-    : stats
-      ? pickNumeric(row, walletMapping.balance)          // same mapping — currentWallet from stats row
-      : null;
-
-  const al_nihai =
-    walletBalance !== null
-      ? roundMoney(walletBalance)
-      : computeAlNihai({ al_farq, wasel_menho, wasel_eleih, baqi_qadim });
+  const al_harq = computeAlHarqFromAlFarq(al_farq);
+  const wasel_menho = 0;
+  const wasel_eleih = 0;
+  const baqi_qadim = 0;
+  const al_nihai = computeAlNihai({
+    al_farq,
+    wasel_menho,
+    wasel_eleih,
+    baqi_qadim,
+  });
 
   return {
     tebat,
@@ -105,14 +81,14 @@ export function texasMetricsToDailyLedger(
     user_id: affiliateId,
     ledger_date: ledgerDate,
     status: "open",
-    tebat:        metrics.tebat,
-    suhoubat:     metrics.suhoubat,
-    al_farq:      metrics.al_farq,
-    al_harq:      metrics.al_harq,
-    wasel_menho:  metrics.wasel_menho,
-    wasel_eleih:  metrics.wasel_eleih,
-    baqi_qadim:   metrics.baqi_qadim,
-    al_nihai:     metrics.al_nihai,
+    tebat: metrics.tebat,
+    suhoubat: metrics.suhoubat,
+    al_farq: metrics.al_farq,
+    al_harq: metrics.al_harq,
+    wasel_menho: metrics.wasel_menho,
+    wasel_eleih: metrics.wasel_eleih,
+    baqi_qadim: metrics.baqi_qadim,
+    al_nihai: metrics.al_nihai,
     discrepancy_flag: false,
     updated_at: new Date().toISOString(),
   };

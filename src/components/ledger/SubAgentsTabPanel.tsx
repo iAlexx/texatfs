@@ -12,6 +12,7 @@ import type {
 import type { TexasLiveLedgerMetrics } from "@/lib/texas/texas-live-ledger";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { BalanceOrientationLabel } from "@/components/ledger/BalanceOrientationLabel";
 import { cn } from "@/lib/utils/cn";
 
 function roleLabel(texasRole: string): string {
@@ -211,22 +212,31 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 }
 
 function AgentLedgerMiniGrid({ metrics }: { metrics: TexasLiveLedgerMetrics }) {
-  const rows: { label: string; value: number; highlight?: boolean; dimIfZero?: boolean }[] = [
-    { label: ar.tebat,      value: metrics.tebat,        dimIfZero: true },
-    { label: ar.suhoubat,   value: metrics.suhoubat,     dimIfZero: true },
-    { label: ar.alFarq,     value: metrics.al_farq },
-    { label: ar.alHarq,     value: metrics.al_harq,      dimIfZero: true },
-    { label: ar.waselMenho, value: metrics.wasel_menho,  dimIfZero: true },
-    { label: ar.waselEleih, value: metrics.wasel_eleih,  dimIfZero: true },
-    { label: ar.baqiQadim,  value: metrics.baqi_qadim },
-    { label: ar.alNihai,    value: metrics.al_nihai,     highlight: true },
+  const rows: {
+    label: string;
+    value: number;
+    highlight?: boolean;
+    dimIfZero?: boolean;
+    oriented?: boolean;
+    hideOnLive?: boolean;
+  }[] = [
+    { label: ar.tebat, value: metrics.tebat, dimIfZero: true },
+    { label: ar.suhoubat, value: metrics.suhoubat, dimIfZero: true },
+    { label: ar.alFarq, value: metrics.al_farq },
+    { label: ar.alHarq, value: metrics.al_harq, dimIfZero: true },
+    { label: ar.waselMenho, value: metrics.wasel_menho, dimIfZero: true, hideOnLive: true },
+    { label: ar.waselEleih, value: metrics.wasel_eleih, dimIfZero: true, hideOnLive: true },
+    { label: ar.baqiQadim, value: metrics.baqi_qadim, oriented: true },
+    { label: ar.alNihai, value: metrics.al_nihai, highlight: true, oriented: true },
   ];
 
   return (
     <div className="mt-2 grid grid-cols-2 gap-1 rounded-lg border border-white/[0.05] bg-obsidian/40 p-2">
       {rows.map((row) => {
+        if (row.hideOnLive && row.value === 0) return null;
         const isZero = row.value === 0;
-        const display = isZero && row.dimIfZero ? "—" : formatMoney(row.value);
+        const display =
+          row.oriented && !isZero ? null : isZero && row.dimIfZero ? "—" : formatMoney(row.value);
         return (
           <motion.div
             key={row.label}
@@ -235,18 +245,22 @@ function AgentLedgerMiniGrid({ metrics }: { metrics: TexasLiveLedgerMetrics }) {
             animate={{ opacity: 1, y: 0 }}
           >
             <span className="text-steel-500">{row.label}</span>
-            <span
-              className={cn(
-                "font-mono tabular-nums",
-                row.highlight
-                  ? "font-semibold text-gold"
-                  : isZero && row.dimIfZero
-                    ? "text-steel-600"
-                    : "text-steel-300"
-              )}
-            >
-              {display}
-            </span>
+            {row.oriented && !isZero ? (
+              <BalanceOrientationLabel value={row.value} size="sm" />
+            ) : (
+              <span
+                className={cn(
+                  "font-mono tabular-nums",
+                  row.highlight
+                    ? "font-semibold text-gold"
+                    : isZero && row.dimIfZero
+                      ? "text-steel-600"
+                      : "text-steel-300"
+                )}
+              >
+                {display}
+              </span>
+            )}
           </motion.div>
         );
       })}

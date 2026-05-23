@@ -50,5 +50,17 @@ describe("Accounting formulas", () => {
     assert.equal(metrics.tebat, 25000);
     assert.equal(metrics.suhoubat, 12000);
     assert.equal(metrics.al_farq, 13000);
+    assert.equal(metrics.al_harq, metrics.al_farq);
+  });
+
+  it("Al_Harq equals Al_Farq per business rule", () => {
+    const metrics = buildLedgerMetrics({
+      current,
+      previous,
+      wasel_menho: 0,
+      wasel_eleih: 0,
+      baqi_qadim: 0,
+    });
+    assert.equal(metrics.al_harq, metrics.al_farq);
   });
 });

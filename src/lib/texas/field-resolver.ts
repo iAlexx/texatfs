@@ -93,7 +93,7 @@ export function logFieldMappingDiagnosticsOnce(
     { name: "balance / currentWallet", keys: walletMapping.balance },
     { name: "tebat (totalDeposit)", keys: mapping.totalDeposit },
     { name: "suhoubat (totalWithdraw)", keys: mapping.totalWithdraw },
-    { name: "al_harq (ngr)", keys: mapping.ngr },
+    { name: "al_harq (= al_farq)", keys: mapping.totalDeposit },
   ];
 
   for (const { name, keys } of checks) {

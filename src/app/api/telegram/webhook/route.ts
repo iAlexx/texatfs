@@ -1,13 +1,11 @@
-import { NextResponse } from "next/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { processTelegramUpdate } from "@/lib/telegram/process-update";
-import type { TelegramUpdate } from "@/lib/telegram/bot-api";
-
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 /** Puppeteer onboarding can exceed default serverless limits on some hosts. */
 export const maxDuration = 300;
+
+import { NextResponse } from "next/server";
+import type { TelegramUpdate } from "@/lib/telegram/bot-api";
 
 export async function POST(request: Request) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
@@ -25,6 +23,12 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  const [{ getSupabaseServiceClient }, { processTelegramUpdate }] =
+    await Promise.all([
+      import("@/lib/supabase/server"),
+      import("@/lib/telegram/process-update"),
+    ]);
 
   const supabase = getSupabaseServiceClient();
 

@@ -25,7 +25,7 @@ function previousBusinessDate(isoDate: string): string {
  * - Tebat     = Δ Total Deposits
  * - Suhoubat  = Δ Total Withdrawals
  * - Al_Farq   = Tebat − Suhoubat
- * - Al_Harq   = Δ NGR (burn) from Texas API
+ * - Al_Harq   = Al_Farq (net portal delta — same as burn definition)
  * - Baqi_Qadim = previous day's Al_Nihai
  * - Al_Nihai  = Al_Farq + Wasel_Eleih − Wasel_Menho + Baqi_Qadim
  *

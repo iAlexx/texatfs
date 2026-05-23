@@ -31,8 +31,15 @@ export function computeAlFarq(tebat: number, suhoubat: number): number {
 }
 
 /**
- * Al_Harq — NGR / burn for the period.
- * Uses delta of cumulative NGR when a previous snapshot exists; otherwise current NGR.
+ * Al_Harq — burn equals net portal delta (Al_Farq).
+ * Business rule: الحرق هو نفسه الفرق الصافي بين الداخل والخارج.
+ */
+export function computeAlHarqFromAlFarq(al_farq: number): number {
+  return roundMoney(al_farq);
+}
+
+/**
+ * @deprecated NGR delta — superseded by computeAlHarqFromAlFarq for persisted ledgers.
  */
 export function computeAlHarq(
   current: SnapshotTotals,
@@ -98,7 +105,8 @@ export function buildLedgerMetrics(input: {
   const tebat = computeTebat(input.current, input.previous);
   const suhoubat = computeSuhoubat(input.current, input.previous);
   const al_farq = computeAlFarq(tebat, suhoubat);
-  const al_harq = computeAlHarq(input.current, input.previous);
+  /** Texas portal only — burn mirrors net delta, not NGR. */
+  const al_harq = computeAlHarqFromAlFarq(al_farq);
   const al_nihai = computeAlNihai({
     al_farq,
     wasel_menho: input.wasel_menho,

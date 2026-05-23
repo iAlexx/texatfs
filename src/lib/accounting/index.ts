@@ -5,12 +5,20 @@ export {
   buildLedgerMetrics,
   computeAlFarq,
   computeAlHarq,
+  computeAlHarqFromAlFarq,
   computeAlNihai,
   computeSuhoubat,
   computeTebat,
   resolveBaqiQadim,
   roundMoney,
 } from "@/lib/accounting/formulas";
+export {
+  BALANCE_CREDIT_LABEL,
+  BALANCE_DEBIT_LABEL,
+  orientBalance,
+  type BalanceOrientation,
+  type OrientedBalance,
+} from "@/lib/accounting/balance-orientation";
 export type {
   AccountingRepository,
   DailyLedgerMetrics,

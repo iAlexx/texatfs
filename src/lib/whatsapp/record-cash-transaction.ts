@@ -30,8 +30,8 @@ export interface RecordCashPaymentResult {
 function directionToTransactionType(
   direction: CashDirection
 ): "wasel_menho" | "wasel_eleih" {
-  // ✅ outgoing (master → agent) = wasel_menho; 🛑 incoming = wasel_eleih
-  return direction === "out" ? "wasel_menho" : "wasel_eleih";
+  // 🛑 incoming (cashier → master) = wasel_menho | ✅ outgoing (master → agent) = wasel_eleih
+  return direction === "in" ? "wasel_menho" : "wasel_eleih";
 }
 
 async function ensureDailyLedgerId(
