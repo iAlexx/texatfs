@@ -8,15 +8,12 @@ import {
 } from "@/app/utils/token-cache";
 import { cookiesToHeader, fromToken, toToken } from "@/app/utils/token-manager";
 import {
-  buildTexasSignInBody,
   buildTexasSignInUrls,
   getTexasSignInErrorMessage,
   isTexasSignInSuccess,
   logTexasSignInFailure,
   normalizeTexasPassword,
   normalizeTexasUsername,
-  resolveTexasApiBaseUrl,
-  type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
 import {
   isTexasBrowserLoginEnabled,
@@ -83,6 +80,8 @@ export class TexasSessionService {
 
     const baseUrl = getTexasApiBaseUrl();
     let lastError = "unknown";
+
+    // HTTP sign-in uses undici only (see texas-http-sign-in.ts) — never Next.js fetch.
 
     const httpAttempt = await this.tryHttpSignIn(username, password);
     if (httpAttempt.ok) {
@@ -158,62 +157,35 @@ export class TexasSessionService {
     username: string,
     password: string
   ): Promise<HttpSignInAttempt> {
-    const baseUrl = getTexasApiBaseUrl();
-    const bodyJson = JSON.stringify(buildTexasSignInBody(username, password));
-    const urls = buildTexasSignInUrls(baseUrl);
+    const { texasHttpSignInWithWarmUp } = await import(
+      "@/lib/texas/texas-http-sign-in"
+    );
+    const result = await texasHttpSignInWithWarmUp(username, password);
 
-    try {
-      const { texasSignInWithWarmUp, parseTexasJsonBody } = await import(
-        "@/lib/texas/texas-browser-fetch"
-      );
-      const { status, bodyText, jar } = await texasSignInWithWarmUp({
-        signInUrls: urls,
-        body: bodyJson,
-      });
-
-      const data = parseTexasJsonBody<TexasSignInEnvelope>(bodyText);
-      const setCookies = jar.allSetCookieLines();
-      const texasMessage = getTexasSignInErrorMessage(data, status);
-
-      if (
-        status >= 200 &&
-        status < 300 &&
-        isTexasSignInSuccess(data) &&
-        setCookies.length > 0
-      ) {
-        return {
-          ok: true,
-          setCookies,
-          httpStatus: status,
-          texasMessage,
-          bodyPreview: bodyText.slice(0, 300),
-        };
-      }
-
+    if (result.ok) {
       return {
-        ok: false,
-        setCookies,
-        httpStatus: status,
-        texasMessage:
-          status === 403
-            ? "HTTP 403 Forbidden (Cloudflare/WAF)"
-            : texasMessage,
-        bodyPreview: bodyText || JSON.stringify(data ?? ""),
-      };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      console.error("[TexasSessionService] HTTP signIn transport error", {
-        username,
-        error: message,
-      });
-      return {
-        ok: false,
-        setCookies: [],
-        httpStatus: 0,
-        texasMessage: message,
-        bodyPreview: "",
+        ok: true,
+        setCookies: result.setCookies,
+        httpStatus: result.httpStatus,
+        texasMessage: result.texasMessage,
+        bodyPreview: result.bodyPreview,
       };
     }
+
+    if (result.httpStatus === 0) {
+      console.error("[TexasSessionService] HTTP signIn transport error", {
+        username,
+        error: result.texasMessage,
+      });
+    }
+
+    return {
+      ok: false,
+      setCookies: result.setCookies,
+      httpStatus: result.httpStatus,
+      texasMessage: result.texasMessage,
+      bodyPreview: result.bodyPreview,
+    };
   }
 
   async getClient(credentials: TexasCredentials): Promise<AxiosInstance> {
