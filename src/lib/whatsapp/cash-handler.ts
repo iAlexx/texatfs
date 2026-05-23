@@ -11,7 +11,7 @@
  *
  *  Phase 2 — Confirmation
  *    Member replies to the confirmation message with body "1" or "2".
- *      • "1" → write to cash_payments + reply with final status
+ *      • "1" → write to transactions (ledger) + cash_payments audit + reply
  *               ("✅ واصل منك ..." / "🛑 واصل الك ...").
  *      • "2" → reply "❌ تم إلغاء العملية".
  *    In either case, the pending row is deleted.
@@ -29,6 +29,8 @@ import {
   type CashDirection,
 } from "@/lib/whatsapp/pending";
 import type { WhatsAppIncomingMessage } from "@/lib/whatsapp/webhook-types";
+import { recordWhatsAppCashPayment } from "@/lib/whatsapp/record-cash-transaction";
+import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 
 // ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -213,28 +215,24 @@ async function handleConfirmationReply(
   // ── Confirm ────────────────────────────────────────────────────────────────
   const direction = pending.direction;
   const amount    = Number(pending.amount);
-  const today     = new Date().toISOString().slice(0, 10);
+  const paymentDate = resolveLedgerDate();
 
-  // Idempotent on (message_id) — trigger msg id is unique per group.
   const dedupeKey = `wa-${pending.group_id}-${pending.trigger_msg_id}`;
+  const rawMessage = `${direction === "out" ? "✅" : "🛑"}${amount}`;
 
-  const { error: dbErr } = await supabase.from("cash_payments").upsert(
-    {
-      user_id:      pending.user_id,
-      group_jid:    pending.group_id,
-      group_name:   pending.email,
-      message_id:   dedupeKey,
-      direction,
-      amount,
-      raw_message:  `${direction === "out" ? "✅" : "🛑"}${amount}`,
-      sender_jid:   msg.senderId ?? null,
-      payment_date: today,
-    },
-    { onConflict: "message_id" }
-  );
+  const recorded = await recordWhatsAppCashPayment(supabase, {
+    userId: pending.user_id,
+    groupJid: pending.group_id,
+    groupName: pending.email,
+    dedupeKey,
+    direction,
+    amount,
+    rawMessage,
+    senderJid: msg.senderId ?? null,
+    paymentDate,
+  });
 
-  if (dbErr) {
-    console.error("[whatsapp-cash] DB upsert failed:", dbErr.message);
+  if (!recorded.ok) {
     await safeReply(
       msg.groupId,
       msg.messageId,

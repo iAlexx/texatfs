@@ -252,14 +252,16 @@ function WhatsAppTrackingInfo({
       <div className="space-y-4 px-5 py-4">
         <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-2">
           <p className="font-semibold text-steel-300 mb-1">كيف يعمل النظام:</p>
-          <p>📱 سجّل رقم واتسابك، ثم أكّد عبر إيموجي في المحادثة الخاصة مع البوت.</p>
+          <p>📱 سجّل رقم واتسابك، ثم أرسل <strong className="text-amber-400">😎</strong> في المحادثة الخاصة مع بوت واتساب.</p>
           <p>
             ✅ في مجموعة كل وكيل: <strong className="text-emerald-400">✅90000</strong>{" "}
-            (واصل منك) — رُد <strong className="text-emerald-400">1</strong> للتأكيد
+            (واصل منك) — رُد <strong className="text-emerald-400">1</strong> للتأكيد أو{" "}
+            <strong className="text-steel-400">2</strong> للإلغاء
           </p>
           <p>
             🛑 في مجموعة كل وكيل: <strong className="text-rose-400">🛑45000</strong>{" "}
-            (واصل الك) — رُد <strong className="text-rose-400">2</strong> للإلغاء
+            (واصل الك) — رُد <strong className="text-rose-400">1</strong> للتأكيد أو{" "}
+            <strong className="text-steel-400">2</strong> للإلغاء
           </p>
         </div>
 
@@ -284,8 +286,9 @@ function WhatsAppTrackingInfo({
           <div className="rounded-xl bg-amber-500/10 px-4 py-3 ring-1 ring-amber-500/25 text-[11px] text-amber-200/90 leading-relaxed">
             <p className="font-semibold text-amber-400 mb-1">📩 تحقق من واتساب الآن</p>
             <p>
-              أرسلنا لك رسالة خاصة. احفظ رقم البوت في جهات الاتصال، ثم رُد على الرسالة
-              بأي إيموجي أو سمايل لتفعيل النظام وإنشاء مجموعات الوكلاء تلقائياً.
+              أرسلنا لك رسالة خاصة على واتساب. احفظ رقم البوت في جهات الاتصال، ثم رُد
+              على الرسالة بإرسال <strong className="text-amber-400">😎</strong> فقط
+              لتفعيل النظام وإنشاء مجموعات الوكلاء تلقائياً.
             </p>
           </div>
         )}

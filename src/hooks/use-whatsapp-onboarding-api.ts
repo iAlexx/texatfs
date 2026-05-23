@@ -17,12 +17,15 @@ export interface RegisterPhoneResult {
 }
 
 async function fetchOnboardingStatus(
-  telegramId: number
+  initData: string,
+  telegramUserId: number | null | undefined
 ): Promise<WhatsAppOnboardingStatus> {
-  const res = await fetch(
-    `/api/whatsapp/onboarding-status?telegram_id=${telegramId}`,
-    { cache: "no-store" }
-  );
+  const res = await fetch("/api/whatsapp/onboarding-status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ initData, telegramUserId }),
+    cache: "no-store",
+  });
   const data = (await res.json()) as WhatsAppOnboardingStatus & { error?: string };
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
   return data;
@@ -31,10 +34,12 @@ async function fetchOnboardingStatus(
 export function useWhatsAppOnboardingStatus(
   telegramId: number | null | undefined
 ) {
+  const { initData, isReady, canAuthenticate } = useTelegram();
+
   return useQuery<WhatsAppOnboardingStatus>({
     queryKey: ["whatsapp", "onboarding", "status", telegramId],
-    enabled: !!telegramId,
-    queryFn: () => fetchOnboardingStatus(telegramId!),
+    enabled: isReady && canAuthenticate && !!telegramId,
+    queryFn: () => fetchOnboardingStatus(initData, telegramId),
     refetchInterval: (q) => {
       const s = q.state.data?.onboardingStatus;
       if (s === "PENDING_EMOJI") return 5_000;
