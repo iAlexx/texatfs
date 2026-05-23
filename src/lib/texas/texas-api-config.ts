@@ -281,7 +281,7 @@ export function normalizeTexasUsername(value: string): string {
   let u = value.trim();
   const mdLink = /^\[([^\]]+)\]\(mailto:[^)]+\)$/i.exec(u);
   if (mdLink) u = mdLink[1];
-  return u.trim();
+  return u.trim().toLowerCase();
 }
 
 export function normalizeTexasPassword(value: string): string {

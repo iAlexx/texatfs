@@ -3,6 +3,7 @@ import type { DailyLedger } from "@/lib/supabase/database.types";
 import {
   logFieldMappingDiagnosticsOnce,
   pickNumeric,
+  pickStatsRecordMetrics,
   pickString,
   statsRecordMapping,
   walletMapping,
@@ -57,10 +58,10 @@ export function metricsFromTexasSources(
   // One-time diagnostic per process lifecycle — logs resolved field keys
   if (stats) logFieldMappingDiagnosticsOnce(row);
 
-  const tebat    = stats ? pickNumeric(row, statsRecordMapping.totalDeposit)  : 0;
-  const suhoubat = stats ? pickNumeric(row, statsRecordMapping.totalWithdraw) : 0;
-  const al_harq  = stats ? pickNumeric(row, statsRecordMapping.ngr)           : 0;
-  const al_farq  = computeAlFarq(tebat, suhoubat);
+  const { totalDeposit: tebat, totalWithdraw: suhoubat, ngr: al_harq } = stats
+    ? pickStatsRecordMetrics(row)
+    : { totalDeposit: 0, totalWithdraw: 0, ngr: 0 };
+  const al_farq = computeAlFarq(tebat, suhoubat);
 
   const wasel_eleih  = roundMoney(transfers?.depositsToAgent   ?? 0);
   const wasel_menho  = roundMoney(transfers?.withdrawsFromAgent ?? 0);
@@ -78,7 +79,7 @@ export function metricsFromTexasSources(
       : null;
 
   const al_nihai =
-    walletBalance !== null && walletBalance !== 0
+    walletBalance !== null
       ? roundMoney(walletBalance)
       : computeAlNihai({ al_farq, wasel_menho, wasel_eleih, baqi_qadim });
 

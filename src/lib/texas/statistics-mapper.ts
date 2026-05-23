@@ -1,5 +1,6 @@
 import {
   pickNumeric,
+  pickStatsRecordMetrics,
   pickString,
   statsRecordMapping,
   statsTotalsMapping,
@@ -14,12 +15,7 @@ import type {
 } from "@/lib/texas/types";
 
 function rowToMetrics(row: SubAgentStatisticsRecord) {
-  const bag = row as Record<string, unknown>;
-  return {
-    totalDeposit: pickNumeric(bag, statsRecordMapping.totalDeposit),
-    totalWithdraw: pickNumeric(bag, statsRecordMapping.totalWithdraw),
-    ngr: pickNumeric(bag, statsRecordMapping.ngr),
-  };
+  return pickStatsRecordMetrics(row as Record<string, unknown>);
 }
 
 function sumRecords(records: SubAgentStatisticsRecord[]) {

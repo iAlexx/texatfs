@@ -8,8 +8,16 @@ interface CacheEntry {
 const TTL_MS = 55 * 60 * 1000;
 const tokenStore = new Map<string, CacheEntry>();
 
-function cacheKey(username: string, password: string): string {
+/** Stable cache / singleflight key — username must already be normalized. */
+export function texasSessionCacheKey(
+  username: string,
+  password: string
+): string {
   return `${username}::${password}`;
+}
+
+function cacheKey(username: string, password: string): string {
+  return texasSessionCacheKey(username, password);
 }
 
 export function storeTexasSession(

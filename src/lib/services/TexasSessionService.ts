@@ -1,9 +1,10 @@
-import type { AxiosInstance } from "axios";
+import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import { getApiClientFromToken, getTexasApiBaseUrl } from "@/app/utils/api-client";
 import {
   findValidTokenOf,
   invalidateToken,
   storeTexasSession,
+  texasSessionCacheKey,
 } from "@/app/utils/token-cache";
 import { cookiesToHeader, fromToken, toToken } from "@/app/utils/token-manager";
 import {
@@ -21,6 +22,7 @@ import {
   isTexasBrowserLoginEnabled,
   isTexasBrowserLoginFallbackEnabled,
 } from "@/lib/texas/texas-browser-config";
+import { coalesceTexasSignIn } from "@/lib/texas/texas-sign-in-flight";
 import type { TexasCredentials } from "@/lib/texas/types";
 
 interface TexasApiEnvelope<T = unknown> {
@@ -28,8 +30,26 @@ interface TexasApiEnvelope<T = unknown> {
   result?: T;
 }
 
+interface HttpSignInAttempt {
+  ok: boolean;
+  setCookies: string[];
+  httpStatus: number;
+  texasMessage: string;
+  bodyPreview: string;
+}
+
+type RetriableAxiosConfig = InternalAxiosRequestConfig & {
+  __texasSessionRetried?: boolean;
+};
+
 /**
- * Multi-tenant Texas authentication via Puppeteer (Railway) with optional HTTP fallback.
+ * Multi-tenant Texas authentication.
+ *
+ * Policy:
+ *  • Valid cached session (55 min) → HTTP only, no Chromium.
+ *  • Cache miss → HTTP sign-in first; Puppeteer only if HTTP fails.
+ *  • Concurrent sign-ins for the same user → singleflight (one launch).
+ *  • HTTP 401 on API calls → invalidate cache, re-auth (HTTP first), retry once.
  */
 export class TexasSessionService {
   async signIn(credentials: TexasCredentials): Promise<string> {
@@ -38,20 +58,59 @@ export class TexasSessionService {
 
     const cached = findValidTokenOf(username, password, new Date());
     if (cached) {
-      console.info("[texas-auth] session from cache", { username });
+      console.info("[texas-auth] session from cache (HTTP-only mode)", {
+        username,
+      });
       return cached;
     }
-    console.info("[texas-auth] fresh sign-in required (cache miss)", { username });
+
+    const flightKey = texasSessionCacheKey(username, password);
+    return coalesceTexasSignIn(flightKey, () =>
+      this.signInFresh(username, password)
+    );
+  }
+
+  /**
+   * HTTP-first fresh sign-in. Puppeteer is the last resort on cache miss.
+   */
+  private async signInFresh(
+    username: string,
+    password: string
+  ): Promise<string> {
+    console.info("[texas-auth] fresh sign-in required (cache miss)", {
+      username,
+    });
 
     const baseUrl = getTexasApiBaseUrl();
     let lastError = "unknown";
+
+    const httpAttempt = await this.tryHttpSignIn(username, password);
+    if (httpAttempt.ok) {
+      console.info("[TexasSessionService] signIn success via HTTP", {
+        username,
+        cookieCount: httpAttempt.setCookies.length,
+      });
+      return storeTexasSession(username, password, httpAttempt.setCookies);
+    }
+
+    lastError = `HTTP ${httpAttempt.httpStatus}, texas=${httpAttempt.texasMessage}, cookies=${httpAttempt.setCookies.length}`;
+    logTexasSignInFailure({
+      username,
+      url: buildTexasSignInUrls(baseUrl)[0] ?? baseUrl,
+      httpStatus: httpAttempt.httpStatus,
+      cookieCount: httpAttempt.setCookies.length,
+      texasMessage: httpAttempt.texasMessage,
+      bodyPreview: httpAttempt.bodyPreview,
+    });
 
     if (isTexasBrowserLoginEnabled()) {
       try {
         const { texasBrowserSignIn } = await import(
           "@/lib/texas/texas-puppeteer-login"
         );
-        console.info("[TexasSessionService] Puppeteer signIn start", { username });
+        console.info("[TexasSessionService] HTTP failed — Puppeteer signIn", {
+          username,
+        });
         const browserResult = await texasBrowserSignIn({ username, password });
         const { setCookies, signInData, httpStatus } = browserResult;
 
@@ -88,13 +147,18 @@ export class TexasSessionService {
           `Texas sign-in failed for ${username}: ${lastError} (api=${baseUrl})`
         );
       }
-
-      console.warn("[TexasSessionService] falling back to HTTP warm-up", {
-        username,
-        lastError,
-      });
     }
 
+    throw new Error(
+      `Texas sign-in failed for ${username}: ${lastError} (api=${baseUrl})`
+    );
+  }
+
+  private async tryHttpSignIn(
+    username: string,
+    password: string
+  ): Promise<HttpSignInAttempt> {
+    const baseUrl = getTexasApiBaseUrl();
     const bodyJson = JSON.stringify(buildTexasSignInBody(username, password));
     const urls = buildTexasSignInUrls(baseUrl);
 
@@ -109,6 +173,7 @@ export class TexasSessionService {
 
       const data = parseTexasJsonBody<TexasSignInEnvelope>(bodyText);
       const setCookies = jar.allSetCookieLines();
+      const texasMessage = getTexasSignInErrorMessage(data, status);
 
       if (
         status >= 200 &&
@@ -116,44 +181,79 @@ export class TexasSessionService {
         isTexasSignInSuccess(data) &&
         setCookies.length > 0
       ) {
-        console.info("[TexasSessionService] signIn success after HTTP warm-up", {
-          username,
-          cookieCount: setCookies.length,
-        });
-        return storeTexasSession(username, password, setCookies);
+        return {
+          ok: true,
+          setCookies,
+          httpStatus: status,
+          texasMessage,
+          bodyPreview: bodyText.slice(0, 300),
+        };
       }
 
-      const texasMessage = getTexasSignInErrorMessage(data, status);
-      lastError = `HTTP ${status}, texas=${texasMessage}, cookies=${setCookies.length}`;
-
-      logTexasSignInFailure({
-        username,
-        url: urls[0] ?? baseUrl,
+      return {
+        ok: false,
+        setCookies,
         httpStatus: status,
-        cookieCount: setCookies.length,
-        texasMessage,
+        texasMessage:
+          status === 403
+            ? "HTTP 403 Forbidden (Cloudflare/WAF)"
+            : texasMessage,
         bodyPreview: bodyText || JSON.stringify(data ?? ""),
-      });
-
-      if (status === 403) {
-        lastError = `HTTP 403 Forbidden (Cloudflare/WAF)`;
-      }
+      };
     } catch (e) {
-      lastError = e instanceof Error ? e.message : String(e);
-      console.error("[TexasSessionService] signIn transport error", {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[TexasSessionService] HTTP signIn transport error", {
         username,
-        error: lastError,
+        error: message,
       });
+      return {
+        ok: false,
+        setCookies: [],
+        httpStatus: 0,
+        texasMessage: message,
+        bodyPreview: "",
+      };
     }
-
-    throw new Error(
-      `Texas sign-in failed for ${username}: ${lastError} (api=${baseUrl})`
-    );
   }
 
   async getClient(credentials: TexasCredentials): Promise<AxiosInstance> {
+    const username = normalizeTexasUsername(credentials.username);
+    const password = normalizeTexasPassword(credentials.password);
     const token = await this.signIn(credentials);
-    return getApiClientFromToken(token);
+    const client = getApiClientFromToken(token);
+
+    client.interceptors.response.use(
+      (response) => response,
+      async (error: unknown) => {
+        const axiosErr = error as {
+          response?: { status?: number };
+          config?: RetriableAxiosConfig;
+        };
+        const status = axiosErr.response?.status;
+        const config = axiosErr.config;
+
+        if (
+          status === 401 &&
+          config &&
+          !config.__texasSessionRetried
+        ) {
+          console.warn("[texas-auth] HTTP 401 — invalidating session", {
+            username,
+          });
+          invalidateToken(username, password);
+          config.__texasSessionRetried = true;
+
+          const newToken = await this.signIn(credentials);
+          config.headers = config.headers ?? {};
+          config.headers.Cookie = cookiesToHeader(fromToken(newToken));
+          return client.request(config);
+        }
+
+        return Promise.reject(error);
+      }
+    );
+
+    return client;
   }
 
   getClientFromToken(token: string): AxiosInstance {
@@ -176,59 +276,27 @@ export class TexasSessionService {
     const username = normalizeTexasUsername(credentials.username);
     const password = normalizeTexasPassword(credentials.password);
 
-    const token = await this.signIn({ username, password });
+    await this.signIn({ username, password });
 
-    // Puppeteer already intercepted POST /User/signIn (200) + session cookies.
-    // Node fetch to Texas API is often blocked by Cloudflare ("fetch failed") even when browser login works.
+    // Puppeteer sign-in already validated the dashboard session; axios wallet
+    // probes are often blocked by Cloudflare on Railway even with valid cookies.
     if (isTexasBrowserLoginEnabled()) {
       console.info(
-        "[TexasSessionService] verifyAgentAccount: browser sign-in OK, skipping HTTP wallet probe",
-        { username, tokenBytes: token.length }
+        "[TexasSessionService] verifyAgentAccount: sign-in OK, skipping HTTP wallet probe",
+        { username }
       );
       return;
     }
 
-    const { TexasCookieJar, texasBrowserFetch, parseTexasJsonBody } =
-      await import("@/lib/texas/texas-browser-fetch");
-    const jar = new TexasCookieJar();
-    const cookieHeader = cookiesToHeader(fromToken(token));
+    const client = await this.getClient({ username, password });
 
-    const base = resolveTexasApiBaseUrl().replace(/\/$/, "");
-    const walletsUrl = `${base}/Agent/getAgentAllWallets`;
-
-    console.info("[fetch-trace] verifyAgentAccount wallet probe", {
-      url: walletsUrl,
-      username,
-    });
-
-    const result = await texasBrowserFetch({
-      url: walletsUrl,
-      method: "POST",
-      body: "{}",
-      jar,
-      cookieHeader,
-      skipWarmUp: true,
-    });
-
-    const data = parseTexasJsonBody<TexasApiEnvelope<unknown[]>>(result.bodyText);
-
-    if (result.status === 401 || result.status === 403) {
-      console.error("[TexasSessionService] wallets rejected", {
-        username,
-        httpStatus: result.status,
-        bodyPreview: result.bodyText.slice(0, 300),
-      });
-      throw new Error(
-        `Texas sign-in failed: wallet API returned HTTP ${result.status} (session not accepted)`
-      );
-    }
+    const { data } = await client.post<TexasApiEnvelope<unknown[]>>(
+      "/Agent/getAgentAllWallets",
+      {}
+    );
 
     if (!data?.status) {
-      console.error("[TexasSessionService] wallets invalid", {
-        username,
-        httpStatus: result.status,
-        bodyPreview: result.bodyText.slice(0, 300),
-      });
+      console.error("[TexasSessionService] wallets invalid", { username });
       throw new Error(
         "Texas sign-in failed: agent wallet access denied (not an active agent account)"
       );

@@ -42,11 +42,10 @@ async function fetchTexasChildrenInner(
 ): Promise<TexasChildRecord[]> {
   const creds = await requireUserCredentials(supabase, userId);
   const session = new TexasSessionService();
-  const token = await session.signIn({
+  const client = await session.getClient({
     username: creds.username,
     password: creds.password,
   });
-  const client = session.getClientFromToken(token);
   const result = await fetchAllTexasChildren(client);
   return result.records;
 }

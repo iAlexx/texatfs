@@ -38,11 +38,10 @@ export async function withAuthenticatedTexasClient(
 
     const creds = await requireUserCredentials(supabase, user.id);
     const session = new TexasSessionService();
-    const token = await session.signIn({
+    const client = await session.getClient({
       username: creds.username,
       password: creds.password,
     });
-    const client = session.getClientFromToken(token);
 
     return await run({ user, client });
   } catch (e) {

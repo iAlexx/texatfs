@@ -14,6 +14,13 @@ export interface TexasFieldMappingConfig {
       totalWithdraw: readonly string[];
       ngr: readonly string[];
     };
+    /** Per-row keys from getSubAgentStatistics sub-agent tree grid. */
+    subAgentRecord: {
+      affiliateId: readonly string[];
+      totalDeposit: readonly string[];
+      totalWithdraw: readonly string[];
+      ngr: readonly string[];
+    };
     totalsFooter: {
       totalDeposit: readonly string[];
       totalWithdraw: readonly string[];
@@ -24,30 +31,27 @@ export interface TexasFieldMappingConfig {
 
 /**
  * Field-name candidates ordered by likelihood.
- * Live API validation (2026-05-22): getSubAgentStatistics per-row keys confirmed:
- *   affiliateId, currentWallet — present
- *   totalDeposit, totalWithdraw, ngr — NOT in per-row records (only in result.total)
- * Update the first entry of each array when a live key is confirmed.
+ *
+ * Live API (2026-05-23): getSubAgentStatistics per-row keys include
+ * left, right, currentWallet, balance, credit, creditLine, bonus — but NOT
+ * totalDeposit / totalWithdraw / ngr (those appear in result.total for masters).
  */
 export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
   wallet: {
-    // "currentWallet" is confirmed in both getSubAgentStatistics rows AND
-    // getAgentWalletByAgentId result. Always try it first.
     balance: [
       "currentWallet",
       "balance",
       "availableWallet",
+      "availability",
+      "credit",
       "walletBalance",
       "current_wallet",
-      "availability",
     ],
     currencyCode: ["currencyCode", "mainCurrency", "currency"],
   },
   statistics: {
     record: {
       affiliateId: ["affiliateId", "agentId", "id"],
-      // These fields may appear in per-row records with various naming conventions.
-      // If none match, pickNumeric returns 0 (safe default).
       totalDeposit: [
         "totalDeposit",
         "depositsTotal",
@@ -84,6 +88,46 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "ggr",
         "netProfit",
         "revenue",
+      ],
+    },
+    subAgentRecord: {
+      affiliateId: ["affiliateId", "agentId", "id"],
+      // Tree-grid columns confirmed on live sub-agent rows
+      totalDeposit: [
+        "left",
+        "credit",
+        "totalDeposit",
+        "depositsTotal",
+        "depositTotal",
+        "total_deposit",
+        "deposits",
+        "totalBet",
+        "betTotal",
+        "deposit",
+        "chargeIn",
+      ],
+      totalWithdraw: [
+        "right",
+        "totalWithdraw",
+        "withdrawTotal",
+        "withdrawalsTotal",
+        "total_withdraw",
+        "withdrawals",
+        "totalCashout",
+        "cashout",
+        "withdraw",
+        "chargeOut",
+      ],
+      ngr: [
+        "bonus",
+        "creditLine",
+        "ngr",
+        "NGR",
+        "netGamingRevenue",
+        "burn",
+        "netRevenue",
+        "GGR",
+        "ggr",
       ],
     },
     totalsFooter: {
