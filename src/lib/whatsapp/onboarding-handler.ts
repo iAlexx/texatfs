@@ -1,5 +1,5 @@
 /**
- * Private-chat onboarding: emoji handshake → verified → safe group spawn.
+ * Private-chat onboarding: strict 😎 handshake → verified → safe group spawn.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
@@ -11,17 +11,22 @@ import {
 import { spawnAgentGroupsForMaster } from "@/lib/whatsapp/group-spawner";
 import type { WhatsAppPrivateMessage } from "@/lib/whatsapp/webhook-types";
 
-const EMOJI_OR_SMILE_RE =
-  /[\p{Extended_Pictographic}\u{1F300}-\u{1FAFF}]/u;
+/** U+1F60E — must match exactly what we ask users to send in the welcome DM. */
+const VERIFY_EMOJI = "\u{1F60E}";
 
-const SMILE_TEXT_RE = /(?:^|[\s])(?:[:;=][-~]?[)DdpP]|:\)|:-\)|;-\)|:\]|:\(|:\(|xD|XD)(?:[\s]|$)/i;
+const REMINDER_DM =
+  "⚠️ عذراً يا غالي، يرجى إرسال  ( 😎 ) فقط لتفعيل النظام وبدء إنشاء المجموعات تلقائياً.";
 
-function isEmojiHandshake(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  if (EMOJI_OR_SMILE_RE.test(t)) return true;
-  if (SMILE_TEXT_RE.test(t)) return true;
-  return false;
+/**
+ * True only when the payload contains the sunglasses emoji (😎).
+ * Handles optional whitespace and surrounding text from WhatsApp clients.
+ */
+function containsVerifyEmoji(text: string): boolean {
+  if (!text) return false;
+  // Direct match (most common: user sends only 😎)
+  if (text.trim() === VERIFY_EMOJI) return true;
+  // Substring match (e.g. reply context or rare multi-part payloads)
+  return text.includes(VERIFY_EMOJI);
 }
 
 /**
@@ -42,8 +47,14 @@ export async function handleWhatsAppOnboardingPrivate(
     return false;
   }
 
-  if (!isEmojiHandshake(msg.text)) {
-    return false;
+  if (!containsVerifyEmoji(msg.text)) {
+    await sendWhatsAppMessage(msg.chatId, REMINDER_DM).catch((e) => {
+      console.error(
+        "[onboarding] reminder reply failed:",
+        e instanceof Error ? e.message : String(e)
+      );
+    });
+    return true;
   }
 
   await setOnboardingStatus(supabase, user.id, "VERIFIED_COMPLETED");
