@@ -5,7 +5,6 @@
  * mixing dispatcher, cache, or Headers cloning). All requests use undici with
  * plain Record<string, string> headers.
  */
-import { fetch as undiciFetch } from "undici";
 import type { Dispatcher } from "undici";
 import {
   buildTexasSignInBody,
@@ -21,6 +20,7 @@ import {
   type TexasSignInEnvelope,
 } from "@/lib/texas/texas-api-config";
 import { getTexasFetchDispatcher } from "@/lib/texas/texas-proxy";
+import { texasUndiciFetch } from "@/lib/texas/undici-fetch";
 
 export interface TexasHttpSignInResult {
   ok: boolean;
@@ -89,7 +89,7 @@ async function plainHttpRequest(
   body: string | undefined,
   dispatcher: Dispatcher | undefined
 ): Promise<{ status: number; bodyText: string; setCookies: string[] }> {
-  const response = await undiciFetch(url, {
+  const response = await texasUndiciFetch(url, {
     method,
     headers,
     body: method === "POST" ? body : undefined,

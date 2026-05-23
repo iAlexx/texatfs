@@ -1,7 +1,6 @@
 /**
  * Browser-mimicking HTTP for Texas agent API with full session warm-up flow.
  */
-import { fetch as undiciFetch } from "undici";
 import {
   buildTexasApiPostHeaders,
   buildTexasLandingHeaders,
@@ -15,6 +14,7 @@ import {
   getTexasFetchDispatcher,
   logProxyCheck,
 } from "@/lib/texas/texas-proxy";
+import { texasUndiciFetch } from "@/lib/texas/undici-fetch";
 import { logFetchFailure } from "@/lib/utils/fetch-trace";
 
 const MAX_ATTEMPTS = 3;
@@ -95,7 +95,9 @@ async function texasRawFetch(
   await throttleTexasRequests();
 
   const dispatcher = await getTexasFetchDispatcher();
-  const fetchImpl = dispatcher ? undiciFetch : globalThis.fetch.bind(globalThis);
+  const fetchImpl = dispatcher
+    ? texasUndiciFetch
+    : globalThis.fetch.bind(globalThis);
   const via = dispatcher ? "undici+proxy" : "global-fetch";
 
   console.info("[fetch-trace] texasRawFetch start", {

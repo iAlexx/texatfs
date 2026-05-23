@@ -11,6 +11,13 @@ const puppeteerExternals = [
   "puppeteer-extra-plugin-user-data-dir",
 ];
 
+/** Node-native HTTP stacks — must not be webpack-bundled (markAsUncloneable crash). */
+const serverNodeExternals = [
+  ...puppeteerExternals,
+  "undici",
+  "https-proxy-agent",
+];
+
 const puppeteerTraceIncludes = [
   "./scripts/puppeteer-runtime.cjs",
   "./node_modules/puppeteer-core/**",
@@ -37,7 +44,7 @@ const nextConfig = {
   },
   experimental: {
     // Next.js 14 — keeps puppeteer-* out of the webpack server bundle
-    serverComponentsExternalPackages: puppeteerExternals,
+    serverComponentsExternalPackages: serverNodeExternals,
     outputFileTracingIncludes: {
       "/api/*": puppeteerTraceIncludes,
       "/api/**/*": puppeteerTraceIncludes,
@@ -51,7 +58,7 @@ const nextConfig = {
       const prev = config.externals;
       config.externals = [
         ...(Array.isArray(prev) ? prev : prev ? [prev] : []),
-        ...puppeteerExternals,
+        ...serverNodeExternals,
       ];
     }
     return config;

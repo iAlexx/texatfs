@@ -1,5 +1,4 @@
 import { cookiesToHeader, fromToken, toToken } from "@/app/utils/token-manager";
-import { getTexasApiBaseUrl } from "@/app/utils/api-client";
 import {
   findValidTokenOf,
   invalidateToken,
@@ -13,6 +12,7 @@ import {
   logTexasSignInFailure,
   normalizeTexasPassword,
   normalizeTexasUsername,
+  resolveTexasApiBaseUrl,
 } from "@/lib/texas/texas-api-config";
 import {
   isTexasBrowserLoginEnabled,
@@ -76,7 +76,7 @@ export class TexasSessionService {
       username,
     });
 
-    const baseUrl = getTexasApiBaseUrl();
+    const baseUrl = resolveTexasApiBaseUrl();
     let lastError = "unknown";
 
     const httpAttempt = await this.tryHttpSignIn(username, password);

@@ -5,7 +5,6 @@
  * triggering `util.markAsUncloneable is not a function`. All Texas data calls
  * must use this client.
  */
-import { fetch as undiciFetch } from "undici";
 import type { Dispatcher } from "undici";
 import {
   CHROME_USER_AGENT,
@@ -13,6 +12,7 @@ import {
   TEXAS_AGENTS_ORIGIN,
 } from "@/lib/texas/texas-api-config";
 import { getTexasFetchDispatcher } from "@/lib/texas/texas-proxy";
+import { texasUndiciFetch } from "@/lib/texas/undici-fetch";
 
 /** Axios-compatible response envelope (data + status only). */
 export interface TexasHttpResponse<T = unknown> {
@@ -100,9 +100,9 @@ export function createTexasHttpClient(cookieHeader: string): TexasHttpClient {
       };
       if (cookieHeader) headers.Cookie = cookieHeader;
 
-      let response: Awaited<ReturnType<typeof undiciFetch>>;
+      let response: Awaited<ReturnType<typeof texasUndiciFetch>>;
       try {
-        response = await undiciFetch(url, {
+        response = await texasUndiciFetch(url, {
           method: "POST",
           headers,
           body: payload,

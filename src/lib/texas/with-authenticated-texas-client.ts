@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { TexasSessionService } from "@/lib/services/TexasSessionService";
 import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
 import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
@@ -52,6 +51,9 @@ export async function withAuthenticatedTexasClient(
     }
 
     const creds = await requireUserCredentials(supabase, user.id);
+    const { TexasSessionService } = await import(
+      "@/lib/services/TexasSessionService"
+    );
     const session = new TexasSessionService();
     const client = await session.getClient({
       username: creds.username,
