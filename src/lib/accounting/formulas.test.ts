@@ -64,3 +64,42 @@ describe("Accounting formulas", () => {
     assert.equal(metrics.al_harq, metrics.al_farq);
   });
 });
+
+describe("Deterministic ledger engine", () => {
+  it("produces identical al_nihai for identical inputs", async () => {
+    const { computeDeterministicLedger } = await import(
+      "@/lib/accounting/ledger-engine"
+    );
+    const sources = {
+      userId: "u1",
+      ledgerDate: "2026-05-23",
+      currentSnapshot: {
+        balance: 1000,
+        totalDeposit: 150000,
+        totalWithdraw: 110000,
+        ngr: -5000,
+        currencyCode: "USD",
+        rawWallets: {},
+        rawStatistics: {},
+      },
+      previousSnapshot: {
+        balance: 900,
+        totalDeposit: 125000,
+        totalWithdraw: 98000,
+        ngr: -4200,
+        currencyCode: "USD",
+        rawWallets: {},
+        rawStatistics: {},
+      },
+      wasel: { wasel_menho: 500, wasel_eleih: 2000 },
+      previousDayAlNihai: 22800,
+    };
+
+    const a = computeDeterministicLedger(sources);
+    const b = computeDeterministicLedger(sources);
+
+    assert.equal(a.report.al_nihai, b.report.al_nihai);
+    assert.equal(a.report.al_nihai, 37300);
+    assert.equal(a.report.al_harq, a.report.al_farq);
+  });
+});

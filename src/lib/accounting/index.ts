@@ -19,6 +19,21 @@ export {
   type BalanceOrientation,
   type OrientedBalance,
 } from "@/lib/accounting/balance-orientation";
+export {
+  computeDeterministicLedger,
+  snapshotFingerprint,
+  type ConfirmedWaselTotals,
+  type DeterministicLedgerSources,
+} from "@/lib/accounting/ledger-engine";
+export {
+  coalesceLedgerSync,
+  ledgerSyncKey,
+} from "@/lib/accounting/ledger-sync-flight";
+export {
+  discrepancyDetailFromIntegrity,
+  flagLedgerDiscrepancyIfNeeded,
+  validateLedgerIntegrity,
+} from "@/lib/accounting/ledger-integrity";
 export type {
   AccountingRepository,
   DailyLedgerMetrics,

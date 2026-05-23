@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AccountingRepository, DailyLedgerRow, PersistLedgerPayload } from "@/lib/accounting/types";
 import type { NormalizedTexasSnapshot } from "@/lib/texas/types";
+import { snapshotFingerprint } from "@/lib/accounting/ledger-engine";
+
+const SYNC_LOCK_TTL_MS = 10 * 60 * 1000;
 
 function rowToSnapshot(row: {
   balance: string | number;
@@ -167,6 +170,11 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     snapshot: NormalizedTexasSnapshot,
     fetchSource = "cron"
   ): Promise<{ id: string }> {
+    const latest = await this.getLatestSnapshotForDate(userId, ledgerDate);
+    if (latest && snapshotFingerprint(latest) === snapshotFingerprint(snapshot)) {
+      return { id: latest.id };
+    }
+
     const { data: previous } = await this.supabase
       .from("api_snapshots")
       .select("id")
@@ -197,5 +205,97 @@ export class SupabaseAccountingRepository implements AccountingRepository {
 
     if (error) throw error;
     return { id: data.id as string };
+  }
+
+  async getLatestSnapshotForDate(
+    userId: string,
+    ledgerDate: string
+  ): Promise<(NormalizedTexasSnapshot & { id: string }) | null> {
+    const { data, error } = await this.supabase
+      .from("api_snapshots")
+      .select(
+        "id, balance, total_deposit, total_withdraw, ngr, currency_code, raw_wallets, raw_statistics"
+      )
+      .eq("user_id", userId)
+      .eq("ledger_date", ledgerDate)
+      .order("captured_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+    return { id: String(data.id), ...rowToSnapshot(data) };
+  }
+
+  async sumConfirmedWasel(
+    userId: string,
+    ledgerDate: string
+  ): Promise<{ wasel_menho: number; wasel_eleih: number }> {
+    const { data: ledger, error: ledgerErr } = await this.supabase
+      .from("daily_ledgers")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("ledger_date", ledgerDate)
+      .maybeSingle();
+
+    if (ledgerErr) throw ledgerErr;
+    if (!ledger?.id) {
+      return { wasel_menho: 0, wasel_eleih: 0 };
+    }
+
+    const { data, error } = await this.supabase
+      .from("transactions")
+      .select("type, amount")
+      .eq("daily_ledger_id", ledger.id)
+      .eq("is_confirmed", true);
+
+    if (error) throw error;
+
+    let wasel_menho = 0;
+    let wasel_eleih = 0;
+    for (const row of data ?? []) {
+      const amount = Number(row.amount);
+      if (row.type === "wasel_menho") wasel_menho += amount;
+      else if (row.type === "wasel_eleih") wasel_eleih += amount;
+    }
+
+    return { wasel_menho, wasel_eleih };
+  }
+
+  async tryAcquireSyncLock(userId: string, ledgerDate: string): Promise<boolean> {
+    await this.pruneStaleSyncLocks();
+
+    const { error } = await this.supabase.from("ledger_sync_inflight").insert({
+      user_id: userId,
+      ledger_date: ledgerDate,
+    });
+
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    if (error.code === "42P01") {
+      /* migration not applied — allow sync, in-memory coalesce still applies */
+      return true;
+    }
+    throw error;
+  }
+
+  async releaseSyncLock(userId: string, ledgerDate: string): Promise<void> {
+    const { error } = await this.supabase
+      .from("ledger_sync_inflight")
+      .delete()
+      .eq("user_id", userId)
+      .eq("ledger_date", ledgerDate);
+
+    if (error && error.code !== "42P01") throw error;
+  }
+
+  private async pruneStaleSyncLocks(): Promise<void> {
+    const cutoff = new Date(Date.now() - SYNC_LOCK_TTL_MS).toISOString();
+    const { error } = await this.supabase
+      .from("ledger_sync_inflight")
+      .delete()
+      .lt("started_at", cutoff);
+
+    if (error && error.code !== "42P01") throw error;
   }
 }

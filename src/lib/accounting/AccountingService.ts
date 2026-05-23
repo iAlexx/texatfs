@@ -1,13 +1,7 @@
 import {
-  assertAlNihaiFormula,
-  buildLedgerMetrics,
-  resolveBaqiQadim,
-  snapshotToTotals,
-} from "@/lib/accounting/formulas";
-import {
-  discrepancyDetailFromIntegrity,
-  validateLedgerIntegrity,
-} from "@/lib/accounting/ledger-integrity";
+  computeDeterministicLedger,
+  type DeterministicLedgerResult,
+} from "@/lib/accounting/ledger-engine";
 import { createLogger } from "@/lib/observability/logger";
 import type {
   AccountingRepository,
@@ -26,16 +20,11 @@ function previousBusinessDate(isoDate: string): string {
 /**
  * Accounting & Ledger Engine for TEXAS FUNDS calculate.
  *
- * Core formulas (daily_ledgers):
- * - Tebat     = Δ Total Deposits
- * - Suhoubat  = Δ Total Withdrawals
- * - Al_Farq   = Tebat − Suhoubat
- * - Al_Harq   = Al_Farq (net portal delta — same as burn definition)
- * - Baqi_Qadim = previous day's Al_Nihai
- * - Al_Nihai  = Al_Farq + Wasel_Eleih − Wasel_Menho + Baqi_Qadim
- *
- * Wasel_Menho / Wasel_Eleih are sourced from confirmed transactions (DB trigger)
- * and passed in via the open ledger row when persisting.
+ * Deterministic pipeline (fixed order):
+ *  1. Texas API snapshot → tebat, suhoubat, al_farq, al_harq
+ *  2. Confirmed WhatsApp transactions → wasel_menho, wasel_eleih
+ *  3. Previous closed day → baqi_qadim
+ *  4. al_nihai = al_farq + wasel_eleih − wasel_menho + baqi_qadim
  */
 export class AccountingService {
   private readonly log = createLogger("accounting/service");
@@ -43,46 +32,30 @@ export class AccountingService {
   constructor(private readonly repository?: AccountingRepository) {}
 
   /**
-   * Pure calculation — no database I/O.
+   * Pure calculation — uses wasel values already present on the open ledger row.
    */
   generateDailyReport(input: GenerateDailyReportInput): DailyLedgerReport {
-    const current = snapshotToTotals(input.currentSnapshot);
-    const previous = input.previousSnapshot
-      ? snapshotToTotals(input.previousSnapshot)
-      : null;
+    return this.computeFromInput(input).report;
+  }
 
-    const baqi_qadim = resolveBaqiQadim({
-      previousDayAlNihai: input.previousDayLedger?.al_nihai,
-      existingBaqiQadim: input.existingLedger?.baqi_qadim,
-    });
-
-    const wasel_menho = input.existingLedger?.wasel_menho ?? 0;
-    const wasel_eleih = input.existingLedger?.wasel_eleih ?? 0;
-
-    const metrics = buildLedgerMetrics({
-      current,
-      previous,
-      wasel_menho,
-      wasel_eleih,
-      baqi_qadim,
-    });
-
-    assertAlNihaiFormula(metrics);
-
-    return {
-      ...metrics,
+  private computeFromInput(
+    input: GenerateDailyReportInput
+  ): DeterministicLedgerResult {
+    return computeDeterministicLedger({
       userId: input.userId,
       ledgerDate: input.ledgerDate,
-      currencyCode: input.currentSnapshot.currencyCode,
-      currentSnapshot: current,
-      previousSnapshot: previous,
-      balanceFromApi: input.currentSnapshot.balance,
-      computedAt: new Date().toISOString(),
-    };
+      currentSnapshot: input.currentSnapshot,
+      previousSnapshot: input.previousSnapshot,
+      wasel: {
+        wasel_menho: input.existingLedger?.wasel_menho ?? 0,
+        wasel_eleih: input.existingLedger?.wasel_eleih ?? 0,
+      },
+      previousDayAlNihai: input.previousDayLedger?.al_nihai ?? null,
+    });
   }
 
   /**
-   * Loads snapshots + prior ledger from repository, computes report, persists to daily_ledgers.
+   * Loads sources in strict order, computes report, persists to daily_ledgers.
    */
   async syncAndPersistDailyReport(
     userId: string,
@@ -99,25 +72,35 @@ export class AccountingService {
 
     const priorDate = AccountingService.previousLedgerDate(ledgerDate);
 
-    const [existingLedger, previousDayLedger, previousSnapshot] =
-      await Promise.all([
-        this.repository.getOpenLedger(userId, ledgerDate),
-        this.repository.getLedgerByDate(userId, priorDate, "closed"),
-        this.repository.getPreviousSnapshot(userId, ledgerDate),
-      ]);
+    // Step 1 — Texas baseline snapshot (previous business day or earlier).
+    const previousSnapshot = await this.repository.getPreviousSnapshot(
+      userId,
+      ledgerDate
+    );
 
-    const report = this.generateDailyReport({
+    // Step 2 — Confirmed WhatsApp transactions only (never inferred).
+    const wasel = await this.repository.sumConfirmedWasel(userId, ledgerDate);
+
+    // Step 3 — Previous day closing balance.
+    const previousDayLedger = await this.repository.getLedgerByDate(
+      userId,
+      priorDate,
+      "closed"
+    );
+
+    const existingLedger = await this.repository.getOpenLedger(userId, ledgerDate);
+
+    const { report, integrity, discrepancyDetail } = computeDeterministicLedger({
       userId,
       ledgerDate,
       currentSnapshot,
       previousSnapshot,
-      existingLedger,
-      previousDayLedger,
+      wasel,
+      previousDayAlNihai: previousDayLedger?.al_nihai ?? null,
     });
 
-    const integrity = validateLedgerIntegrity(report);
     if (!integrity.ok) {
-      this.log.warn("ledger integrity issues on sync", {
+      this.log.warn("ledger integrity issue", {
         userId,
         ledgerDate,
         codes: integrity.issues.map((i) => i.code),
@@ -133,16 +116,12 @@ export class AccountingService {
       previousLedgerId:
         previousDayLedger?.id ?? existingLedger?.previous_ledger_id ?? undefined,
       discrepancyFlag: !integrity.ok,
-      discrepancyDetail: discrepancyDetailFromIntegrity(integrity),
+      discrepancyDetail,
     });
 
     return report;
   }
 
-  /**
-   * Resolves Baqi_Qadim for a new business day from the last closed Al_Nihai.
-   * Mirrors `run_daily_close` in Postgres — callable before cron close.
-   */
   async resolveOpeningBalance(
     userId: string,
     ledgerDate: string
@@ -152,12 +131,9 @@ export class AccountingService {
     }
 
     const prior = await this.repository.getPreviousClosedLedger(userId, ledgerDate);
-    return resolveBaqiQadim({ previousDayAlNihai: prior?.al_nihai ?? null });
+    return prior?.al_nihai ?? 0;
   }
 
-  /**
-   * Batch: generate reports for all users with snapshots on a given date.
-   */
   async generateReportsForDate(
     entries: Array<{
       userId: string;
@@ -180,7 +156,6 @@ export class AccountingService {
     );
   }
 
-  /** Utility for cron: date string for yesterday relative to ledgerDate */
   static previousLedgerDate(ledgerDate: string): string {
     return previousBusinessDate(ledgerDate);
   }

@@ -110,4 +110,21 @@ export interface AccountingRepository {
     snapshot: import("@/lib/texas/types").NormalizedTexasSnapshot,
     fetchSource?: string
   ): Promise<{ id: string }>;
+
+  /** Sum confirmed WhatsApp transactions for a business day (source of truth for wasel). */
+  sumConfirmedWasel(
+    userId: string,
+    ledgerDate: string
+  ): Promise<{ wasel_menho: number; wasel_eleih: number }>;
+
+  /** Latest snapshot for user+date — used to skip duplicate Texas API applies. */
+  getLatestSnapshotForDate(
+    userId: string,
+    ledgerDate: string
+  ): Promise<(NormalizedTexasSnapshot & { id: string }) | null>;
+
+  /** Acquire cross-instance sync lock; returns false if another sync holds it. */
+  tryAcquireSyncLock(userId: string, ledgerDate: string): Promise<boolean>;
+
+  releaseSyncLock(userId: string, ledgerDate: string): Promise<void>;
 }
