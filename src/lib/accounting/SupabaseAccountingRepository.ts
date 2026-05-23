@@ -22,6 +22,9 @@ function rowToSnapshot(row: {
   };
 }
 
+const LEDGER_ROW_SELECT =
+  "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, opening_snapshot_id, closing_snapshot_id, previous_ledger_id";
+
 function rowToLedger(row: Record<string, unknown>): DailyLedgerRow {
   return {
     id: String(row.id),
@@ -59,7 +62,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
   ): Promise<DailyLedgerRow | null> {
     let query = this.supabase
       .from("daily_ledgers")
-      .select("*")
+      .select(LEDGER_ROW_SELECT)
       .eq("user_id", userId)
       .eq("ledger_date", ledgerDate);
 
@@ -76,7 +79,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
   ): Promise<DailyLedgerRow | null> {
     const { data, error } = await this.supabase
       .from("daily_ledgers")
-      .select("*")
+      .select(LEDGER_ROW_SELECT)
       .eq("user_id", userId)
       .eq("status", "closed")
       .lt("ledger_date", beforeDate)
@@ -143,13 +146,15 @@ export class SupabaseAccountingRepository implements AccountingRepository {
           wasel_eleih: payload.wasel_eleih,
           baqi_qadim: payload.baqi_qadim,
           al_nihai: payload.al_nihai,
+          discrepancy_flag: payload.discrepancyFlag ?? false,
+          discrepancy_detail: payload.discrepancyDetail ?? {},
           opening_snapshot_id: payload.openingSnapshotId ?? null,
           closing_snapshot_id: payload.closingSnapshotId ?? null,
           previous_ledger_id: payload.previousLedgerId ?? null,
         },
         { onConflict: "user_id,ledger_date" }
       )
-      .select("*")
+      .select(LEDGER_ROW_SELECT)
       .single();
 
     if (error) throw error;

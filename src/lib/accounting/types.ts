@@ -70,6 +70,8 @@ export interface PersistLedgerPayload extends DailyLedgerMetrics {
   openingSnapshotId?: string;
   closingSnapshotId?: string;
   previousLedgerId?: string;
+  discrepancyFlag?: boolean;
+  discrepancyDetail?: Record<string, unknown>;
 }
 
 export interface AccountingRepository {

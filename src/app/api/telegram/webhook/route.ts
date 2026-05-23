@@ -13,11 +13,14 @@ import {
 } from "@/lib/observability/webhook-events";
 import { shouldProcessWebhookEvent } from "@/lib/observability/webhook-dedup";
 import { parseTelegramUpdate } from "@/lib/validation/telegram";
+import { runWithRequestContext } from "@/lib/observability/request-context";
 
 const log = createLogger("telegram/webhook");
 
 export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
+
+  return runWithRequestContext({ requestId, scope: "telegram/webhook" }, async () => {
 
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (secret) {
@@ -42,10 +45,6 @@ export async function POST(request: Request) {
   }
 
   const update = parsed.data;
-  if (!shouldProcessWebhookEvent("telegram", String(update.update_id))) {
-    log.info("duplicate update skipped", { requestId, updateId: update.update_id });
-    return NextResponse.json({ ok: true, duplicate: true });
-  }
 
   const [{ getSupabaseServiceClient }, { processTelegramUpdate }] =
     await Promise.all([
@@ -54,6 +53,12 @@ export async function POST(request: Request) {
     ]);
 
   const supabase = getSupabaseServiceClient();
+
+  if (!(await shouldProcessWebhookEvent("telegram", String(update.update_id), supabase))) {
+    log.info("duplicate update skipped", { requestId, updateId: update.update_id });
+    return NextResponse.json({ ok: true, duplicate: true });
+  }
+
   const processAsync = process.env.TELEGRAM_WEBHOOK_ASYNC !== "false";
 
   const handleError = (e: unknown) => {
@@ -69,7 +74,9 @@ export async function POST(request: Request) {
   };
 
   if (processAsync) {
-    void processTelegramUpdate(supabase, update as TelegramUpdate).catch(handleError);
+    void runWithRequestContext({ requestId, scope: "telegram/webhook" }, () =>
+      processTelegramUpdate(supabase, update as TelegramUpdate).catch(handleError)
+    );
     return NextResponse.json({ ok: true });
   }
 
@@ -81,6 +88,7 @@ export async function POST(request: Request) {
     const msg = e instanceof Error ? e.message : "Webhook error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+  });
 }
 
 export async function GET() {

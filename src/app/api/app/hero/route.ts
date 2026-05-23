@@ -22,24 +22,26 @@ export async function POST(request: Request) {
     const supabase = getSupabaseServiceClient();
     const ledgerDate = resolveLedgerDate();
 
-    const { data: ledgerRow } = await supabase
+    const since = new Date();
+    since.setDate(since.getDate() - 7);
+    const sinceDate = since.toISOString().slice(0, 10);
+
+    const { data: ledgerRows } = await supabase
       .from("daily_ledgers")
       .select(
         "id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at"
       )
       .eq("user_id", user.id)
-      .eq("ledger_date", ledgerDate)
-      .maybeSingle();
+      .gte("ledger_date", sinceDate)
+      .lte("ledger_date", ledgerDate)
+      .order("ledger_date", { ascending: false });
 
+    const ledgerRow =
+      ledgerRows?.find((r) => r.ledger_date === ledgerDate) ?? null;
     const ledger = ledgerRow;
-
-    const since = new Date();
-    since.setDate(since.getDate() - 7);
-    const { data: weekRows } = await supabase
-      .from("daily_ledgers")
-      .select("al_harq, suhoubat")
-      .eq("user_id", user.id)
-      .gte("ledger_date", since.toISOString().slice(0, 10));
+    const weekRows = (ledgerRows ?? []).filter(
+      (r) => r.ledger_date !== ledgerDate
+    );
 
     const avgHarq7 =
       weekRows && weekRows.length

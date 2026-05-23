@@ -33,11 +33,15 @@ function redactObject(obj: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+import { getRequestId } from "./request-context";
+
 function emit(level: LogLevel, message: string, ctx?: LogContext): void {
+  const requestId = ctx?.requestId ?? getRequestId();
   const payload = {
     ts: new Date().toISOString(),
     level,
     message,
+    ...(requestId ? { requestId } : {}),
     ...(ctx ? redactObject(ctx) : {}),
   };
   const line = JSON.stringify(payload);

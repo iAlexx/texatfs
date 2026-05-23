@@ -95,10 +95,7 @@ async function texasRawFetch(
   await throttleTexasRequests();
 
   const dispatcher = await getTexasFetchDispatcher();
-  const fetchImpl = dispatcher
-    ? texasUndiciFetch
-    : globalThis.fetch.bind(globalThis);
-  const via = dispatcher ? "undici+proxy" : "global-fetch";
+  const via = dispatcher ? "undici+proxy" : "undici";
 
   console.info("[fetch-trace] texasRawFetch start", {
     url,
@@ -108,12 +105,12 @@ async function texasRawFetch(
   });
 
   try {
-    const response = await fetchImpl(url, {
+    const response = await texasUndiciFetch(url, {
       method,
       headers: headerPairs,
       body: method === "POST" ? body : undefined,
       redirect: "follow",
-      ...(dispatcher ? { dispatcher } : { cache: "no-store" }),
+      ...(dispatcher ? { dispatcher } : {}),
     });
 
     const bodyText = await response.text();

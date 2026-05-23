@@ -35,7 +35,8 @@ async function ensureFetchDispatcher(url: string): Promise<Dispatcher> {
   }
   if (!fetchDispatcherPromise || cachedProxyUrl !== url) {
     fetchDispatcherPromise = (async () => {
-      const { ProxyAgent } = await import("undici");
+      const { importUndici } = await import("@/lib/texas/undici-fetch");
+      const { ProxyAgent } = await importUndici();
       cachedProxyUrl = url;
       cachedFetchDispatcher = new ProxyAgent(url);
       return cachedFetchDispatcher;

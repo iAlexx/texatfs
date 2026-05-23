@@ -15,7 +15,9 @@ export function ReconciliationBadge({ ledger }: { ledger: DailyLedger }) {
     wasel_eleih: ledger.wasel_eleih,
   });
 
-  if (result.balanced) {
+  const unbalanced = ledger.discrepancy_flag || !result.balanced;
+
+  if (!unbalanced) {
     return (
       <motion.div
         className="mb-4 flex items-center justify-center gap-2 rounded-xl border border-lime/30 bg-lime/10 px-4 py-2.5 text-sm text-lime"

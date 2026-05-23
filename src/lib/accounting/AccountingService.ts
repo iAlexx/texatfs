@@ -4,6 +4,11 @@ import {
   resolveBaqiQadim,
   snapshotToTotals,
 } from "@/lib/accounting/formulas";
+import {
+  discrepancyDetailFromIntegrity,
+  validateLedgerIntegrity,
+} from "@/lib/accounting/ledger-integrity";
+import { createLogger } from "@/lib/observability/logger";
 import type {
   AccountingRepository,
   DailyLedgerReport,
@@ -33,6 +38,8 @@ function previousBusinessDate(isoDate: string): string {
  * and passed in via the open ledger row when persisting.
  */
 export class AccountingService {
+  private readonly log = createLogger("accounting/service");
+
   constructor(private readonly repository?: AccountingRepository) {}
 
   /**
@@ -108,6 +115,15 @@ export class AccountingService {
       previousDayLedger,
     });
 
+    const integrity = validateLedgerIntegrity(report);
+    if (!integrity.ok) {
+      this.log.warn("ledger integrity issues on sync", {
+        userId,
+        ledgerDate,
+        codes: integrity.issues.map((i) => i.code),
+      });
+    }
+
     await this.repository.upsertOpenLedger({
       userId,
       ledgerDate,
@@ -116,6 +132,8 @@ export class AccountingService {
       closingSnapshotId: options?.closingSnapshotId,
       previousLedgerId:
         previousDayLedger?.id ?? existingLedger?.previous_ledger_id ?? undefined,
+      discrepancyFlag: !integrity.ok,
+      discrepancyDetail: discrepancyDetailFromIntegrity(integrity),
     });
 
     return report;

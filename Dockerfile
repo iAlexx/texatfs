@@ -1,4 +1,5 @@
 # TEXAS FUNDS calculate — Railway deployment with Chromium for Puppeteer
+# Node 20 LTS — required for undici 6.x (undici 8+ needs Node 22.10+ / markAsUncloneable)
 FROM node:20-bookworm-slim AS base
 
 # Chromium + runtime libraries required by Puppeteer on Debian
