@@ -12,7 +12,7 @@
     "start": "next start -p ${PORT:-3000} -H 0.0.0.0",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:accounting": "node --import tsx --test src/lib/accounting/formulas.test.ts",
+    "test:accounting": "node --import tsx --test src/lib/accounting/formulas.test.ts src/lib/texas/statistics-mapper.test.ts",
     "test:vault": "node --import tsx --test src/lib/security/CredentialVault.test.ts",
     "live:texas-sync": "tsx scripts/live-texas-sync.ts",
     "telegram:webhook": "tsx scripts/set-telegram-webhook.ts",

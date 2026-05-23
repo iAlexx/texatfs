@@ -1,4 +1,8 @@
 import {
+  abortOnUserContextViolation,
+  logUserScope,
+} from "@/lib/security/user-context";
+import {
   pickNumeric,
   pickStatsRecordMetrics,
   pickString,
@@ -44,18 +48,35 @@ function totalsFooter(totals: SubAgentStatisticsTotals | null) {
 export interface MapStatisticsInput {
   response: SubAgentStatisticsResponse;
   texasAffiliateId: string | null;
+  texasUsername?: string | null;
+  userId?: string;
   role: "super_master" | "master" | "player";
 }
 
+/**
+ * Maps Texas statistics to a single tenant scope.
+ * Master/player rows MUST match texasAffiliateId — never sum the full network.
+ */
 export function mapSubAgentStatistics({
   response,
   texasAffiliateId,
+  texasUsername,
+  userId,
   role,
 }: MapStatisticsInput): Pick<
   NormalizedTexasSnapshot,
   "totalDeposit" | "totalWithdraw" | "ngr"
 > {
   const records = response.result?.records ?? [];
+
+  logUserScope(
+    {
+      resolvedUserId: userId ?? "unknown",
+      texasUsername: texasUsername ?? null,
+      texasAffiliateId: texasAffiliateId ?? null,
+    },
+    "mapSubAgentStatistics"
+  );
 
   if (role === "super_master") {
     const footer = totalsFooter(response.result?.total ?? null);
@@ -65,18 +86,26 @@ export function mapSubAgentStatistics({
     return sumRecords(records);
   }
 
-  if (texasAffiliateId) {
-    const match = records.find((r) => {
-      const bag = r as Record<string, unknown>;
-      const id = pickString(bag, statsRecordMapping.affiliateId);
-      return id !== null && id === String(texasAffiliateId);
-    });
-    if (match) return rowToMetrics(match);
-  }
+  const affiliateId = texasAffiliateId?.trim() ?? "";
+  abortOnUserContextViolation(
+    !affiliateId,
+    "Texas statistics mapping rejected: missing texasAffiliateId",
+    { userId: userId ?? null, role, recordCount: records.length }
+  );
 
-  if (records.length === 1) return rowToMetrics(records[0]);
+  const match = records.find((r) => {
+    const bag = r as Record<string, unknown>;
+    const id = pickString(bag, statsRecordMapping.affiliateId);
+    return id !== null && id === affiliateId;
+  });
 
-  return sumRecords(records);
+  abortOnUserContextViolation(
+    !match,
+    "Texas statistics mapping rejected: affiliateId not in response",
+    { userId: userId ?? null, texasAffiliateId: affiliateId, recordCount: records.length }
+  );
+
+  return rowToMetrics(match!);
 }
 
 export function mapWalletBalance(wallet: TexasWalletRecord): Pick<

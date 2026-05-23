@@ -12,6 +12,7 @@ import {
   mapWalletBalance,
   mergeSnapshotParts,
 } from "@/lib/texas/statistics-mapper";
+import { validateTexasSnapshotScope } from "@/lib/texas/texas-data-scope";
 import type { TexasSessionService } from "@/lib/services/TexasSessionService";
 
 const DEFAULT_PAGE_SIZE = 1000;
@@ -68,6 +69,8 @@ export class TexasSyncService {
     const statsPart = mapSubAgentStatistics({
       response: statistics.response,
       texasAffiliateId: context.texasAffiliateId,
+      texasUsername: context.texasUsername ?? context.credentials.username,
+      userId: context.userId,
       role: context.role,
     });
 
@@ -76,6 +79,13 @@ export class TexasSyncService {
       statsPart,
       statistics.response.result as unknown as Record<string, unknown>
     );
+
+    validateTexasSnapshotScope(snapshot, {
+      userId: context.userId,
+      texasUsername: context.texasUsername ?? context.credentials.username,
+      texasAffiliateId: context.texasAffiliateId,
+      role: context.role,
+    });
 
     return {
       userId: context.userId,

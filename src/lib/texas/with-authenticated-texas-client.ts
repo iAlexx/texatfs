@@ -3,7 +3,9 @@ import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
 import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
 import { requireUserCredentials } from "@/lib/scraper/resolve-user-credentials";
+import type { ResolvedUserCredentials } from "@/lib/scraper/resolve-user-credentials";
 import type { AppUser } from "@/lib/supabase/database.types";
+import { logUserScope, UserContextViolation } from "@/lib/security/user-context";
 import {
   toTexasPlainObject,
   type TexasHttpClient,
@@ -34,7 +36,11 @@ export function texasJsonResponse(data: unknown, status = 200): Response {
 export async function withAuthenticatedTexasClient(
   supabase: SupabaseClient,
   auth: LedgerAuthInput,
-  run: (ctx: { user: AppUser; client: TexasHttpClient }) => Promise<Response>
+  run: (ctx: {
+    user: AppUser;
+    client: TexasHttpClient;
+    creds: ResolvedUserCredentials & { hasCredentials: true };
+  }) => Promise<Response>
 ): Promise<Response> {
   try {
     const { user, subscriptionActive } = await resolveLedgerUser(auth);
@@ -51,6 +57,14 @@ export async function withAuthenticatedTexasClient(
     }
 
     const creds = await requireUserCredentials(supabase, user.id);
+    logUserScope(
+      {
+        resolvedUserId: user.id,
+        texasUsername: creds.texas_username ?? creds.username,
+        texasAffiliateId: creds.texas_affiliate_id,
+      },
+      "withAuthenticatedTexasClient"
+    );
     const { TexasSessionService } = await import(
       "@/lib/services/TexasSessionService"
     );
@@ -60,7 +74,7 @@ export async function withAuthenticatedTexasClient(
       password: creds.password,
     });
 
-    const response = await run({ user, client });
+    const response = await run({ user, client, creds });
 
     // Belt-and-suspenders: clone body through JSON if handler returned data
     if (response.headers.get("content-type")?.includes("application/json")) {
@@ -80,6 +94,10 @@ export async function withAuthenticatedTexasClient(
     }
     if (e instanceof TexasLiveApiError) {
       return texasJsonResponse({ error: e.message }, e.status);
+    }
+    if (e instanceof UserContextViolation) {
+      console.error("[withAuthenticatedTexasClient] USER CONTEXT VIOLATION", e.message, e.details);
+      return texasJsonResponse({ error: "تعارض في نطاق بيانات المستخدم" }, 500);
     }
     const message = safeErrorMessage(e);
     console.error("[withAuthenticatedTexasClient]", message);

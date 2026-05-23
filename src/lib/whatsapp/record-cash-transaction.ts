@@ -17,6 +17,10 @@ import { flagLedgerDiscrepancyIfNeeded } from "@/lib/accounting/ledger-integrity
 import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 
 import { createLogger } from "@/lib/observability/logger";
+import {
+  assertMatchingUserId,
+  logUserScope,
+} from "@/lib/security/user-context";
 
 import type { CashDirection } from "@/lib/whatsapp/pending";
 
@@ -87,7 +91,7 @@ async function ensureDailyLedgerId(
 
     .from("daily_ledgers")
 
-    .select("id")
+    .select("id, user_id")
 
     .eq("user_id", userId)
 
@@ -99,7 +103,10 @@ async function ensureDailyLedgerId(
 
   if (readErr) throw readErr;
 
-  if (existing?.id) return existing.id as string;
+  if (existing?.id) {
+    assertMatchingUserId(userId, existing.user_id as string, "ensureDailyLedgerId");
+    return existing.id as string;
+  }
 
 
 
@@ -121,7 +128,7 @@ async function ensureDailyLedgerId(
 
     })
 
-    .select("id")
+    .select("id, user_id")
 
     .single();
 
@@ -135,7 +142,7 @@ async function ensureDailyLedgerId(
 
         .from("daily_ledgers")
 
-        .select("id")
+        .select("id, user_id")
 
         .eq("user_id", userId)
 
@@ -145,7 +152,10 @@ async function ensureDailyLedgerId(
 
       if (raceErr) throw raceErr;
 
-      if (raced?.id) return raced.id as string;
+      if (raced?.id) {
+        assertMatchingUserId(userId, raced.user_id as string, "ensureDailyLedgerId");
+        return raced.id as string;
+      }
 
     }
 
@@ -176,6 +186,13 @@ export async function recordWhatsAppCashPayment(
 
 
   try {
+    logUserScope(
+      {
+        resolvedUserId: input.userId,
+        whatsappChatId: input.groupJid,
+      },
+      "recordWhatsAppCashPayment"
+    );
 
     const dailyLedgerId = await ensureDailyLedgerId(
 
@@ -217,7 +234,7 @@ export async function recordWhatsAppCashPayment(
 
       })
 
-      .select("id")
+      .select("id, user_id")
 
       .single();
 

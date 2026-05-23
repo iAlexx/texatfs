@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AccountingRepository, DailyLedgerRow, PersistLedgerPayload } from "@/lib/accounting/types";
 import type { NormalizedTexasSnapshot } from "@/lib/texas/types";
 import { snapshotFingerprint } from "@/lib/accounting/ledger-engine";
+import { assertMatchingUserId } from "@/lib/security/user-context";
 
 const SYNC_LOCK_TTL_MS = 10 * 60 * 1000;
 
@@ -233,7 +234,7 @@ export class SupabaseAccountingRepository implements AccountingRepository {
   ): Promise<{ wasel_menho: number; wasel_eleih: number }> {
     const { data: ledger, error: ledgerErr } = await this.supabase
       .from("daily_ledgers")
-      .select("id")
+      .select("id, user_id")
       .eq("user_id", userId)
       .eq("ledger_date", ledgerDate)
       .maybeSingle();
@@ -242,6 +243,8 @@ export class SupabaseAccountingRepository implements AccountingRepository {
     if (!ledger?.id) {
       return { wasel_menho: 0, wasel_eleih: 0 };
     }
+
+    assertMatchingUserId(userId, ledger.user_id as string, "sumConfirmedWasel");
 
     const { data, error } = await this.supabase
       .from("transactions")

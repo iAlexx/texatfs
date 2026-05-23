@@ -38,7 +38,7 @@ export function useTexasSubAgents(
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 
   return useQuery({
-    queryKey: ["texas", "sub-agents", ledgerDate, initData],
+    queryKey: ["texas", "sub-agents", ledgerDate, telegramUserId, initData],
     enabled: isReady && canAuthenticate && enabled,
     queryFn: () =>
       postJson<TexasSubAgentsPayload>("/api/texas/sub-agents", {
@@ -81,6 +81,7 @@ export function useTexasAgentDetail(
       affiliateId,
       ledgerDate,
       currencyCode,
+      telegramUserId,
       initData,
     ],
     enabled: isReady && canAuthenticate && Boolean(affiliateId?.trim()),

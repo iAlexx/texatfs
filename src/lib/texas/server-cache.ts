@@ -1,18 +1,17 @@
 /**
  * Module-level TTL cache for Texas API responses.
- * Works on Railway (persistent Node.js server) — shared across all requests.
- * NOT shared across Railway replicas (acceptable: each replica self-fills from Texas API).
+ * Every entry is bound to a single ownerUserId — cross-user reads are rejected.
  */
 
 interface Entry<T> {
   data: T;
+  ownerUserId: string;
   expiresAt: number;
   createdAt: number;
 }
 
 const store = new Map<string, Entry<unknown>>();
 
-// Prune expired entries every 10 minutes to avoid unbounded memory growth
 const PRUNE_INTERVAL_MS = 10 * 60_000;
 let pruneTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -28,11 +27,23 @@ function schedulePrune() {
   }, PRUNE_INTERVAL_MS);
 }
 
-export function serverCacheGet<T>(key: string): T | null {
+export function serverCacheGet<T>(
+  key: string,
+  ownerUserId: string
+): T | null {
   const entry = store.get(key);
   const now = Date.now();
   if (!entry) {
-    console.info("[server-cache] MISS", { key });
+    console.info("[server-cache] MISS", { key, ownerUserId });
+    return null;
+  }
+  if (entry.ownerUserId !== ownerUserId) {
+    console.error("[server-cache] USER CONTEXT VIOLATION — owner mismatch", {
+      key,
+      requestedBy: ownerUserId,
+      cacheOwner: entry.ownerUserId,
+    });
+    store.delete(key);
     return null;
   }
   if (now > entry.expiresAt) {
@@ -40,12 +51,26 @@ export function serverCacheGet<T>(key: string): T | null {
     console.info("[server-cache] EXPIRED", { key, ageMs: now - entry.createdAt });
     return null;
   }
-  console.info("[server-cache] HIT", { key, ageMs: now - entry.createdAt });
+  console.info("[server-cache] HIT", {
+    key,
+    ownerUserId,
+    ageMs: now - entry.createdAt,
+  });
   return entry.data as T;
 }
 
-export function serverCacheSet<T>(key: string, data: T, ttlMs: number): void {
-  store.set(key, { data, expiresAt: Date.now() + ttlMs, createdAt: Date.now() });
+export function serverCacheSet<T>(
+  key: string,
+  ownerUserId: string,
+  data: T,
+  ttlMs: number
+): void {
+  store.set(key, {
+    data,
+    ownerUserId,
+    expiresAt: Date.now() + ttlMs,
+    createdAt: Date.now(),
+  });
   schedulePrune();
 }
 

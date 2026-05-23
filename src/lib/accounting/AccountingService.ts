@@ -3,6 +3,7 @@ import {
   type DeterministicLedgerResult,
 } from "@/lib/accounting/ledger-engine";
 import { createLogger } from "@/lib/observability/logger";
+import { logUserScope } from "@/lib/security/user-context";
 import type {
   AccountingRepository,
   DailyLedgerReport,
@@ -69,6 +70,8 @@ export class AccountingService {
     if (!this.repository) {
       throw new Error("AccountingRepository is required for syncAndPersistDailyReport");
     }
+
+    logUserScope({ resolvedUserId: userId }, "syncAndPersistDailyReport");
 
     const priorDate = AccountingService.previousLedgerDate(ledgerDate);
 

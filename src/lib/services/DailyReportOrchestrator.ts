@@ -130,6 +130,7 @@ export class DailyReportOrchestrator {
       {
         userId,
         texasAffiliateId: texasAffiliateId ?? creds.texas_affiliate_id,
+        texasUsername: creds.texas_username ?? creds.username,
         role: syncRole,
         credentials: {
           username: creds.username,

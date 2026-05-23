@@ -12,6 +12,8 @@ import {
 } from "@/lib/texas/with-authenticated-texas-client";
 import { serverCacheGet } from "@/lib/texas/server-cache";
 import type { TexasSubAgentsPayload } from "@/lib/texas/texas-live-sub-agents";
+import { assertCacheScope } from "@/lib/texas/texas-data-scope";
+import type { UserScopeContext } from "@/lib/security/user-context";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -42,28 +44,34 @@ export async function POST(request: Request) {
 
   return withAuthenticatedTexasClient(supabase, body, async ({ user, client }) => {
     const listCacheKey = `sub-agents:${user.id}:${ledgerDate}`;
-    const cachedList = serverCacheGet<TexasSubAgentsPayload>(listCacheKey);
-    const cachedAgent = cachedList?.agents.find(
-      (a) => a.affiliateId === affiliateId
-    );
+    const cachedList = serverCacheGet<
+      TexasSubAgentsPayload & { _scope?: UserScopeContext }
+    >(listCacheKey, user.id);
 
-    if (cachedAgent) {
-      const ledger = texasMetricsToDailyLedger(
-        affiliateId,
-        ledgerDate,
-        cachedAgent.metrics
+    if (cachedList) {
+      assertCacheScope(cachedList, user.id, listCacheKey);
+      const cachedAgent = cachedList.agents.find(
+        (a) => a.affiliateId === affiliateId
       );
-      return texasJsonResponse(
-        {
-          affiliate_id: affiliateId,
-          username: cachedAgent.username,
-          email: cachedAgent.email,
-          main_currency: cachedAgent.mainCurrency,
-          ledger,
-          source: "texas_api" as const,
-        },
-        200
-      );
+
+      if (cachedAgent) {
+        const ledger = texasMetricsToDailyLedger(
+          affiliateId,
+          ledgerDate,
+          cachedAgent.metrics
+        );
+        return texasJsonResponse(
+          {
+            affiliate_id: affiliateId,
+            username: cachedAgent.username,
+            email: cachedAgent.email,
+            main_currency: cachedAgent.mainCurrency,
+            ledger,
+            source: "texas_api" as const,
+          },
+          200
+        );
+      }
     }
 
     const detail = await fetchTexasAgentDetailLive(

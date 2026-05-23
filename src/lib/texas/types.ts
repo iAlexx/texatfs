@@ -173,6 +173,8 @@ export interface TexasCredentials {
 export interface TexasSyncUserContext {
   userId: string;
   texasAffiliateId: string | null;
+  /** Stored texas_username — used to validate API scope */
+  texasUsername?: string | null;
   role: "super_master" | "master" | "player";
   credentials: TexasCredentials;
 }
