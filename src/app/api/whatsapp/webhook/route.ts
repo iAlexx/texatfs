@@ -1,39 +1,43 @@
 /**
  * POST /api/whatsapp/webhook
  *
- * Receives events from the centralised WhatsApp gateway.
+ *  • Private DMs  → onboarding emoji handshake + group spawn
+ *  • Group chats  → cash payment state machine (✅/🛑)
  *
- *  Security:
- *    The header `x-webhook-secret` (or `X-Webhook-Secret`) MUST equal
- *    process.env.WHATSAPP_WEBHOOK_SECRET when that env var is set.
- *
- *  Behaviour:
- *    The route MUST return a 200 OK in < 1.5 s — message processing is
- *    fired in the background to prevent gateway retries.
- *
- *  Filtering:
- *    Only events whose normalised groupId ends with "@g.us" (group chats)
- *    are processed. The cash handler further checks event types and
- *    pending-confirmation matches.
+ * Always returns 200 OK quickly; heavy work runs in the background.
  */
 import { NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   normaliseWhatsAppWebhook,
+  normaliseWhatsAppPrivateWebhook,
   type RawWhatsAppWebhook,
 } from "@/lib/whatsapp/webhook-types";
 import { handleWhatsAppCashEvent } from "@/lib/whatsapp/cash-handler";
+import { handleWhatsAppOnboardingPrivate } from "@/lib/whatsapp/onboarding-handler";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
-/** Webhook must reply fast; background work is intentional. */
 export const maxDuration = 10;
 
-const GROUP_EVENT_PREFIXES = ["messages-group", "message.received", "message"];
+async function processWebhookPayload(
+  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  raw: RawWhatsAppWebhook
+): Promise<void> {
+  const privateMsg = normaliseWhatsAppPrivateWebhook(raw);
+  if (privateMsg) {
+    const handled = await handleWhatsAppOnboardingPrivate(supabase, privateMsg);
+    if (handled) return;
+  }
+
+  const groupMsg = normaliseWhatsAppWebhook(raw);
+  if (groupMsg) {
+    await handleWhatsAppCashEvent(supabase, groupMsg);
+  }
+}
 
 export async function POST(request: Request): Promise<Response> {
-  // ── 1. Secret guard ────────────────────────────────────────────────────────
   const expected = process.env.WHATSAPP_WEBHOOK_SECRET;
   if (expected) {
     const provided =
@@ -45,7 +49,6 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  // ── 2. Parse body ──────────────────────────────────────────────────────────
   let raw: RawWhatsAppWebhook;
   try {
     raw = (await request.json()) as RawWhatsAppWebhook;
@@ -53,26 +56,8 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // ── 3. Normalise & ack instantly ──────────────────────────────────────────
-  const msg = normaliseWhatsAppWebhook(raw);
-  if (!msg) {
-    // Non-message event (e.g. status updates) — ack and ignore.
-    return NextResponse.json({ ok: true, ignored: "no message data" });
-  }
-
-  // Only handle group-message events (private chats are explicitly skipped
-  // by the groupId/@g.us check inside normaliseWhatsAppWebhook too).
-  const isGroupEvent =
-    msg.eventType === "" ||
-    GROUP_EVENT_PREFIXES.some((p) => msg.eventType.startsWith(p));
-
-  if (!isGroupEvent) {
-    return NextResponse.json({ ok: true, ignored: "non-group event" });
-  }
-
-  // ── 4. Fire-and-forget processing ─────────────────────────────────────────
   const supabase = getSupabaseServiceClient();
-  void handleWhatsAppCashEvent(supabase, msg).catch((e) => {
+  void processWebhookPayload(supabase, raw).catch((e) => {
     console.error(
       "[whatsapp/webhook] async handler error:",
       e instanceof Error ? e.message : String(e)

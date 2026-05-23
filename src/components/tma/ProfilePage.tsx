@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   Gift,
   KeyRound,
+  Loader2,
   MessageCircle,
   Shield,
   User,
@@ -14,6 +15,10 @@ import { motion } from "framer-motion";
 import { useTelegram } from "@/components/providers/TelegramProvider";
 import { useHeroData, useRedeemLicense, useReferralData } from "@/hooks/use-tma-api";
 import { useLedgerSession, todayIsoDate } from "@/hooks/use-ledger-api";
+import {
+  useWhatsAppOnboardingStatus,
+  useRegisterWhatsAppPhone,
+} from "@/hooks/use-whatsapp-onboarding-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CircularProgress } from "@/components/ui/CircularProgress";
@@ -46,7 +51,7 @@ async function fireConfetti() {
 }
 
 export function ProfilePage() {
-  const { displayName } = useTelegram();
+  const { displayName, telegramUserId } = useTelegram();
   const hero     = useHeroData();
   const referral = useReferralData();
   const session  = useLedgerSession(todayIsoDate());
@@ -167,21 +172,59 @@ export function ProfilePage() {
       </section>
 
       {/* ── WhatsApp Tracking System ──────────────────────────────────────── */}
-      <WhatsAppTrackingInfo />
+      <WhatsAppTrackingInfo telegramUserId={telegramUserId} />
     </div>
   );
 }
 
 /* ── WhatsAppTrackingInfo ──────────────────────────────────────────────────── */
-/**
- * Centralised WhatsApp tracking system info card.
- * No interactive setup — sub-agent ↔ group mappings are administered server-side.
- */
-function WhatsAppTrackingInfo() {
-  const supportNumber = process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER ?? "";
-  const supportLink = supportNumber
-    ? `https://wa.me/${supportNumber.replace(/[^\d]/g, "")}`
-    : null;
+
+const COUNTRY_CODES = [
+  { code: "963", label: "🇸🇾 +963" },
+  { code: "961", label: "🇱🇧 +961" },
+  { code: "962", label: "🇯🇴 +962" },
+  { code: "964", label: "🇮🇶 +964" },
+  { code: "966", label: "🇸🇦 +966" },
+  { code: "971", label: "🇦🇪 +971" },
+  { code: "90", label: "🇹🇷 +90" },
+];
+
+function onboardingBadge(status: string | undefined) {
+  if (status === "VERIFIED_COMPLETED") {
+    return (
+      <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/30">
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        مفعّل
+      </span>
+    );
+  }
+  if (status === "PENDING_EMOJI") {
+    return (
+      <span className="rounded-full bg-amber-500/15 px-3 py-1 text-[10px] font-semibold text-amber-400 ring-1 ring-amber-500/30">
+        بانتظار التحقق
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-full bg-steel-800/60 px-3 py-1 text-[10px] text-steel-500 ring-1 ring-white/[0.06]">
+      غير مفعّل
+    </span>
+  );
+}
+
+function WhatsAppTrackingInfo({
+  telegramUserId,
+}: {
+  telegramUserId: number | null | undefined;
+}) {
+  const statusQuery = useWhatsAppOnboardingStatus(telegramUserId);
+  const register = useRegisterWhatsAppPhone();
+  const [countryCode, setCountryCode] = useState("963");
+  const [localPhone, setLocalPhone] = useState("");
+
+  const onboarding = statusQuery.data?.onboardingStatus ?? "PENDING_REGISTRATION";
+  const showForm =
+    onboarding === "PENDING_REGISTRATION" || onboarding === "PENDING_EMOJI";
 
   return (
     <motion.section
@@ -196,47 +239,120 @@ function WhatsAppTrackingInfo() {
           </div>
           <div>
             <p className="font-semibold text-foreground">نظام التتبع عبر واتساب</p>
-            <p className="text-[10px] text-steel-500">Texas Funds · WhatsApp Tracking</p>
+            <p className="text-[10px] text-steel-500">Texas Funds · مركزي</p>
           </div>
         </div>
-        <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/30">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          متصل
-        </span>
+        {statusQuery.isLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin text-steel-500" />
+        ) : (
+          onboardingBadge(onboarding)
+        )}
       </div>
 
-      <div className="space-y-3 px-5 py-4">
+      <div className="space-y-4 px-5 py-4">
         <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-2">
           <p className="font-semibold text-steel-300 mb-1">كيف يعمل النظام:</p>
+          <p>📱 سجّل رقم واتسابك، ثم أكّد عبر إيموجي في المحادثة الخاصة مع البوت.</p>
           <p>
-            📱 يتم ربط كل وكيل فرعي بمجموعة واتساب مخصصة، تتم إدارة الربط مركزياً
-            من قِبل فريق الدعم.
+            ✅ في مجموعة كل وكيل: <strong className="text-emerald-400">✅90000</strong>{" "}
+            (واصل منك) — رُد <strong className="text-emerald-400">1</strong> للتأكيد
           </p>
           <p>
-            ✅ اكتب <strong className="text-emerald-400">✅90000</strong> في مجموعة الوكيل لتسجيل
-            مبلغ <em>واصل منك</em>
-          </p>
-          <p>
-            🛑 اكتب <strong className="text-rose-400">🛑45000</strong> في مجموعة الوكيل لتسجيل
-            مبلغ <em>واصل الك</em>
-          </p>
-          <p>
-            ثم رُد على رسالة تأكيد البوت بكتابة{" "}
-            <strong className="text-emerald-400">1</strong> للتأكيد أو{" "}
-            <strong className="text-rose-400">2</strong> للإلغاء.
+            🛑 في مجموعة كل وكيل: <strong className="text-rose-400">🛑45000</strong>{" "}
+            (واصل الك) — رُد <strong className="text-rose-400">2</strong> للإلغاء
           </p>
         </div>
 
-        {supportLink && (
-          <a
-            href={supportLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20"
-          >
-            <MessageCircle className="h-3.5 w-3.5" />
-            التواصل مع الدعم لربط مجموعة جديدة
-          </a>
+        {onboarding === "VERIFIED_COMPLETED" && (
+          <div className="rounded-xl bg-emerald-500/10 px-4 py-3 ring-1 ring-emerald-500/25 text-[11px] text-emerald-300/90 space-y-1">
+            <p className="font-semibold text-emerald-400">✅ الحساب مفعّل بالكامل</p>
+            {statusQuery.data?.whatsappPhone && (
+              <p dir="ltr" className="font-mono text-steel-400">
+                +{statusQuery.data.whatsappPhone}
+              </p>
+            )}
+            <p>
+              مجموعات التتبع:{" "}
+              <strong className="text-emerald-400">
+                {statusQuery.data?.groupCount ?? 0}
+              </strong>
+            </p>
+          </div>
+        )}
+
+        {onboarding === "PENDING_EMOJI" && (
+          <div className="rounded-xl bg-amber-500/10 px-4 py-3 ring-1 ring-amber-500/25 text-[11px] text-amber-200/90 leading-relaxed">
+            <p className="font-semibold text-amber-400 mb-1">📩 تحقق من واتساب الآن</p>
+            <p>
+              أرسلنا لك رسالة خاصة. احفظ رقم البوت في جهات الاتصال، ثم رُد على الرسالة
+              بأي إيموجي أو سمايل لتفعيل النظام وإنشاء مجموعات الوكلاء تلقائياً.
+            </p>
+          </div>
+        )}
+
+        {showForm && (
+          <div className="space-y-3">
+            <label className="block text-[11px] font-medium text-steel-400">
+              رقم واتساب (مع رمز الدولة)
+            </label>
+            <div className="flex gap-2" dir="ltr">
+              <select
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value)}
+                disabled={register.isPending || onboarding === "PENDING_EMOJI"}
+                className="h-11 min-w-[7rem] rounded-xl border border-steel-border bg-obsidian/60 px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-emerald-500/40"
+              >
+                {COUNTRY_CODES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <Input
+                type="tel"
+                inputMode="numeric"
+                placeholder="9xx xxx xxxx"
+                value={localPhone}
+                onChange={(e) =>
+                  setLocalPhone(e.target.value.replace(/[^\d\s]/g, ""))
+                }
+                disabled={register.isPending || onboarding === "PENDING_EMOJI"}
+                className="h-11 flex-1 border-steel-border bg-obsidian/60 font-mono text-sm"
+              />
+            </div>
+
+            <Button
+              variant="gold"
+              className="w-full gap-2"
+              disabled={
+                register.isPending ||
+                !localPhone.trim() ||
+                onboarding === "PENDING_EMOJI"
+              }
+              onClick={() => {
+                register.mutate(
+                  { phone: localPhone.trim(), countryCode },
+                  {
+                    onSuccess: () => {
+                      toast.success("تم إرسال رسالة التفعيل إلى واتساب");
+                    },
+                    onError: (e) => {
+                      toast.error(e.message);
+                    },
+                  }
+                );
+              }}
+            >
+              {register.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  جاري المزامنة…
+                </>
+              ) : (
+                "تفعيل ومزامنة الحساب"
+              )}
+            </Button>
+          </div>
         )}
       </div>
     </motion.section>

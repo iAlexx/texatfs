@@ -5,6 +5,17 @@
  * normalise here in one place so the rest of the codebase stays clean.
  */
 
+/** Private (DM) message — used for emoji onboarding handshake. */
+export interface WhatsAppPrivateMessage {
+  eventType:       string;
+  /** User JID, e.g. 963988899474@s.whatsapp.net */
+  chatId:          string;
+  messageId:       string;
+  text:            string;
+  quotedMessageId: string | null;
+  timestamp:       number;
+}
+
 /** Internal canonical message representation passed to the cash handler. */
 export interface WhatsAppIncomingMessage {
   /** Event type, e.g. "messages-group.received" or "message.received". */
@@ -81,32 +92,65 @@ export function normaliseWhatsAppWebhook(
 ): WhatsAppIncomingMessage | null {
   const eventType = String(raw.event ?? raw.type ?? "");
   const data: RawWhatsAppData = raw.data ?? raw.payload ?? raw.message ?? raw;
+  const parsed = extractChatAndMessage(data);
 
-  const groupId =
+  if (!parsed.chatId || !parsed.messageId) return null;
+  if (!parsed.chatId.endsWith("@g.us")) return null;
+
+  return {
+    eventType,
+    groupId: parsed.chatId,
+    senderId: parsed.senderId,
+    messageId: parsed.messageId,
+    text: parsed.text,
+    quotedMessageId: parsed.quotedMessageId,
+    timestamp: parsed.timestamp,
+  };
+}
+
+function pickString(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function parseTimestamp(tsRaw: unknown): number {
+  if (typeof tsRaw === "number") {
+    return tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+  }
+  if (typeof tsRaw === "string") {
+    return Number(tsRaw) || Date.now();
+  }
+  return Date.now();
+}
+
+function extractChatAndMessage(data: RawWhatsAppData): {
+  chatId: string | undefined;
+  messageId: string | undefined;
+  text: string;
+  quotedMessageId: string | null;
+  senderId: string | null;
+  timestamp: number;
+} {
+  const chatId =
     pickString(data.chatId) ??
     pickString(data.groupId) ??
     pickString(data.remoteJid) ??
     pickString(data.from) ??
     pickString(data.key?.remoteJid);
 
-  if (!groupId) return null;
-  // Only process group chats (must end with @g.us). Private DMs are ignored.
-  if (!groupId.endsWith("@g.us")) return null;
-
   const messageId =
     pickString(data.messageId) ??
     pickString(data.id) ??
     pickString(data.key?.id);
 
-  if (!messageId) return null;
-
   const text =
-    pickString(data.body) ??
-    pickString(data.text) ??
-    pickString(data.message?.conversation) ??
-    pickString(data.message?.text) ??
-    pickString(data.message?.extendedTextMessage?.text) ??
-    "";
+    (
+      pickString(data.body) ??
+      pickString(data.text) ??
+      pickString(data.message?.conversation) ??
+      pickString(data.message?.text) ??
+      pickString(data.message?.extendedTextMessage?.text) ??
+      ""
+    ).trim();
 
   const quotedMessageId =
     pickString(data.quotedMessageId) ??
@@ -121,25 +165,42 @@ export function normaliseWhatsAppWebhook(
     pickString(data.key?.participant) ??
     null;
 
-  const tsRaw = data.timestamp ?? data.t;
-  const timestamp =
-    typeof tsRaw === "number"
-      ? (tsRaw < 1e12 ? tsRaw * 1000 : tsRaw)
-      : typeof tsRaw === "string"
-      ? Number(tsRaw) || Date.now()
-      : Date.now();
-
   return {
-    eventType,
-    groupId,
-    senderId,
+    chatId,
     messageId,
-    text:            text.trim(),
+    text,
     quotedMessageId,
-    timestamp,
+    senderId,
+    timestamp: parseTimestamp(data.timestamp ?? data.t),
   };
 }
 
-function pickString(v: unknown): string | undefined {
-  return typeof v === "string" && v.length > 0 ? v : undefined;
+/**
+ * Normalise a private DM webhook payload.
+ * Routing is by JID only (@s.whatsapp.net / @c.us) — never group @g.us.
+ */
+export function normaliseWhatsAppPrivateWebhook(
+  raw: RawWhatsAppWebhook
+): WhatsAppPrivateMessage | null {
+  const eventType = String(raw.event ?? raw.type ?? "");
+  const data: RawWhatsAppData = raw.data ?? raw.payload ?? raw.message ?? raw;
+  const parsed = extractChatAndMessage(data);
+
+  if (!parsed.chatId || !parsed.messageId) return null;
+  if (parsed.chatId.endsWith("@g.us")) return null;
+
+  const isPrivate =
+    parsed.chatId.endsWith("@s.whatsapp.net") ||
+    parsed.chatId.endsWith("@c.us");
+
+  if (!isPrivate) return null;
+
+  return {
+    eventType,
+    chatId: parsed.chatId,
+    messageId: parsed.messageId,
+    text: parsed.text,
+    quotedMessageId: parsed.quotedMessageId,
+    timestamp: parsed.timestamp,
+  };
 }

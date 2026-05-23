@@ -13,6 +13,7 @@ export interface WhatsAppAgentGroup {
   email:        string;
   group_id:     string;
   group_name:   string | null;
+  invite_link:  string | null;
   is_active:    boolean;
   created_at:   string;
   updated_at:   string;
@@ -63,6 +64,7 @@ export interface UpsertAgentGroupInput {
   email:       string;
   groupId:     string;
   groupName?:  string | null;
+  inviteLink?: string | null;
 }
 
 /**
@@ -83,6 +85,7 @@ export async function upsertAgentGroup(
         email:        input.email,
         group_id:     input.groupId,
         group_name:   input.groupName ?? null,
+        invite_link:  input.inviteLink ?? null,
         is_active:    true,
       },
       { onConflict: "user_id,affiliate_id", ignoreDuplicates: false }
