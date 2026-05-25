@@ -1,10 +1,7 @@
 import type { TexasHttpClient } from "@/lib/texas/texas-http-client";
 import { fetchAllSubAgentStatistics } from "@/lib/texas/fetch-sub-agent-statistics";
 import { fetchAllTexasChildren } from "@/lib/texas/fetch-texas-children";
-import {
-  fetchAgentTransfers,
-  sumTransferRecords,
-} from "@/lib/texas/fetch-agent-transfers";
+import { fetchAgentTransfers } from "@/lib/texas/fetch-agent-transfers";
 import {
   pickAffiliateId,
   texasRoleLabel,
@@ -100,33 +97,97 @@ function extractBalance(
   return 0;
 }
 
+function resolveTransferAmount(rec: Record<string, unknown>): number {
+  const AMOUNT_KEYS = ["amount", "value", "total", "chargeIn", "chargeOut", "sum"];
+  for (const key of AMOUNT_KEYS) {
+    const raw = rec[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const n = Math.abs(Number(String(raw).replace(/,/g, "")));
+    if (!Number.isNaN(n) && n > 0) return n;
+  }
+  return 0;
+}
+
+function resolveTransferType(rec: Record<string, unknown>): string {
+  const raw = rec.type ?? rec.typeId ?? rec.transferType ?? rec.actionType ?? "";
+  return String(raw).trim().toLowerCase();
+}
+
+function resolveId(rec: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = rec[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      return String(v).trim();
+    }
+  }
+  return "";
+}
+
 /**
- * Group transfer records by affiliateId and sum deposits/withdrawals per agent.
+ * Group transfer records by child affiliateId.
+ *
+ * Texas getAgentsTransfers records have `fromId`/`toId` (not `affiliateId`).
+ *   - Deposit:  money goes FROM master TO child → child.tebat
+ *   - Withdraw: money goes FROM child TO master → child.suhoubat
+ *
+ * We match `fromId`/`toId` against the set of known child affiliateIds
+ * to attribute each transfer to the correct sub-agent.
  */
 function groupTransfersByAffiliate(
-  records: AgentTransferRecord[]
+  records: AgentTransferRecord[],
+  childAffiliateIds: Set<string>
 ): Map<string, { tebat: number; suhoubat: number }> {
   const map = new Map<string, { tebat: number; suhoubat: number }>();
 
+  const ensure = (id: string) => {
+    if (!map.has(id)) map.set(id, { tebat: 0, suhoubat: 0 });
+    return map.get(id)!;
+  };
+
+  let matched = 0;
+  let skipped = 0;
+
+  if (records.length > 0) {
+    const s = records[0] as Record<string, unknown>;
+    log.info("transfer record sample for grouping", {
+      keys: Object.keys(s).sort().join(", "),
+      fromId: s.fromId,
+      toId: s.toId,
+      affiliateId: s.affiliateId,
+      type: s.type,
+      amount: s.amount,
+    });
+  }
+
   for (const rec of records) {
-    const aid = String(rec.affiliateId ?? "");
-    if (!aid) continue;
+    const bag = rec as Record<string, unknown>;
+    const fromId = resolveId(bag, "fromId", "from_id", "fromAffiliateId");
+    const toId = resolveId(bag, "toId", "to_id", "toAffiliateId");
+    const amount = resolveTransferAmount(bag);
+    const t = resolveTransferType(bag);
 
-    if (!map.has(aid)) {
-      map.set(aid, { tebat: 0, suhoubat: 0 });
-    }
-    const entry = map.get(aid)!;
-
-    const rawType = String(rec.type ?? "").trim().toLowerCase();
-    const rawAmount = Math.abs(
-      Number(String(rec.amount ?? "0").replace(/,/g, ""))
-    );
-    if (Number.isNaN(rawAmount)) continue;
-
-    if (rawType === "2" || rawType === "deposit") {
-      entry.tebat += rawAmount;
-    } else if (rawType === "3" || rawType === "withdraw") {
-      entry.suhoubat += rawAmount;
+    if (t === "2" || t === "deposit") {
+      if (toId && childAffiliateIds.has(toId)) {
+        ensure(toId).tebat += amount;
+        matched++;
+      } else if (fromId && childAffiliateIds.has(fromId)) {
+        ensure(fromId).tebat += amount;
+        matched++;
+      } else {
+        skipped++;
+      }
+    } else if (t === "3" || t === "withdraw") {
+      if (fromId && childAffiliateIds.has(fromId)) {
+        ensure(fromId).suhoubat += amount;
+        matched++;
+      } else if (toId && childAffiliateIds.has(toId)) {
+        ensure(toId).suhoubat += amount;
+        matched++;
+      } else {
+        skipped++;
+      }
+    } else {
+      skipped++;
     }
   }
 
@@ -134,6 +195,17 @@ function groupTransfersByAffiliate(
     entry.tebat = roundMoney(entry.tebat);
     entry.suhoubat = roundMoney(entry.suhoubat);
   }
+
+  log.info("transfers grouped by affiliate", {
+    totalRecords: records.length,
+    matched,
+    skipped,
+    uniqueAgents: map.size,
+    childAffiliateIdsCount: childAffiliateIds.size,
+    perAgent: Array.from(map.entries())
+      .map(([id, v]) => `${id}:dep=${v.tebat},wd=${v.suhoubat}`)
+      .join(" | "),
+  });
 
   return map;
 }
@@ -182,7 +254,14 @@ export async function fetchTexasSubAgentsLive(
 
   const statsRecords = statsResponse.result?.records ?? [];
   const statsById = indexStatisticsByAffiliate(statsRecords);
-  const transfersByAgent = groupTransfersByAffiliate(transferRecords);
+
+  const childAffiliateIds = new Set(
+    children.map((c) => String(c.affiliateId)).filter(Boolean)
+  );
+  const transfersByAgent = groupTransfersByAffiliate(
+    transferRecords,
+    childAffiliateIds
+  );
 
   log.info("API responses", {
     children: children.length,
@@ -302,10 +381,9 @@ export async function fetchTexasAgentDetailLive(
       (r) => pickAffiliateId(r) === affiliateId
     ) ?? null;
 
-  const agentTransfers = transferRecords.filter(
-    (r) => String(r.affiliateId) === affiliateId
-  );
-  const agentTotals = sumTransferRecords(agentTransfers);
+  const childIds = new Set([affiliateId]);
+  const transfersByAgent = groupTransfersByAffiliate(transferRecords, childIds);
+  const agentTx = transfersByAgent.get(affiliateId);
 
   const username = child
     ? child.username?.trim() || child.email?.trim() || affiliateId
@@ -313,7 +391,7 @@ export async function fetchTexasAgentDetailLive(
   const email = child?.email?.trim() || child?.username?.trim() || affiliateId;
   const balance = extractBalance(stats, child);
 
-  const metrics = buildMetrics(agentTotals.totalDeposit, agentTotals.totalWithdraw);
+  const metrics = buildMetrics(agentTx?.tebat ?? 0, agentTx?.suhoubat ?? 0);
 
   return {
     affiliateId,
