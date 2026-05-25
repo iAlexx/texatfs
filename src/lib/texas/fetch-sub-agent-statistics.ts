@@ -55,7 +55,7 @@ export async function fetchAllSubAgentStatistics(
   };
 
   log.info("fetching sub-agent statistics", {
-    filterKeys: Object.keys(filter),
+    filter: JSON.parse(JSON.stringify(filter)),
     pageSize: limit,
     paginate: options.paginate ?? true,
   });
@@ -78,11 +78,13 @@ export async function fetchAllSubAgentStatistics(
 
     const validated = parseTexasStatisticsResponse(response.data);
     if (!validated.ok) {
+      const raw = response.data as unknown as Record<string, unknown> | null;
       log.warn("invalid Texas statistics page", {
         start,
         error: validated.error,
-        responseType: typeof response.data,
-        hasStatus: response.data && typeof response.data === "object" ? "status" in response.data : false,
+        responseStatus: raw?.status,
+        resultType: raw?.result === null ? "null" : typeof raw?.result,
+        responseKeys: raw && typeof raw === "object" ? Object.keys(raw) : [],
       });
       throw new Error(
         `getSubAgentStatistics invalid response at start=${start}: ${validated.error}`

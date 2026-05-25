@@ -3,7 +3,7 @@ import { z } from "zod";
 const texasPagedResultSchema = z
   .object({
     records: z.unknown().optional(),
-    totalRecordsCount: z.union([z.string(), z.number()]).optional(),
+    totalRecordsCount: z.union([z.string(), z.number()]).optional().nullable(),
   })
   .passthrough();
 
@@ -11,7 +11,7 @@ const texasPagedResultSchema = z
 export const texasStatisticsResponseSchema = z
   .object({
     status: z.boolean(),
-    result: texasPagedResultSchema.optional(),
+    result: texasPagedResultSchema.optional().nullable(),
   })
   .passthrough();
 
@@ -20,8 +20,13 @@ export function parseTexasStatisticsResponse(raw: unknown):
   | { ok: false; error: string } {
   const result = texasStatisticsResponseSchema.safeParse(raw);
   if (result.success) return { ok: true, data: result.data };
+
+  const issues = result.error.issues.map(
+    (i) => `${i.path.join(".")}: ${i.message}`
+  ).join("; ");
+
   return {
     ok: false,
-    error: result.error.issues[0]?.message ?? "Invalid Texas API response",
+    error: issues || "Invalid Texas API response",
   };
 }
