@@ -42,13 +42,16 @@ function num(v: number | undefined | null): string {
 /* ─── Columns ─── */
 
 const COL_HEADERS = [
-  { key: "role",     label: "Role",       w: "w-[52px]" },
-  { key: "username", label: "Username",   w: "min-w-[120px] flex-1" },
-  { key: "tebat",    label: ar.tebat,     w: "w-[90px]" },
-  { key: "suhoubat", label: ar.suhoubat,  w: "w-[90px]" },
-  { key: "alFarq",   label: ar.alFarq,    w: "w-[80px]" },
-  { key: "alHarq",   label: ar.alHarq,    w: "w-[80px]" },
-  { key: "alNihai",  label: ar.alNihai,   w: "w-[130px]" },
+  { key: "role",       label: "Role",          w: "w-[48px]" },
+  { key: "username",   label: "Username",      w: "min-w-[110px] flex-1" },
+  { key: "tebat",      label: ar.tebat,        w: "w-[80px]" },
+  { key: "suhoubat",   label: ar.suhoubat,     w: "w-[80px]" },
+  { key: "alFarq",     label: ar.alFarq,       w: "w-[72px]" },
+  { key: "alHarq",     label: ar.alHarq,       w: "w-[72px]" },
+  { key: "waselMenho", label: ar.waselMenho,   w: "w-[78px]" },
+  { key: "waselEleih", label: ar.waselEleih,   w: "w-[78px]" },
+  { key: "baqiQadim",  label: ar.baqiQadim,    w: "w-[78px]" },
+  { key: "alNihai",    label: ar.alNihai,      w: "w-[130px]" },
 ] as const;
 
 /* ─── Main Panel ─── */
@@ -158,7 +161,7 @@ export function SubAgentsTabPanel({
 
       {/* ── Table ── */}
       <div className="overflow-x-auto">
-        <div className="min-w-[640px]">
+        <div className="min-w-[850px]">
           {/* Table header */}
           <div className="flex items-center border-b border-white/[0.08] bg-obsidian/60 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-steel-500">
             {COL_HEADERS.map((col) => (
@@ -247,28 +250,58 @@ function AgentRow({
       </button>
 
       {/* التعبئات */}
-      <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+      <div className="w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
         {num(m.tebat)}
       </div>
 
       {/* سحوبات */}
-      <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+      <div className="w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
         {num(m.suhoubat)}
       </div>
 
       {/* الفرق */}
-      <div className="w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+      <div className="w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
         {num(m.al_farq)}
       </div>
 
       {/* الحرق */}
       <div
         className={cn(
-          "w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          "w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px]",
           m.al_harq !== 0 ? "text-rose-400" : "text-steel-500"
         )}
       >
         {num(m.al_harq)}
+      </div>
+
+      {/* واصل منه */}
+      <div
+        className={cn(
+          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.wasel_menho > 0 ? "text-amber-400" : "text-steel-600"
+        )}
+      >
+        {num(m.wasel_menho)}
+      </div>
+
+      {/* واصل إليه */}
+      <div
+        className={cn(
+          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.wasel_eleih > 0 ? "text-sky-400" : "text-steel-600"
+        )}
+      >
+        {num(m.wasel_eleih)}
+      </div>
+
+      {/* باقي قديم */}
+      <div
+        className={cn(
+          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.baqi_qadim !== 0 ? "text-orange-400" : "text-steel-600"
+        )}
+      >
+        {num(m.baqi_qadim)}
       </div>
 
       {/* النهائي */}
