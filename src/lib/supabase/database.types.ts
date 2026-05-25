@@ -15,6 +15,10 @@ export interface DailyLedger {
   baqi_qadim: number;
   al_nihai: number;
   discrepancy_flag: boolean;
+  is_locked?: boolean;
+  closed_at?: string | null;
+  closed_by?: string | null;
+  close_reason?: string | null;
   updated_at: string;
 }
 

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AccountingRepository, DailyLedgerRow, PersistLedgerPayload } from "@/lib/accounting/types";
 import type { NormalizedTexasSnapshot } from "@/lib/texas/types";
 import { snapshotFingerprint } from "@/lib/accounting/ledger-engine";
+import { assertLedgerWritable } from "@/lib/accounting/ledger-lock";
 import { assertMatchingUserId } from "@/lib/security/user-context";
 
 const SYNC_LOCK_TTL_MS = 10 * 60 * 1000;
@@ -135,6 +136,17 @@ export class SupabaseAccountingRepository implements AccountingRepository {
   }
 
   async upsertOpenLedger(payload: PersistLedgerPayload): Promise<DailyLedgerRow> {
+    const { data: existing } = await this.supabase
+      .from("daily_ledgers")
+      .select("id, is_locked, status")
+      .eq("user_id", payload.userId)
+      .eq("ledger_date", payload.ledgerDate)
+      .maybeSingle();
+
+    if (existing?.id) {
+      await assertLedgerWritable(this.supabase, existing.id as string);
+    }
+
     const { data, error } = await this.supabase
       .from("daily_ledgers")
       .upsert(

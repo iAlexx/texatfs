@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { flagLedgerDiscrepancyIfNeeded } from "@/lib/accounting/ledger-integrity";
+import { assertLedgerWritable } from "@/lib/accounting/ledger-lock";
 
 import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 
@@ -105,6 +106,7 @@ async function ensureDailyLedgerId(
 
   if (existing?.id) {
     assertMatchingUserId(userId, existing.user_id as string, "ensureDailyLedgerId");
+    await assertLedgerWritable(supabase, existing.id as string);
     return existing.id as string;
   }
 
@@ -154,6 +156,7 @@ async function ensureDailyLedgerId(
 
       if (raced?.id) {
         assertMatchingUserId(userId, raced.user_id as string, "ensureDailyLedgerId");
+        await assertLedgerWritable(supabase, raced.id as string);
         return raced.id as string;
       }
 

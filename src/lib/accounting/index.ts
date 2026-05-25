@@ -30,6 +30,18 @@ export {
   ledgerSyncKey,
 } from "@/lib/accounting/ledger-sync-flight";
 export {
+  closeDailyLedger,
+  buildCalculationTrace,
+  validateClosePreconditions,
+  type CloseDailyLedgerResult,
+  type CalculationTrace,
+} from "@/lib/accounting/ledger-closer";
+export {
+  assertLedgerWritable,
+  LedgerLockError,
+  mapRpcErrorToLedgerLockError,
+} from "@/lib/accounting/ledger-lock";
+export {
   discrepancyDetailFromIntegrity,
   flagLedgerDiscrepancyIfNeeded,
   validateLedgerIntegrity,

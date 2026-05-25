@@ -56,6 +56,18 @@ export async function ensureFreshLedgerForUser(
   options?: { force?: boolean }
 ): Promise<EnsureSyncResult> {
   const date = ledgerDate ?? resolveLedgerDate();
+
+  const { data: lockedRow } = await supabase
+    .from("daily_ledgers")
+    .select("id, is_locked, status")
+    .eq("user_id", userId)
+    .eq("ledger_date", date)
+    .maybeSingle();
+
+  if (lockedRow?.is_locked || lockedRow?.status === "closed") {
+    return { synced: false, reason: "FRESH" };
+  }
+
   const started = Date.now();
 
   let creds;
