@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTelegram } from "@/components/providers/TelegramProvider";
 import type { DailyLedger } from "@/lib/supabase/database.types";
 import type { TexasSubAgentsPayload } from "@/lib/texas/texas-live-sub-agents";
+import type { NetworkPayload } from "@/lib/hierarchy/types";
 
 function authBody(initData: string, telegramUserId: number | null) {
   return {
@@ -67,6 +68,34 @@ export interface TexasAgentDetailResponse {
  * staleTime: 0 means React Query always re-fetches when the component mounts
  * or the window regains focus. No stale stats from the list view are sent.
  */
+/**
+ * DB-backed network data — direct children with ledgers and children counts.
+ * Used by the Sub-Agents tab for accurate, hierarchy-aware data.
+ */
+export function useNetworkData(
+  ledgerDate: string,
+  enabled: boolean,
+  directOnly = true
+) {
+  const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
+
+  return useQuery({
+    queryKey: ["network", ledgerDate, directOnly, telegramUserId, initData],
+    enabled: isReady && canAuthenticate && enabled,
+    queryFn: () =>
+      postJson<NetworkPayload>("/api/ledger/get-network", {
+        ...authBody(initData, telegramUserId),
+        ledgerDate,
+        directOnly,
+        syncStale: false,
+      }),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    retry: 1,
+    refetchOnWindowFocus: true,
+  });
+}
+
 export function useTexasAgentDetail(
   affiliateId: string | null,
   ledgerDate: string,

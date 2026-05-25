@@ -39,12 +39,15 @@ export interface NetworkMember {
   id: string;
   display_name: string | null;
   texas_username: string | null;
+  texas_affiliate_id: string | null;
   telegram_id: number | null;
   role: UserRole;
   parent_id: string | null;
   depth: number;
   is_active: boolean;
   ledger: AgentLedgerSummary | null;
+  /** Number of direct children this member has (only populated when requested) */
+  direct_children_count?: number;
 }
 
 export interface NetworkStats {

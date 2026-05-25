@@ -13,6 +13,8 @@ interface Body extends LedgerAuthInput {
   ledgerDate?: string;
   /** Refresh stale per-user Texas syncs before building network */
   syncStale?: boolean;
+  /** Only return direct children (depth=1) with children counts */
+  directOnly?: boolean;
 }
 
 function todayIsoDate(): string {
@@ -51,7 +53,8 @@ export async function POST(request: Request) {
       supabase,
       user.id,
       user.role,
-      ledgerDate
+      ledgerDate,
+      { directOnly: body.directOnly ?? false }
     );
 
     return NextResponse.json(network);

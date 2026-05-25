@@ -17,8 +17,8 @@ import {
   todayIsoDate,
 } from "@/hooks/use-ledger-api";
 import {
+  useNetworkData,
   useTexasAgentDetail,
-  useTexasSubAgents,
 } from "@/hooks/use-texas-agents-api";
 import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
 import { ar } from "@/lib/i18n/ar";
@@ -45,10 +45,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
     ? canManageNetwork(session.data.user.role)
     : false;
 
-  // Start fetching as soon as the user is authenticated and navigates to the agents
-  // tab — do NOT wait for session.data?.user (removes 1-3s sequential delay).
-  // The server returns 403 for non-masters, which renders as an error state in the panel.
-  const texasSubAgents = useTexasSubAgents(
+  const networkQuery = useNetworkData(
     selectedDate,
     telegram.isReady &&
       telegram.canAuthenticate &&
@@ -168,6 +165,12 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
     setActiveTab("account");
   }
 
+  function selectNetworkAgent(userId: string, label: string) {
+    setViewTexasAffiliateId(userId);
+    setViewAgentLabel(label);
+    setActiveTab("account");
+  }
+
   function returnToMaster() {
     setViewTexasAffiliateId(null);
     setViewAgentLabel(null);
@@ -244,11 +247,11 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
 
       {activeTab === "agents" && showAgentsTab ? (
         <SubAgentsTabPanel
-          data={texasSubAgents.data}
-          isLoading={texasSubAgents.isLoading}
-          error={texasSubAgents.error}
-          onRetry={() => void texasSubAgents.refetch()}
-          onSelectAgent={selectTexasAgent}
+          data={networkQuery.data}
+          isLoading={networkQuery.isLoading}
+          error={networkQuery.error}
+          onRetry={() => void networkQuery.refetch()}
+          onSelectAgent={selectNetworkAgent}
         />
       ) : null}
 

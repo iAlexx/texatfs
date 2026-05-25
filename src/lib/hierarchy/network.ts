@@ -114,27 +114,51 @@ function computeStats(
   };
 }
 
+export interface FetchNetworkOptions {
+  /** Only return direct children (depth=1) instead of full subtree */
+  directOnly?: boolean;
+}
+
 export async function fetchNetworkPayload(
   supabase: SupabaseClient,
   viewerId: string,
   viewerRole: UserRole,
-  ledgerDate: string
+  ledgerDate: string,
+  options?: FetchNetworkOptions
 ): Promise<NetworkPayload> {
-  const descendantRefs =
-    viewerRole === "super_master" ||
-    viewerRole === "master" ||
-    viewerRole === "agent"
-      ? await fetchDescendantMembers(supabase, viewerId)
-      : [];
+  const directOnly = options?.directOnly ?? false;
 
-  const ids = descendantRefs.map((d) => d.id);
-  const depthById = new Map(descendantRefs.map((d) => [d.id, d.depth]));
+  let ids: string[];
+  let depthById: Map<string, number>;
+
+  if (directOnly) {
+    const { data: directChildren, error: dcErr } = await supabase
+      .from("users")
+      .select("id")
+      .eq("parent_id", viewerId)
+      .eq("is_active", true);
+
+    if (dcErr) throw dcErr;
+
+    ids = (directChildren ?? []).map((u) => u.id);
+    depthById = new Map(ids.map((id) => [id, 1]));
+  } else {
+    const descendantRefs =
+      viewerRole === "super_master" ||
+      viewerRole === "master" ||
+      viewerRole === "agent"
+        ? await fetchDescendantMembers(supabase, viewerId)
+        : [];
+
+    ids = descendantRefs.map((d) => d.id);
+    depthById = new Map(descendantRefs.map((d) => [d.id, d.depth]));
+  }
 
   const { data: users, error: usersError } = ids.length
     ? await supabase
         .from("users")
         .select(
-          "id, display_name, texas_username, telegram_id, role, parent_id, is_active"
+          "id, display_name, texas_username, texas_affiliate_id, telegram_id, role, parent_id, is_active"
         )
         .in("id", ids)
     : { data: [], error: null };
@@ -143,31 +167,37 @@ export async function fetchNetworkPayload(
 
   const ledgerByUser = await loadLedgersForUsers(supabase, ids, ledgerDate);
 
-  const { data: ownRow } = await supabase
-    .from("daily_ledgers")
-    .select(LEDGER_SELECT)
-    .eq("user_id", viewerId)
-    .eq("ledger_date", ledgerDate)
-    .maybeSingle();
+  const [{ data: ownRow }, childCountMap] = await Promise.all([
+    supabase
+      .from("daily_ledgers")
+      .select(LEDGER_SELECT)
+      .eq("user_id", viewerId)
+      .eq("ledger_date", ledgerDate)
+      .maybeSingle(),
+    directOnly
+      ? loadDirectChildrenCounts(supabase, ids)
+      : Promise.resolve(new Map<string, number>()),
+  ]);
 
   const ownLedger = ownRow ? toAgentSummary(mapLedgerRow(ownRow)) : null;
 
   const members: NetworkMember[] = (users ?? [])
     .filter((u) => u.is_active !== false)
-    .map((u) => {
-      const full = ledgerByUser.get(u.id);
-      return {
-        id: u.id,
-        display_name: u.display_name,
-        texas_username: u.texas_username,
-        telegram_id: u.telegram_id ?? null,
-        role: u.role as UserRole,
-        parent_id: u.parent_id,
-        depth: depthById.get(u.id) ?? 1,
-        is_active: u.is_active,
-        ledger: full ? toAgentSummary(full) : null,
-      };
-    })
+    .map((u) => ({
+      id: u.id,
+      display_name: u.display_name,
+      texas_username: u.texas_username,
+      texas_affiliate_id: u.texas_affiliate_id ?? null,
+      telegram_id: u.telegram_id ?? null,
+      role: u.role as UserRole,
+      parent_id: u.parent_id,
+      depth: depthById.get(u.id) ?? 1,
+      is_active: u.is_active,
+      ledger: ledgerByUser.has(u.id)
+        ? toAgentSummary(ledgerByUser.get(u.id)!)
+        : null,
+      ...(directOnly ? { direct_children_count: childCountMap.get(u.id) ?? 0 } : {}),
+    }))
     .sort(compareNetworkMembers);
 
   const stats = computeStats(viewerRole, viewerId, members, ownLedger);
@@ -180,6 +210,28 @@ export async function fetchNetworkPayload(
     members,
     own_ledger: ownLedger,
   };
+}
+
+async function loadDirectChildrenCounts(
+  supabase: SupabaseClient,
+  parentIds: string[]
+): Promise<Map<string, number>> {
+  if (!parentIds.length) return new Map();
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("parent_id")
+    .in("parent_id", parentIds)
+    .eq("is_active", true);
+
+  if (error) return new Map();
+
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const pid = row.parent_id as string;
+    counts.set(pid, (counts.get(pid) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** Back-compat for hero + legacy hierarchy consumers */
