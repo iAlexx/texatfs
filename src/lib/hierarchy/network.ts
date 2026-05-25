@@ -4,6 +4,7 @@ import type { DailyLedger, UserRole } from "@/lib/supabase/database.types";
 import type {
   AgentLedgerSummary,
   NetworkMember,
+  NetworkMemberSnapshot,
   NetworkPayload,
   NetworkStats,
 } from "@/lib/hierarchy/types";
@@ -52,6 +53,35 @@ async function loadLedgersForUsers(
   return new Map(
     (data ?? []).map((row) => [row.user_id as string, mapLedgerRow(row)])
   );
+}
+
+async function loadLatestSnapshots(
+  supabase: SupabaseClient,
+  userIds: string[],
+  ledgerDate: string
+): Promise<Map<string, NetworkMemberSnapshot>> {
+  if (!userIds.length) return new Map();
+
+  const { data, error } = await supabase
+    .from("api_snapshots")
+    .select("user_id, balance, total_deposit, total_withdraw")
+    .in("user_id", userIds)
+    .eq("ledger_date", ledgerDate)
+    .order("captured_at", { ascending: false });
+
+  if (error || !data) return new Map();
+
+  const map = new Map<string, NetworkMemberSnapshot>();
+  for (const row of data) {
+    const uid = row.user_id as string;
+    if (map.has(uid)) continue;
+    map.set(uid, {
+      balance: Number(row.balance),
+      total_deposit: Number(row.total_deposit),
+      total_withdraw: Number(row.total_withdraw),
+    });
+  }
+  return map;
 }
 
 /** Full recursive subtree via Phase 7 RPC */
@@ -165,7 +195,10 @@ export async function fetchNetworkPayload(
 
   if (usersError) throw usersError;
 
-  const ledgerByUser = await loadLedgersForUsers(supabase, ids, ledgerDate);
+  const [ledgerByUser, snapshotByUser] = await Promise.all([
+    loadLedgersForUsers(supabase, ids, ledgerDate),
+    loadLatestSnapshots(supabase, ids, ledgerDate),
+  ]);
 
   const [{ data: ownRow }, childCountMap] = await Promise.all([
     supabase
@@ -196,6 +229,7 @@ export async function fetchNetworkPayload(
       ledger: ledgerByUser.has(u.id)
         ? toAgentSummary(ledgerByUser.get(u.id)!)
         : null,
+      snapshot: snapshotByUser.get(u.id) ?? null,
       ...(directOnly ? { direct_children_count: childCountMap.get(u.id) ?? 0 } : {}),
     }))
     .sort(compareNetworkMembers);

@@ -35,6 +35,12 @@ export interface HierarchyPayload {
   sub_agents: SubAgentSummary[];
 }
 
+export interface NetworkMemberSnapshot {
+  balance: number;
+  total_deposit: number;
+  total_withdraw: number;
+}
+
 export interface NetworkMember {
   id: string;
   display_name: string | null;
@@ -46,6 +52,8 @@ export interface NetworkMember {
   depth: number;
   is_active: boolean;
   ledger: AgentLedgerSummary | null;
+  /** Latest api_snapshot balance data */
+  snapshot: NetworkMemberSnapshot | null;
   /** Number of direct children this member has (only populated when requested) */
   direct_children_count?: number;
 }
