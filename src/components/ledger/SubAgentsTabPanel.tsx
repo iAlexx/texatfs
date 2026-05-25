@@ -42,16 +42,16 @@ function num(v: number | undefined | null): string {
 /* ─── Columns ─── */
 
 const COL_HEADERS = [
-  { key: "role",       label: "Role",          w: "w-[48px]" },
-  { key: "username",   label: "Username",      w: "min-w-[110px] flex-1" },
-  { key: "tebat",      label: ar.tebat,        w: "w-[80px]" },
-  { key: "suhoubat",   label: ar.suhoubat,     w: "w-[80px]" },
-  { key: "alFarq",     label: ar.alFarq,       w: "w-[72px]" },
-  { key: "alHarq",     label: ar.alHarq,       w: "w-[72px]" },
-  { key: "waselMenho", label: ar.waselMenho,   w: "w-[78px]" },
-  { key: "waselEleih", label: ar.waselEleih,   w: "w-[78px]" },
-  { key: "baqiQadim",  label: ar.baqiQadim,    w: "w-[78px]" },
-  { key: "alNihai",    label: ar.alNihai,      w: "w-[130px]" },
+  { key: "role",       label: "Role",            w: "w-[48px]" },
+  { key: "username",   label: "Username",        w: "min-w-[110px] flex-1" },
+  { key: "balance",    label: ar.sectionBalance,  w: "w-[82px]" },
+  { key: "tebat",      label: ar.tebat,          w: "w-[78px]" },
+  { key: "suhoubat",   label: ar.suhoubat,       w: "w-[78px]" },
+  { key: "alHarq",     label: ar.alHarq,         w: "w-[72px]" },
+  { key: "waselMenho", label: ar.waselMenho,     w: "w-[78px]" },
+  { key: "waselEleih", label: ar.waselEleih,     w: "w-[78px]" },
+  { key: "baqiQadim",  label: ar.baqiQadim,      w: "w-[78px]" },
+  { key: "alNihai",    label: ar.alNihai,        w: "w-[130px]" },
 ] as const;
 
 /* ─── Main Panel ─── */
@@ -249,19 +249,24 @@ function AgentRow({
         <ChevronLeft className="h-3 w-3 shrink-0 text-steel-700" strokeWidth={1.5} />
       </button>
 
+      {/* الرصيد */}
+      <div
+        className={cn(
+          "w-[82px] shrink-0 px-1.5 text-center font-mono text-[11px] font-semibold",
+          agent.balance > 0 ? "text-gold" : "text-steel-500"
+        )}
+      >
+        {num(agent.balance)}
+      </div>
+
       {/* التعبئات */}
-      <div className="w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+      <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
         {num(m.tebat)}
       </div>
 
       {/* سحوبات */}
-      <div className="w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+      <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
         {num(m.suhoubat)}
-      </div>
-
-      {/* الفرق */}
-      <div className="w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
-        {num(m.al_farq)}
       </div>
 
       {/* الحرق */}

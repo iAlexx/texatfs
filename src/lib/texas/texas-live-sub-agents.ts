@@ -7,10 +7,14 @@ import {
   texasRoleLabel,
   type TexasLiveLedgerMetrics,
 } from "@/lib/texas/texas-live-ledger";
+import { pickNumeric, walletMapping } from "@/lib/texas/field-resolver";
+import { createLogger } from "@/lib/observability/logger";
 import type {
   SubAgentStatisticsRecord,
   TexasChildRecord,
 } from "@/lib/texas/types";
+
+const log = createLogger("texas/live-sub-agents");
 
 export interface TexasSubAgentRow {
   affiliateId: string;
@@ -18,6 +22,8 @@ export interface TexasSubAgentRow {
   email: string;
   texasRole: string;
   mainCurrency: string;
+  /** Wallet balance from Texas portal (currentWallet field) */
+  balance: number;
   metrics: TexasLiveLedgerMetrics;
 }
 
@@ -63,7 +69,12 @@ function indexStatisticsByAffiliate(
   return map;
 }
 
-/** Live sub-agents: Texas portal movement only (getChildren + getSubAgentStatistics). */
+function extractBalance(stats: SubAgentStatisticsRecord | null): number {
+  if (!stats) return 0;
+  return pickNumeric(stats as Record<string, unknown>, walletMapping.balance);
+}
+
+/** Live sub-agents: Texas portal data (getChildren + getSubAgentStatistics). */
 export async function fetchTexasSubAgentsLive(
   client: TexasHttpClient,
   ledgerDate: string
@@ -73,14 +84,32 @@ export async function fetchTexasSubAgentsLive(
     fetchAllSubAgentStatistics(client, { paginate: true }),
   ]);
 
-  const statsById = indexStatisticsByAffiliate(
-    statsResponse.result?.records ?? []
-  );
+  const statsRecords = statsResponse.result?.records ?? [];
+  const statsById = indexStatisticsByAffiliate(statsRecords);
+
+  // Log the first raw stats row to help diagnose field availability
+  if (statsRecords.length > 0) {
+    const sample = statsRecords[0] as Record<string, unknown>;
+    log.info("raw stats row sample", {
+      keys: Object.keys(sample).sort().join(", "),
+      affiliateId: sample.affiliateId,
+      currentWallet: sample.currentWallet,
+      balance: sample.balance,
+      totalDeposit: sample.totalDeposit,
+      totalWithdraw: sample.totalWithdraw,
+      ngr: sample.ngr,
+    });
+  } else {
+    log.warn("getSubAgentStatistics returned 0 records", {
+      childrenCount: children.length,
+    });
+  }
 
   const agents: TexasSubAgentRow[] = children.map((child) => {
     const affiliateId = String(child.affiliateId);
     const stats = statsById.get(affiliateId) ?? null;
     const metrics = metricsFromTexasSources(stats);
+    const balance = extractBalance(stats);
 
     return {
       affiliateId,
@@ -88,6 +117,7 @@ export async function fetchTexasSubAgentsLive(
       email: child.email?.trim() || child.username?.trim() || affiliateId,
       texasRole: texasRoleLabel(child.role),
       mainCurrency: child.mainCurrency?.trim() || "NSP",
+      balance,
       metrics,
     };
   });
@@ -98,7 +128,7 @@ export async function fetchTexasSubAgentsLive(
 
   for (const agent of agents) {
     totalBurn += agent.metrics.al_harq;
-    combinedBalance += agent.metrics.al_nihai;
+    combinedBalance += agent.balance;
     if (!highest || agent.metrics.al_harq > highest.al_harq) {
       highest = {
         affiliateId: agent.affiliateId,
@@ -107,6 +137,13 @@ export async function fetchTexasSubAgentsLive(
       };
     }
   }
+
+  log.info("sub-agents built", {
+    childrenCount: children.length,
+    statsRecords: statsRecords.length,
+    agentsWithBalance: agents.filter((a) => a.balance > 0).length,
+    agentsWithMetrics: agents.filter((a) => a.metrics.tebat > 0 || a.metrics.suhoubat > 0).length,
+  });
 
   return {
     ledger_date: ledgerDate,

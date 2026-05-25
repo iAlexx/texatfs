@@ -152,7 +152,7 @@ function enrichPayload(
     };
 
     totalBurn += enrichedAgent.metrics.al_harq;
-    combinedBalance += enrichedAgent.metrics.al_nihai;
+    combinedBalance += enrichedAgent.balance;
     if (!highest || enrichedAgent.metrics.al_harq > highest.al_harq) {
       highest = {
         affiliateId: enrichedAgent.affiliateId,
