@@ -76,16 +76,22 @@ function extractRecordAmount(record: AgentTransferRecord): { amount: number; fie
   return { amount: 0, field: null };
 }
 
+function resolveRecordType(record: AgentTransferRecord): string {
+  const raw = record.type ?? (record as Record<string, unknown>).typeId ?? "";
+  return String(raw).trim().toLowerCase();
+}
+
 function isDepositType(record: AgentTransferRecord): boolean {
-  const t = String(record.type ?? (record as Record<string, unknown>).typeId ?? "");
-  return t === DEPOSIT_TYPE;
+  const t = resolveRecordType(record);
+  return t === DEPOSIT_TYPE || t === "deposit";
 }
 
 function isWithdrawType(record: AgentTransferRecord): boolean {
-  const t = String(record.type ?? (record as Record<string, unknown>).typeId ?? "");
-  return t === WITHDRAW_TYPE;
+  const t = resolveRecordType(record);
+  return t === WITHDRAW_TYPE || t === "withdraw";
 }
 
+let _transferTypeLogged = false;
 let _transferDiagnosticsLogged = false;
 
 export interface FetchAgentTransfersOptions {
@@ -225,6 +231,9 @@ export function sumTransferRecords(
   let totalDeposit = 0;
   let totalWithdraw = 0;
   let amountFieldUsed: string | null = null;
+  let depositCount = 0;
+  let withdrawCount = 0;
+  let unmatchedCount = 0;
 
   for (const record of records) {
     const { amount, field } = extractRecordAmount(record);
@@ -234,9 +243,26 @@ export function sumTransferRecords(
 
     if (isDepositType(record)) {
       totalDeposit += amount;
+      depositCount += 1;
     } else if (isWithdrawType(record)) {
       totalWithdraw += amount;
+      withdrawCount += 1;
+    } else {
+      unmatchedCount += 1;
     }
+  }
+
+  if (!_transferTypeLogged && records.length > 0) {
+    _transferTypeLogged = true;
+    const sampleType = records[0].type ?? (records[0] as Record<string, unknown>).typeId ?? "missing";
+    log.info("transfer type classification", {
+      sampleRawType: sampleType,
+      resolvedAs: resolveRecordType(records[0]),
+      depositCount,
+      withdrawCount,
+      unmatchedCount,
+      totalRecords: records.length,
+    });
   }
 
   if (amountFieldUsed) {
