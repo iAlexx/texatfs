@@ -58,18 +58,28 @@ async function main() {
   const { TexasSyncService } = await import(
     "../src/lib/services/TexasSyncService"
   );
+  const { withPuppeteerResilience } = await import(
+    "../src/lib/texas/puppeteer-resilience"
+  );
 
   const service = new TexasSyncService();
   const pageSize = Number(process.env.TEXAS_SYNC_PAGE_SIZE ?? 1000);
+  const userId = process.env.TEXAS_SYNC_USER_ID ?? "live-smoke-test";
+  const role = parseRole(process.env.TEXAS_SYNC_ROLE);
 
-  const result = await service.syncUser(
-    {
-      userId: process.env.TEXAS_SYNC_USER_ID ?? "live-smoke-test",
-      texasAffiliateId: process.env.TEXAS_SYNC_AFFILIATE_ID || null,
-      role: parseRole(process.env.TEXAS_SYNC_ROLE),
-      credentials: { username, password },
-    },
-    { pageSize }
+  const result = await withPuppeteerResilience(
+    () =>
+      service.syncUser(
+        {
+          userId,
+          texasAffiliateId: process.env.TEXAS_SYNC_AFFILIATE_ID || null,
+          role,
+          credentials: { username, password },
+        },
+        { pageSize }
+      ),
+    "live-texas-sync",
+    { userId, maxRetries: 2 }
   );
 
   const records = Array.isArray(result.snapshot.rawStatistics.records)
@@ -83,7 +93,7 @@ async function main() {
         ok: true,
         baseUrl: new URL(baseUrl).origin,
         userId: result.userId,
-        role: parseRole(process.env.TEXAS_SYNC_ROLE),
+        role,
         affiliateScoped: Boolean(process.env.TEXAS_SYNC_AFFILIATE_ID),
         pagesFetched: result.pagesFetched,
         recordCount: result.recordCount,
@@ -107,13 +117,24 @@ async function main() {
   );
 }
 
-main().catch((error: unknown) => {
+main().catch(async (error: unknown) => {
+  const { classifyPuppeteerError, isRetryable, isAlertWorthy } = await import(
+    "../src/lib/texas/puppeteer-errors"
+  );
+
   const message = error instanceof Error ? error.message : String(error);
+  const errorType = classifyPuppeteerError(error);
+
   console.error(
     JSON.stringify(
       {
         ok: false,
         error: message,
+        classification: {
+          type: errorType,
+          retryable: isRetryable(errorType),
+          alertWorthy: isAlertWorthy(errorType),
+        },
       },
       null,
       2

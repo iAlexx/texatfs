@@ -21,12 +21,19 @@ async function main() {
     "../src/lib/texas/texas-proxy"
   );
   const { texasBrowserSignIn } = await import("../src/lib/texas/texas-puppeteer-login");
+  const { classifyPuppeteerError, isRetryable, isAlertWorthy } = await import(
+    "../src/lib/texas/puppeteer-errors"
+  );
+  const { withPuppeteerResilience } = await import(
+    "../src/lib/texas/puppeteer-resilience"
+  );
 
   const user = process.env.TEXAS_SYNC_USERNAME;
   const pass = process.env.TEXAS_SYNC_PASSWORD;
   if (!user || !pass) throw new Error("Set TEXAS_SYNC_USERNAME and TEXAS_SYNC_PASSWORD in .env.local");
 
   const { isLocalDebugMode } = await import("../src/lib/texas/texas-browser-config");
+  const useResilience = process.env.PROBE_RESILIENCE !== "false";
 
   console.log(
     JSON.stringify({
@@ -34,10 +41,18 @@ async function main() {
       proxyEnabled: isTexasProxyEnabled(),
       proxy: getTexasProxyLogLabel(),
       browserless: Boolean(process.env.BROWSERLESS_WS_ENDPOINT),
+      resilienceEnabled: useResilience,
     })
   );
 
-  const result = await texasBrowserSignIn({ username: user, password: pass });
+  const doSignIn = () => texasBrowserSignIn({ username: user, password: pass });
+
+  const result = useResilience
+    ? await withPuppeteerResilience(doSignIn, "probe-texas-browser", {
+        userId: "probe-script",
+        maxRetries: 1,
+      })
+    : await doSignIn();
 
   console.log(
     JSON.stringify(
@@ -57,7 +72,28 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch(async (e) => {
+  const { classifyPuppeteerError, isRetryable, isAlertWorthy } = await import(
+    "../src/lib/texas/puppeteer-errors"
+  );
+
+  const errorType = classifyPuppeteerError(e);
+  const message = e instanceof Error ? e.message : String(e);
+
+  console.error(
+    JSON.stringify(
+      {
+        ok: false,
+        error: message,
+        classification: {
+          type: errorType,
+          retryable: isRetryable(errorType),
+          alertWorthy: isAlertWorthy(errorType),
+        },
+      },
+      null,
+      2
+    )
+  );
   process.exit(1);
 });

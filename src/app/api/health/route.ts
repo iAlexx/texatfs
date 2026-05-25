@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { NextResponse } from "next/server";
 import { isRailwayRuntime } from "@/lib/texas/texas-browser-config";
+import { getPuppeteerSyncStatus } from "@/lib/texas/puppeteer-resilience";
 import {
   getScraperCircuitStatus,
   resetScraperCircuit,
@@ -16,6 +17,8 @@ export async function GET() {
     `${process.cwd()}/scripts/puppeteer-runtime.cjs`
   );
 
+  const puppeteerSync = getPuppeteerSyncStatus();
+
   return NextResponse.json({
     status: "ok",
     service: "texas-funds-calculate",
@@ -25,6 +28,16 @@ export async function GET() {
       executablePath: chromiumPath ?? null,
       chromiumOnDisk: chromiumPath ? existsSync(chromiumPath) : false,
       runtimeLoader: puppeteerRuntime,
+      sync: {
+        lastSuccessAt: puppeteerSync.lastSuccessAt,
+        lastErrorAt: puppeteerSync.lastErrorAt,
+        lastErrorType: puppeteerSync.lastErrorType,
+        lastErrorMessage: puppeteerSync.lastErrorMessage,
+        lastContext: puppeteerSync.lastContext,
+        totalAttempts: puppeteerSync.totalAttempts,
+        totalSuccesses: puppeteerSync.totalSuccesses,
+        totalFailures: puppeteerSync.totalFailures,
+      },
     },
     texasBrowserLogin: process.env.TEXAS_BROWSER_LOGIN !== "false",
     localDebug: process.env.LOCAL_DEBUG === "true",
