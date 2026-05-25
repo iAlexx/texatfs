@@ -93,7 +93,8 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
             masterUserId: user.id,
             attempted: childResult.attempted,
             persisted: childResult.persisted,
-            skippedAffiliates: childResult.skipped,
+            created: childResult.created,
+            failedAffiliates: childResult.failed,
           });
         } catch (childErr) {
           const childMsg = childErr instanceof Error ? childErr.message : String(childErr);

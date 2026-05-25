@@ -175,47 +175,70 @@ export class DailyReportOrchestrator {
 
   /**
    * Persists per-child snapshots + ledgers extracted from the Master's sync.
-   * Children are matched to DB users by texas_affiliate_id — unmatched children
-   * are silently skipped (they may not be registered in the system).
+   *
+   * For each child:
+   *  1. Look up existing user by texas_affiliate_id.
+   *  2. If found but texas_affiliate_id is missing → update it.
+   *  3. If not found → auto-create a minimal user (role=agent, parent=master).
+   *  4. Insert snapshot + compute & persist daily ledger.
    */
   async syncChildrenFromMasterData(
     masterUserId: string,
     ledgerDate: string,
     childSnapshots: ChildSnapshot[]
-  ): Promise<{ attempted: number; persisted: number; skipped: string[] }> {
+  ): Promise<{
+    attempted: number;
+    persisted: number;
+    created: number;
+    updated: number;
+    failed: string[];
+  }> {
     if (!childSnapshots.length) {
-      return { attempted: 0, persisted: 0, skipped: [] };
+      return { attempted: 0, persisted: 0, created: 0, updated: 0, failed: [] };
     }
 
     const affiliateIds = childSnapshots.map((c) => c.affiliateId);
 
-    const { data: childUsers, error } = await this.supabase
+    const { data: existingUsers, error } = await this.supabase
       .from("users")
       .select("id, texas_affiliate_id, parent_id")
       .in("texas_affiliate_id", affiliateIds);
 
     if (error) {
       log.error("failed to look up child users", { error: error.message });
-      return { attempted: childSnapshots.length, persisted: 0, skipped: affiliateIds };
+      return {
+        attempted: childSnapshots.length,
+        persisted: 0,
+        created: 0,
+        updated: 0,
+        failed: affiliateIds,
+      };
     }
 
     const userByAffiliate = new Map(
-      (childUsers ?? [])
+      (existingUsers ?? [])
         .filter((u) => u.texas_affiliate_id)
         .map((u) => [u.texas_affiliate_id as string, u.id as string])
     );
 
     let persisted = 0;
-    const skipped: string[] = [];
+    let created = 0;
+    let updated = 0;
+    const failed: string[] = [];
 
     for (const child of childSnapshots) {
-      const childUserId = userByAffiliate.get(child.affiliateId);
-      if (!childUserId) {
-        skipped.push(child.affiliateId);
-        continue;
-      }
+      let childUserId = userByAffiliate.get(child.affiliateId);
 
       try {
+        if (!childUserId) {
+          childUserId = await this.ensureChildUser(
+            masterUserId,
+            child.affiliateId,
+            child.username
+          );
+          created += 1;
+        }
+
         const snapshotInsert = await this.repository.insertSnapshot(
           childUserId,
           ledgerDate,
@@ -237,8 +260,8 @@ export class DailyReportOrchestrator {
           childUserId,
           affiliateId: child.affiliateId,
           username: child.username,
-          totalDeposit: child.snapshot.totalDeposit,
-          totalWithdraw: child.snapshot.totalWithdraw,
+          ngr: child.snapshot.ngr,
+          balance: child.snapshot.balance,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -247,7 +270,7 @@ export class DailyReportOrchestrator {
           childUserId,
           error: msg,
         });
-        skipped.push(child.affiliateId);
+        failed.push(child.affiliateId);
       }
     }
 
@@ -255,10 +278,60 @@ export class DailyReportOrchestrator {
       masterUserId,
       attempted: childSnapshots.length,
       persisted,
-      skippedCount: skipped.length,
+      created,
+      updated,
+      failedCount: failed.length,
+      failedAffiliateIds: failed,
     });
 
-    return { attempted: childSnapshots.length, persisted, skipped };
+    return { attempted: childSnapshots.length, persisted, created, updated, failed };
+  }
+
+  /**
+   * Creates a minimal user record for a child discovered via the Master's
+   * getSubAgentStatistics response. The child is not registered in Telegram —
+   * this is a system-generated record so their ledger can be tracked.
+   */
+  private async ensureChildUser(
+    masterUserId: string,
+    affiliateId: string,
+    username: string | null
+  ): Promise<string> {
+    const displayName = username ?? `agent-${affiliateId}`;
+
+    const { data: inserted, error } = await this.supabase
+      .from("users")
+      .insert({
+        role: "agent",
+        parent_id: masterUserId,
+        texas_affiliate_id: affiliateId,
+        texas_username: username,
+        display_name: displayName,
+        registered_via: "master_sync",
+        is_active: true,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      log.error("failed to auto-create child user", {
+        masterUserId,
+        affiliateId,
+        username,
+        code: error.code,
+        message: error.message,
+      });
+      throw new Error(`auto-create child user failed: ${error.message}`);
+    }
+
+    log.info("auto-created child user from master sync", {
+      childUserId: inserted.id,
+      masterUserId,
+      affiliateId,
+      displayName,
+    });
+
+    return inserted.id;
   }
 
   /** Cross-instance lock — poll until peer releases or TTL prunes stale row. */
