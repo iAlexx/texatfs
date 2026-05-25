@@ -47,6 +47,7 @@ const COL_HEADERS = [
   { key: "balance",    label: ar.sectionBalance,  w: "w-[82px]" },
   { key: "tebat",      label: ar.tebat,          w: "w-[78px]" },
   { key: "suhoubat",   label: ar.suhoubat,       w: "w-[78px]" },
+  { key: "alFarq",     label: ar.alFarq,         w: "w-[72px]" },
   { key: "alHarq",     label: ar.alHarq,         w: "w-[72px]" },
   { key: "waselMenho", label: ar.waselMenho,     w: "w-[78px]" },
   { key: "waselEleih", label: ar.waselEleih,     w: "w-[78px]" },
@@ -161,7 +162,7 @@ export function SubAgentsTabPanel({
 
       {/* ── Table ── */}
       <div className="overflow-x-auto">
-        <div className="min-w-[850px]">
+        <div className="min-w-[920px]">
           {/* Table header */}
           <div className="flex items-center border-b border-white/[0.08] bg-obsidian/60 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-steel-500">
             {COL_HEADERS.map((col) => (
@@ -267,6 +268,11 @@ function AgentRow({
       {/* سحوبات */}
       <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
         {num(m.suhoubat)}
+      </div>
+
+      {/* الفرق */}
+      <div className="w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {num(m.al_farq)}
       </div>
 
       {/* الحرق */}
