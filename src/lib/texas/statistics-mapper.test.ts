@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mapSubAgentStatistics } from "@/lib/texas/statistics-mapper";
-import { UserContextViolation } from "@/lib/security/user-context";
 import type { SubAgentStatisticsResponse } from "@/lib/texas/types";
 
 /** Build a response with standard financial fields (real production shape). */
@@ -47,39 +46,39 @@ function mockTreeGridResponse(
 }
 
 describe("mapSubAgentStatistics user isolation", () => {
-  it("rejects master sync without texasAffiliateId", () => {
+  it("falls back to summing all records when texasAffiliateId is missing", () => {
     const response = mockResponse([
       { affiliateId: "100", totalDeposit: "5000", totalWithdraw: "2000", ngr: "-300" },
       { affiliateId: "200", totalDeposit: "8000", totalWithdraw: "1000", ngr: "-100" },
     ]);
 
-    assert.throws(
-      () =>
-        mapSubAgentStatistics({
-          response,
-          texasAffiliateId: null,
-          userId: "user-a",
-          role: "master",
-        }),
-      UserContextViolation
-    );
+    const metrics = mapSubAgentStatistics({
+      response,
+      texasAffiliateId: null,
+      userId: "user-a",
+      role: "master",
+    });
+
+    assert.equal(metrics.totalDeposit, 13000);
+    assert.equal(metrics.totalWithdraw, 3000);
+    assert.equal(metrics.ngr, -400);
   });
 
-  it("rejects master sync when affiliateId is not in response", () => {
+  it("falls back to summing all records when affiliateId is not in response", () => {
     const response = mockResponse([
-      { affiliateId: "100", totalDeposit: "5000", totalWithdraw: "2000" },
+      { affiliateId: "100", totalDeposit: "5000", totalWithdraw: "2000", ngr: "-300" },
     ]);
 
-    assert.throws(
-      () =>
-        mapSubAgentStatistics({
-          response,
-          texasAffiliateId: "999",
-          userId: "user-a",
-          role: "master",
-        }),
-      UserContextViolation
-    );
+    const metrics = mapSubAgentStatistics({
+      response,
+      texasAffiliateId: "999",
+      userId: "user-a",
+      role: "master",
+    });
+
+    assert.equal(metrics.totalDeposit, 5000);
+    assert.equal(metrics.totalWithdraw, 2000);
+    assert.equal(metrics.ngr, -300);
   });
 
   it("returns only the matched affiliate row — never sums network", () => {

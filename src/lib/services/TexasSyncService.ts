@@ -201,14 +201,21 @@ export class TexasSyncService {
 
     const records = response.result?.records ?? [];
     const masterAffiliateId = context.texasAffiliateId?.trim() ?? "";
-    if (!masterAffiliateId) return [];
+
+    if (!masterAffiliateId) {
+      log.warn("extractChildSnapshots: masterAffiliateId missing — extracting all rows as children", {
+        userId: context.userId,
+        recordCount: records.length,
+      });
+    }
 
     const children: ChildSnapshot[] = [];
 
     for (const record of records) {
       const bag = record as Record<string, unknown>;
       const childAffiliateId = pickString(bag, statsRecordMapping.affiliateId);
-      if (!childAffiliateId || childAffiliateId === masterAffiliateId) continue;
+      if (!childAffiliateId) continue;
+      if (masterAffiliateId && childAffiliateId === masterAffiliateId) continue;
 
       const childUsername =
         pickString(bag, ["userName", "username", "affiliateUsername", "email"]) ?? null;

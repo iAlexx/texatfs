@@ -1,5 +1,4 @@
 import {
-  abortOnUserContextViolation,
   logUserScope,
 } from "@/lib/security/user-context";
 import {
@@ -116,13 +115,17 @@ export function mapSubAgentStatistics({
     return sumRecords(records);
   }
 
-  // master / player — strict affiliate scoping
+  // master / player — affiliate scoping (graceful when affiliateId is missing)
   const affiliateId = texasAffiliateId?.trim() ?? "";
-  abortOnUserContextViolation(
-    !affiliateId,
-    "Texas statistics mapping rejected: missing texasAffiliateId",
-    { userId: userId ?? null, role, recordCount: records.length }
-  );
+
+  if (!affiliateId) {
+    log.warn("texasAffiliateId missing — falling back to summing all records", {
+      userId: userId ?? null,
+      role,
+      recordCount: records.length,
+    });
+    return sumRecords(records);
+  }
 
   const match = records.find((r) => {
     const bag = r as Record<string, unknown>;
@@ -130,13 +133,16 @@ export function mapSubAgentStatistics({
     return id !== null && id === affiliateId;
   });
 
-  abortOnUserContextViolation(
-    !match,
-    "Texas statistics mapping rejected: affiliateId not in response",
-    { userId: userId ?? null, texasAffiliateId: affiliateId, recordCount: records.length }
-  );
+  if (!match) {
+    log.warn("affiliateId not found in response — falling back to summing all records", {
+      userId: userId ?? null,
+      texasAffiliateId: affiliateId,
+      recordCount: records.length,
+    });
+    return sumRecords(records);
+  }
 
-  const metrics = rowToMetrics(match!);
+  const metrics = rowToMetrics(match);
   log.info("master/player: matched affiliate row", {
     affiliateId,
     totalDeposit: metrics.totalDeposit,

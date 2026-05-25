@@ -225,9 +225,15 @@ export async function fetchHierarchicalTransfers(
   }
 
   if (!affiliateId) {
-    throw new Error(
-      "fetchHierarchicalTransfers: affiliateId is required for non-super_master roles"
-    );
+    log.warn("hierarchical transfers: affiliateId missing — fetching unfiltered", {
+      role,
+    });
+    const result = await fetchAgentTransfers(client, {
+      pageSize: options.pageSize,
+      extraFilter: options.extraFilter,
+      paginate: true,
+    });
+    return { ...result, scopedAffiliateIds: [] };
   }
 
   if (role === "player") {

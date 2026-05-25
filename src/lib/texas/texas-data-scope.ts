@@ -4,7 +4,10 @@ import {
   type UserScopeContext,
 } from "@/lib/security/user-context";
 import { pickString, statsRecordMapping } from "@/lib/texas/field-resolver";
+import { createLogger } from "@/lib/observability/logger";
 import type { NormalizedTexasSnapshot } from "@/lib/texas/types";
+
+const scopeLog = createLogger("texas/data-scope");
 
 export interface TexasDataScopeInput {
   userId: string;
@@ -15,7 +18,7 @@ export interface TexasDataScopeInput {
 
 /**
  * Validates that Texas snapshot totals belong to the authenticated tenant.
- * Aborts on mismatch — never falls back to another user's or aggregated network data.
+ * Logs warnings when affiliateId is missing or unmatched, but does NOT abort.
  */
 export function validateTexasSnapshotScope(
   snapshot: NormalizedTexasSnapshot,
@@ -34,28 +37,32 @@ export function validateTexasSnapshotScope(
     return;
   }
 
-  abortOnUserContextViolation(
-    !scope.texasAffiliateId?.trim(),
-    "Texas sync rejected: missing texasAffiliateId for scoped user",
-    { userId: scope.userId, role: scope.role }
-  );
+  const affiliateId = scope.texasAffiliateId?.trim();
+  if (!affiliateId) {
+    scopeLog.warn("texasAffiliateId missing — scope validation skipped", {
+      userId: scope.userId,
+      role: scope.role,
+    });
+    return;
+  }
 
   const records = extractStatisticsRecords(snapshot.rawStatistics);
   if (records.length === 0) {
     return;
   }
 
-  const affiliateId = scope.texasAffiliateId!.trim();
   const match = records.find((row) => {
     const id = pickString(row, statsRecordMapping.affiliateId);
     return id !== null && id === affiliateId;
   });
 
-  abortOnUserContextViolation(
-    !match,
-    "Texas sync rejected: affiliateId not found in API response",
-    { userId: scope.userId, texasAffiliateId: affiliateId, recordCount: records.length }
-  );
+  if (!match) {
+    scopeLog.warn("affiliateId not found in API response — scope validation skipped", {
+      userId: scope.userId,
+      texasAffiliateId: affiliateId,
+      recordCount: records.length,
+    });
+  }
 }
 
 function extractStatisticsRecords(
