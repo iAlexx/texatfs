@@ -1,6 +1,14 @@
 /**
  * Single source of truth for Texas API → internal field paths.
- * Update this file when live JSON keys are confirmed.
+ *
+ * IMPORTANT: The per-row records from getSubAgentStatistics may contain BOTH
+ * financial columns (totalDeposit, totalWithdraw, ngr) AND tree-grid layout
+ * columns (left, right, creditLine, bonus). The financial columns are the
+ * correct source for tebat/suhoubat/ngr. The tree-grid columns are positional
+ * metadata and must NOT be used as financial values.
+ *
+ * The `subAgentRecord` mapping is a fallback for rare API versions that omit
+ * standard financial keys. It should never be preferred over `record`.
  */
 export interface TexasFieldMappingConfig {
   wallet: {
@@ -14,7 +22,7 @@ export interface TexasFieldMappingConfig {
       totalWithdraw: readonly string[];
       ngr: readonly string[];
     };
-    /** Per-row keys from getSubAgentStatistics sub-agent tree grid. */
+    /** Fallback for tree-grid-only rows missing standard financial columns. */
     subAgentRecord: {
       affiliateId: readonly string[];
       totalDeposit: readonly string[];
@@ -32,15 +40,19 @@ export interface TexasFieldMappingConfig {
 /**
  * Field-name candidates ordered by likelihood.
  *
- * Live API (2026-05-23): getSubAgentStatistics per-row keys include
- * left, right, currentWallet, balance, credit, creditLine, bonus — but NOT
- * totalDeposit / totalWithdraw / ngr (those appear in result.total for masters).
+ * Live API (confirmed via docs/samples/getSubAgentStatistics.sample.json):
+ *   Per-row: totalDeposit, totalWithdraw, ngr, balance, affiliateId, ...
+ *   Footer:  result.total.totalDeposit, result.total.totalWithdraw, result.total.ngr
+ *
+ * The `left`/`right`/`bonus`/`creditLine` fields are tree-grid layout columns
+ * and are NOT deposits/withdrawals/NGR. They must only be used as a last-resort
+ * fallback if no standard financial keys are found on the row.
  */
 export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
   wallet: {
     balance: [
-      "currentWallet",
       "balance",
+      "currentWallet",
       "availableWallet",
       "availability",
       "credit",
@@ -92,10 +104,7 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
     },
     subAgentRecord: {
       affiliateId: ["affiliateId", "agentId", "id"],
-      // Tree-grid columns confirmed on live sub-agent rows
       totalDeposit: [
-        "left",
-        "credit",
         "totalDeposit",
         "depositsTotal",
         "depositTotal",
@@ -105,9 +114,11 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "betTotal",
         "deposit",
         "chargeIn",
+        // Tree-grid fallbacks (last resort only)
+        "left",
+        "credit",
       ],
       totalWithdraw: [
-        "right",
         "totalWithdraw",
         "withdrawTotal",
         "withdrawalsTotal",
@@ -117,10 +128,10 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "cashout",
         "withdraw",
         "chargeOut",
+        // Tree-grid fallbacks (last resort only)
+        "right",
       ],
       ngr: [
-        "bonus",
-        "creditLine",
         "ngr",
         "NGR",
         "netGamingRevenue",
@@ -128,6 +139,9 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "netRevenue",
         "GGR",
         "ggr",
+        // Tree-grid fallbacks (last resort only)
+        "bonus",
+        "creditLine",
       ],
     },
     totalsFooter: {

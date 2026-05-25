@@ -1,4 +1,7 @@
 import { TEXAS_FIELD_MAPPING } from "@/lib/texas/texas-mapping.config";
+import { createLogger } from "@/lib/observability/logger";
+
+const log = createLogger("texas/field-resolver");
 
 export function pickNumeric(
   source: Record<string, unknown>,
@@ -32,25 +35,35 @@ export const subAgentStatsRecordMapping =
   TEXAS_FIELD_MAPPING.statistics.subAgentRecord;
 export const statsTotalsMapping = TEXAS_FIELD_MAPPING.statistics.totalsFooter;
 
-/** Run once per process — don't spam logs with per-row diagnostics. */
-let _statsFieldsLogged = false;
-
 /**
- * Sub-agent rows from getSubAgentStatistics use tree-grid keys (left/right)
- * instead of master-level totalDeposit/totalWithdraw/ngr.
+ * Detect whether a row only has tree-grid columns (left/right) and lacks
+ * standard financial columns (totalDeposit/totalWithdraw/ngr).
+ *
+ * The subAgentRecord mapping is ONLY used when this returns true — meaning
+ * the row has tree-grid layout keys but none of the standard financial keys.
+ * When both exist, standard financial keys always take priority via the
+ * `record` mapping.
  */
 export function isSubAgentStatisticsRow(row: Record<string, unknown>): boolean {
+  const hasStandardFinancials =
+    row.totalDeposit !== undefined ||
+    row.depositsTotal !== undefined ||
+    row.depositTotal !== undefined ||
+    row.totalWithdraw !== undefined ||
+    row.withdrawTotal !== undefined ||
+    row.withdrawalsTotal !== undefined ||
+    row.ngr !== undefined ||
+    row.NGR !== undefined ||
+    row.netGamingRevenue !== undefined;
+
+  if (hasStandardFinancials) return false;
+
   const hasTreeColumns =
     row.left !== undefined ||
     row.right !== undefined ||
     row.creditLine !== undefined;
-  const hasMasterTotals =
-    row.totalDeposit !== undefined ||
-    row.depositsTotal !== undefined ||
-    row.totalWithdraw !== undefined ||
-    row.ngr !== undefined ||
-    row.NGR !== undefined;
-  return hasTreeColumns && !hasMasterTotals;
+
+  return hasTreeColumns;
 }
 
 export function pickStatsRecordMetrics(row: Record<string, unknown>): {
@@ -58,16 +71,29 @@ export function pickStatsRecordMetrics(row: Record<string, unknown>): {
   totalWithdraw: number;
   ngr: number;
 } {
-  const mapping = isSubAgentStatisticsRow(row)
-    ? subAgentStatsRecordMapping
-    : statsRecordMapping;
+  const isTreeGrid = isSubAgentStatisticsRow(row);
+  const mapping = isTreeGrid ? subAgentStatsRecordMapping : statsRecordMapping;
 
-  return {
+  const result = {
     totalDeposit: pickNumeric(row, mapping.totalDeposit),
     totalWithdraw: pickNumeric(row, mapping.totalWithdraw),
     ngr: pickNumeric(row, mapping.ngr),
   };
+
+  if (isTreeGrid && (result.totalDeposit !== 0 || result.totalWithdraw !== 0)) {
+    log.warn("using tree-grid fallback fields (left/right) for financial data", {
+      totalDeposit: result.totalDeposit,
+      totalWithdraw: result.totalWithdraw,
+      ngr: result.ngr,
+      rowKeys: Object.keys(row).sort().join(","),
+    });
+  }
+
+  return result;
 }
+
+/** Run once per process — don't spam logs with per-row diagnostics. */
+let _statsFieldsLogged = false;
 
 /**
  * Validate that configured field-name candidates resolve on the first real row.
@@ -83,29 +109,30 @@ export function logFieldMappingDiagnosticsOnce(
   const mapping = subAgent ? subAgentStatsRecordMapping : statsRecordMapping;
 
   const allKeys = Object.keys(statsRow);
-  console.info(
-    `[field-resolver] stats row (${subAgent ? "sub-agent" : "master"}) — all keys:`,
-    JSON.stringify(allKeys)
-  );
+  log.info("stats row diagnostics", {
+    type: subAgent ? "sub-agent-tree-grid" : "standard",
+    keys: allKeys.join(","),
+  });
 
   const checks: { name: string; keys: readonly string[] }[] = [
     { name: "affiliateId", keys: mapping.affiliateId },
-    { name: "balance / currentWallet", keys: walletMapping.balance },
     { name: "tebat (totalDeposit)", keys: mapping.totalDeposit },
     { name: "suhoubat (totalWithdraw)", keys: mapping.totalWithdraw },
-    { name: "al_harq (= al_farq)", keys: mapping.totalDeposit },
+    { name: "ngr", keys: mapping.ngr },
+    { name: "balance / currentWallet", keys: walletMapping.balance },
   ];
 
   for (const { name, keys } of checks) {
     const found = keys.find((k) => statsRow[k] !== undefined);
     if (found) {
-      console.info(
-        `[field-resolver] "${name}" ✓ key="${found}" value=${JSON.stringify(statsRow[found])}`
-      );
+      log.info(`field resolved: ${name}`, {
+        key: found,
+        value: String(statsRow[found]),
+      });
     } else {
-      console.warn(
-        `[field-resolver] "${name}" ✗ NOT FOUND — tried [${keys.join(", ")}]`
-      );
+      log.warn(`field NOT resolved: ${name}`, {
+        tried: keys.join(", "),
+      });
     }
   }
 }

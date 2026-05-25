@@ -155,6 +155,33 @@ export interface TexasAgentWalletResult {
 
 export type TexasAgentWalletResponse = TexasApiEnvelope<TexasAgentWalletResult>;
 
+/**
+ * Per-row record from POST /Statistics/getAgentsTransfers.
+ *
+ * Filter: type.value = ["2","3"] → Deposit + Withdraw.
+ * Each record represents one transfer transaction with an amount and type.
+ */
+export interface AgentTransferRecord {
+  affiliateId?: string;
+  amount?: string | number;
+  /** "2" = Deposit, "3" = Withdraw */
+  type?: string | number;
+  currencyCode?: string;
+  date?: string;
+  transactionId?: string;
+  [key: string]: unknown;
+}
+
+export type AgentTransfersResponse = TexasApiEnvelope<
+  TexasPagedResult<AgentTransferRecord>
+>;
+
+export interface AgentTransfersTotals {
+  totalDeposit: number;
+  totalWithdraw: number;
+  transactionCount: number;
+}
+
 export interface NormalizedTexasSnapshot {
   balance: number;
   totalDeposit: number;

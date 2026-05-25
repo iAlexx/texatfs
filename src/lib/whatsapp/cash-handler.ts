@@ -230,6 +230,7 @@ async function handleConfirmationReply(
     rawMessage,
     senderJid: msg.senderId ?? null,
     paymentDate,
+    targetAffiliateId: pending.affiliate_id ?? null,
   });
 
   if (!recorded.ok) {

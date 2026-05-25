@@ -104,6 +104,7 @@ async function main() {
           totalWithdraw: result.snapshot.totalWithdraw,
           ngr: result.snapshot.ngr,
         },
+        transferTotals: result.transferTotals ?? "unavailable (fell back to statistics)",
         rawShape: {
           walletKeys: keysOf(result.snapshot.rawWallets),
           statisticsKeys: keysOf(result.snapshot.rawStatistics),

@@ -30,6 +30,8 @@ export interface RecordCashPaymentInput {
   rawMessage: string;
   senderJid: string | null;
   paymentDate?: string;
+  /** Texas affiliateId of the target person (from whatsapp_agent_groups mapping) */
+  targetAffiliateId?: string | null;
 }
 
 export interface RecordCashPaymentResult {
@@ -119,21 +121,26 @@ export async function recordWhatsAppCashPayment(
       paymentDate
     );
 
+    const insertPayload: Record<string, unknown> = {
+      user_id: input.userId,
+      daily_ledger_id: dailyLedgerId,
+      type: txType,
+      source: "whatsapp",
+      amount: input.amount,
+      raw_message: input.rawMessage,
+      whatsapp_group_id: input.groupJid,
+      whatsapp_message_id: input.dedupeKey,
+      whatsapp_confirmed_at: new Date().toISOString(),
+      parsed_direction: input.direction,
+      is_confirmed: true,
+    };
+    if (input.targetAffiliateId) {
+      insertPayload.target_affiliate_id = input.targetAffiliateId;
+    }
+
     const { data: txRow, error: txErr } = await supabase
       .from("transactions")
-      .insert({
-        user_id: input.userId,
-        daily_ledger_id: dailyLedgerId,
-        type: txType,
-        source: "whatsapp",
-        amount: input.amount,
-        raw_message: input.rawMessage,
-        whatsapp_group_id: input.groupJid,
-        whatsapp_message_id: input.dedupeKey,
-        whatsapp_confirmed_at: new Date().toISOString(),
-        parsed_direction: input.direction,
-        is_confirmed: true,
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
 
@@ -211,6 +218,7 @@ export async function recordWhatsAppCashPayment(
     log.info("whatsapp transaction recorded", {
       transactionId,
       userId: input.userId,
+      targetAffiliateId: input.targetAffiliateId ?? null,
       dedupeKey: input.dedupeKey,
       type: txType,
       amount: input.amount,

@@ -15,6 +15,7 @@
     "test:accounting": "node --import tsx --test src/lib/accounting/formulas.test.ts src/lib/texas/statistics-mapper.test.ts src/lib/accounting/ledger-closer.test.ts src/lib/accounting/whatsapp-transaction-service.test.ts",
     "test:puppeteer": "node --import tsx --test src/lib/texas/puppeteer-resilience.test.ts",
     "test:vault": "node --import tsx --test src/lib/security/CredentialVault.test.ts",
+    "test:e2e-daily": "tsx scripts/e2e-daily-flow.test.ts",
     "live:texas-sync": "tsx scripts/live-texas-sync.ts",
     "telegram:webhook": "tsx scripts/set-telegram-webhook.ts",
     "telegram:webhook:delete": "tsx scripts/delete-telegram-webhook.ts",

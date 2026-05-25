@@ -6,7 +6,7 @@ import {
   requireUserCredentials,
   toTexasSyncRole,
 } from "@/lib/scraper/resolve-user-credentials";
-import { TexasSyncService } from "@/lib/services/TexasSyncService";
+import { TexasSyncService, type ChildSnapshot } from "@/lib/services/TexasSyncService";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
 import { SubscriptionExpiredError } from "@/lib/subscription/errors";
 import { createLogger } from "@/lib/observability/logger";
@@ -171,6 +171,94 @@ export class DailyReportOrchestrator {
       }
       throw e;
     }
+  }
+
+  /**
+   * Persists per-child snapshots + ledgers extracted from the Master's sync.
+   * Children are matched to DB users by texas_affiliate_id — unmatched children
+   * are silently skipped (they may not be registered in the system).
+   */
+  async syncChildrenFromMasterData(
+    masterUserId: string,
+    ledgerDate: string,
+    childSnapshots: ChildSnapshot[]
+  ): Promise<{ attempted: number; persisted: number; skipped: string[] }> {
+    if (!childSnapshots.length) {
+      return { attempted: 0, persisted: 0, skipped: [] };
+    }
+
+    const affiliateIds = childSnapshots.map((c) => c.affiliateId);
+
+    const { data: childUsers, error } = await this.supabase
+      .from("users")
+      .select("id, texas_affiliate_id, parent_id")
+      .in("texas_affiliate_id", affiliateIds);
+
+    if (error) {
+      log.error("failed to look up child users", { error: error.message });
+      return { attempted: childSnapshots.length, persisted: 0, skipped: affiliateIds };
+    }
+
+    const userByAffiliate = new Map(
+      (childUsers ?? [])
+        .filter((u) => u.texas_affiliate_id)
+        .map((u) => [u.texas_affiliate_id as string, u.id as string])
+    );
+
+    let persisted = 0;
+    const skipped: string[] = [];
+
+    for (const child of childSnapshots) {
+      const childUserId = userByAffiliate.get(child.affiliateId);
+      if (!childUserId) {
+        skipped.push(child.affiliateId);
+        continue;
+      }
+
+      try {
+        const snapshotInsert = await this.repository.insertSnapshot(
+          childUserId,
+          ledgerDate,
+          child.snapshot,
+          "master_derived"
+        );
+
+        await this.accounting.syncAndPersistDailyReport(
+          childUserId,
+          ledgerDate,
+          child.snapshot,
+          { closingSnapshotId: snapshotInsert.id }
+        );
+
+        persisted += 1;
+
+        log.info("child ledger synced from master data", {
+          masterUserId,
+          childUserId,
+          affiliateId: child.affiliateId,
+          username: child.username,
+          totalDeposit: child.snapshot.totalDeposit,
+          totalWithdraw: child.snapshot.totalWithdraw,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn("child ledger sync failed", {
+          affiliateId: child.affiliateId,
+          childUserId,
+          error: msg,
+        });
+        skipped.push(child.affiliateId);
+      }
+    }
+
+    log.info("children sync summary", {
+      masterUserId,
+      attempted: childSnapshots.length,
+      persisted,
+      skippedCount: skipped.length,
+    });
+
+    return { attempted: childSnapshots.length, persisted, skipped };
   }
 
   /** Cross-instance lock — poll until peer releases or TTL prunes stale row. */

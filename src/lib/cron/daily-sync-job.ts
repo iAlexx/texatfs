@@ -12,6 +12,9 @@ import {
   runStableRegisteredUserSync,
   ScraperCircuitOpenError,
 } from "@/lib/scraper/stable-scraper-wrapper";
+import { createLogger } from "@/lib/observability/logger";
+
+const cronLog = createLogger("cron/daily-sync");
 
 const USER_DELAY_MS = Number(process.env.CRON_USER_DELAY_MS ?? 60_000);
 
@@ -23,6 +26,7 @@ export interface DailySyncJobResult {
   synced: number;
   skipped: number;
   photosSent: number;
+  childrenSynced: number;
   failed: Array<{ userId: string; error: string }>;
 }
 
@@ -38,6 +42,7 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
   let synced = 0;
   let skipped = 0;
   let photosSent = 0;
+  let childrenSynced = 0;
   const failed: DailySyncJobResult["failed"] = [];
 
   for (let i = 0; i < subscribers.length; i++) {
@@ -73,6 +78,31 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
       }
 
       synced += 1;
+
+      // Sync per-child ledgers from the Master's statistics data
+      if ("sync" in result && result.sync.childSnapshots?.length > 0) {
+        try {
+          const childResult = await orchestrator.syncChildrenFromMasterData(
+            user.id,
+            ledgerDate,
+            result.sync.childSnapshots
+          );
+          childrenSynced += childResult.persisted;
+
+          cronLog.info("children synced for master", {
+            masterUserId: user.id,
+            attempted: childResult.attempted,
+            persisted: childResult.persisted,
+            skippedAffiliates: childResult.skipped,
+          });
+        } catch (childErr) {
+          const childMsg = childErr instanceof Error ? childErr.message : String(childErr);
+          cronLog.warn("children sync failed for master", {
+            masterUserId: user.id,
+            error: childMsg,
+          });
+        }
+      }
 
       const { data: ledgerRow, error: ledgerError } = await supabase
         .from("daily_ledgers")
@@ -177,6 +207,7 @@ export async function runDailySyncJob(): Promise<DailySyncJobResult> {
     synced,
     skipped,
     photosSent,
+    childrenSynced,
     failed,
   };
 }
