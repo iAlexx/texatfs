@@ -7,6 +7,7 @@ import {
   type TexasSubAgentRow,
 } from "@/lib/texas/texas-live-sub-agents";
 import { computeAlNihai, roundMoney } from "@/lib/accounting/formulas";
+import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 import { withAuthenticatedTexasClient, texasJsonResponse } from "@/lib/texas/with-authenticated-texas-client";
 import { serverCacheGet, serverCacheSet } from "@/lib/texas/server-cache";
 import {
@@ -27,8 +28,8 @@ interface Body extends LedgerAuthInput {
   forceRefresh?: boolean;
 }
 
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+function todayLedgerDate(): string {
+  return resolveLedgerDate();
 }
 
 function previousDate(iso: string): string {
@@ -178,7 +179,7 @@ function enrichPayload(
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body;
-  const ledgerDate = body.ledgerDate ?? todayIsoDate();
+  const ledgerDate = body.ledgerDate ?? todayLedgerDate();
   const supabase = getSupabaseServiceClient();
 
   return withAuthenticatedTexasClient(supabase, body, async ({ user, client, creds }) => {
