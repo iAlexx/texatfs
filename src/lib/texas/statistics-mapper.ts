@@ -21,59 +21,19 @@ import type {
 
 const log = createLogger("texas/statistics-mapper");
 
-function rowToMetrics(row: SubAgentStatisticsRecord) {
-  return pickStatsRecordMetrics(row as Record<string, unknown>);
+function extractNgrFromRow(row: SubAgentStatisticsRecord): number {
+  return pickStatsRecordMetrics(row as Record<string, unknown>).ngr;
 }
 
-function sumRecords(records: SubAgentStatisticsRecord[]) {
-  return records.reduce(
-    (acc, row) => {
-      const m = rowToMetrics(row);
-      acc.totalDeposit += m.totalDeposit;
-      acc.totalWithdraw += m.totalWithdraw;
-      acc.ngr += m.ngr;
-      return acc;
-    },
-    { totalDeposit: 0, totalWithdraw: 0, ngr: 0 }
-  );
+function sumNgrFromRecords(records: SubAgentStatisticsRecord[]): number {
+  return records.reduce((acc, row) => acc + extractNgrFromRow(row), 0);
 }
 
-function sumWithDiagnostics(
-  records: SubAgentStatisticsRecord[],
-  userId: string | null
-) {
-  const result = sumRecords(records);
-  if (result.totalDeposit === 0 && result.totalWithdraw === 0 && records.length > 0) {
-    const sampleKeys = Object.keys(records[0] as Record<string, unknown>).sort().join(",");
-    log.warn("sumRecords produced 0/0 — per-row records may lack financial fields", {
-      userId,
-      recordCount: records.length,
-      sampleRowKeys: sampleKeys,
-    });
-  } else {
-    log.info("sumRecords result", {
-      userId,
-      totalDeposit: result.totalDeposit,
-      totalWithdraw: result.totalWithdraw,
-      ngr: result.ngr,
-      recordCount: records.length,
-    });
-  }
-  return result;
-}
-
-function totalsFooter(totals: SubAgentStatisticsTotals | null) {
+function ngrFromFooter(totals: SubAgentStatisticsTotals | null): number | null {
   if (!totals) return null;
   const bag = totals as Record<string, unknown>;
-  const result = {
-    totalDeposit: pickNumeric(bag, statsTotalsMapping.totalDeposit),
-    totalWithdraw: pickNumeric(bag, statsTotalsMapping.totalWithdraw),
-    ngr: pickNumeric(bag, statsTotalsMapping.ngr),
-  };
-  if (result.totalDeposit === 0 && result.totalWithdraw === 0 && result.ngr === 0) {
-    return null;
-  }
-  return result;
+  const ngr = pickNumeric(bag, statsTotalsMapping.ngr);
+  return ngr !== 0 ? ngr : null;
 }
 
 export interface MapStatisticsInput {
@@ -85,17 +45,11 @@ export interface MapStatisticsInput {
 }
 
 /**
- * Maps Texas statistics to a single tenant scope.
+ * Extracts NGR from getSubAgentStatistics.
  *
- * Data flow:
- *   1. For super_master: use result.total footer if available, else sum all rows
- *   2. For master/player: find the row matching texasAffiliateId and extract
- *      totalDeposit/totalWithdraw/ngr from that single row only
- *
- * Financial field resolution:
- *   - Standard keys (totalDeposit, totalWithdraw, ngr) are always tried first
- *   - Tree-grid keys (left, right, bonus) are only used when standard keys
- *     are completely absent from the row (see isSubAgentStatisticsRow)
+ * totalDeposit and totalWithdraw are NOT extracted here — they come
+ * exclusively from getAgentsTransfers (set to 0 as placeholder).
+ * The caller (TexasSyncService) overrides them with transfer-based values.
  */
 export function mapSubAgentStatistics({
   response,
@@ -118,78 +72,50 @@ export function mapSubAgentStatistics({
     "mapSubAgentStatistics"
   );
 
-  // Log field mapping diagnostics for the first real row (once per process)
   if (records.length > 0) {
     logFieldMappingDiagnosticsOnce(records[0] as Record<string, unknown>);
   }
 
-  // Try result.total footer first — this is the most reliable source for all roles
-  const footer = totalsFooter(response.result?.total ?? null);
+  const footerNgr = ngrFromFooter(response.result?.total ?? null);
+  let ngr = 0;
 
   if (role === "super_master") {
-    if (footer) {
-      log.info("super_master: using result.total footer", {
-        totalDeposit: footer.totalDeposit,
-        totalWithdraw: footer.totalWithdraw,
-        ngr: footer.ngr,
+    ngr = footerNgr ?? sumNgrFromRecords(records);
+    log.info("super_master: NGR extracted", { ngr, source: footerNgr !== null ? "footer" : "sum" });
+  } else {
+    const affiliateId = texasAffiliateId?.trim() ?? "";
+
+    if (affiliateId) {
+      const match = records.find((r) => {
+        const bag = r as Record<string, unknown>;
+        const id = pickString(bag, statsRecordMapping.affiliateId);
+        return id !== null && id === affiliateId;
       });
-      return footer;
+      if (match) {
+        ngr = extractNgrFromRow(match);
+        log.info("NGR extracted from matched row", { affiliateId, ngr });
+      } else {
+        ngr = footerNgr ?? sumNgrFromRecords(records);
+        log.warn("affiliateId not found — NGR from footer/sum", { affiliateId, ngr });
+      }
+    } else {
+      ngr = footerNgr ?? sumNgrFromRecords(records);
+      log.warn("texasAffiliateId missing — NGR from footer/sum", {
+        userId: userId ?? null,
+        ngr,
+      });
     }
-    log.info("super_master: no footer, summing records", {
-      recordCount: records.length,
-    });
-    return sumRecords(records);
   }
 
-  // master / player — affiliate scoping (graceful when affiliateId is missing)
-  const affiliateId = texasAffiliateId?.trim() ?? "";
-
-  if (!affiliateId) {
-    log.warn("texasAffiliateId missing — using footer or summing all records", {
-      userId: userId ?? null,
-      role,
-      recordCount: records.length,
-      hasFooter: !!footer,
-    });
-    return footer ?? sumWithDiagnostics(records, userId ?? null);
-  }
-
-  const match = records.find((r) => {
-    const bag = r as Record<string, unknown>;
-    const id = pickString(bag, statsRecordMapping.affiliateId);
-    return id !== null && id === affiliateId;
+  log.info("statistics mapper result (totalDeposit/totalWithdraw deferred to getAgentsTransfers)", {
+    userId: userId ?? null,
+    role,
+    ngr,
+    totalDeposit: 0,
+    totalWithdraw: 0,
   });
 
-  if (!match) {
-    log.warn("affiliateId not found in response — using footer or summing all records", {
-      userId: userId ?? null,
-      texasAffiliateId: affiliateId,
-      recordCount: records.length,
-      hasFooter: !!footer,
-    });
-    return footer ?? sumWithDiagnostics(records, userId ?? null);
-  }
-
-  const metrics = rowToMetrics(match);
-
-  // If per-row metrics are all zero but footer has data, prefer the footer
-  if (metrics.totalDeposit === 0 && metrics.totalWithdraw === 0 && footer) {
-    log.warn("matched row has zero totals — per-row records lack financial fields, using footer", {
-      affiliateId,
-      footerTotalDeposit: footer.totalDeposit,
-      footerTotalWithdraw: footer.totalWithdraw,
-    });
-    return footer;
-  }
-
-  log.info("master/player: matched affiliate row", {
-    affiliateId,
-    totalDeposit: metrics.totalDeposit,
-    totalWithdraw: metrics.totalWithdraw,
-    ngr: metrics.ngr,
-  });
-
-  return metrics;
+  return { totalDeposit: 0, totalWithdraw: 0, ngr };
 }
 
 export function mapWalletBalance(wallet: TexasWalletRecord): Pick<

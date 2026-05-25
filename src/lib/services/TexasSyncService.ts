@@ -116,25 +116,29 @@ export class TexasSyncService {
     );
 
     if (transfers) {
-      log.info("overriding totals from getAgentsTransfers", {
-        userId: context.userId,
-        statsTotalDeposit: snapshot.totalDeposit,
-        statsTotalWithdraw: snapshot.totalWithdraw,
-        transfersTotalDeposit: transfers.totalDeposit,
-        transfersTotalWithdraw: transfers.totalWithdraw,
-        transactionCount: transfers.transactionCount,
-      });
       snapshot.totalDeposit = transfers.totalDeposit;
       snapshot.totalWithdraw = transfers.totalWithdraw;
+      log.info("totalDeposit/totalWithdraw set from getAgentsTransfers", {
+        userId: context.userId,
+        totalDeposit: transfers.totalDeposit,
+        totalWithdraw: transfers.totalWithdraw,
+        transactionCount: transfers.transactionCount,
+      });
+    } else {
+      log.warn("deposit/withdraw totals unavailable — getAgentsTransfers failed or returned null", {
+        userId: context.userId,
+        totalDeposit: 0,
+        totalWithdraw: 0,
+      });
     }
 
-    log.info("final snapshot before scope validation", {
+    log.info("final snapshot", {
       userId: context.userId,
       totalDeposit: snapshot.totalDeposit,
       totalWithdraw: snapshot.totalWithdraw,
       ngr: snapshot.ngr,
       balance: snapshot.balance,
-      source: transfers ? "transfers_override" : "statistics_mapper",
+      source: transfers ? "getAgentsTransfers" : "unavailable",
     });
 
     validateTexasSnapshotScope(snapshot, {

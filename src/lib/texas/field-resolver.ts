@@ -80,10 +80,8 @@ export function pickStatsRecordMetrics(row: Record<string, unknown>): {
     ngr: pickNumeric(row, mapping.ngr),
   };
 
-  if (isTreeGrid && (result.totalDeposit !== 0 || result.totalWithdraw !== 0)) {
-    log.warn("using tree-grid fallback fields (left/right) for financial data", {
-      totalDeposit: result.totalDeposit,
-      totalWithdraw: result.totalWithdraw,
+  if (isTreeGrid) {
+    log.info("tree-grid row detected — totalDeposit/totalWithdraw will be 0 (deferred to getAgentsTransfers)", {
       ngr: result.ngr,
       rowKeys: Object.keys(row).sort().join(","),
     });

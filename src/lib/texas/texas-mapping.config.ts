@@ -1,14 +1,13 @@
 /**
  * Single source of truth for Texas API → internal field paths.
  *
- * IMPORTANT: The per-row records from getSubAgentStatistics may contain BOTH
- * financial columns (totalDeposit, totalWithdraw, ngr) AND tree-grid layout
- * columns (left, right, creditLine, bonus). The financial columns are the
- * correct source for tebat/suhoubat/ngr. The tree-grid columns are positional
- * metadata and must NOT be used as financial values.
+ * IMPORTANT — totalDeposit / totalWithdraw:
+ *   The authoritative source for these two values is getAgentsTransfers,
+ *   NOT getSubAgentStatistics. The statistics endpoint's per-row records
+ *   contain tree-grid layout columns (left, right) that are NOT financial
+ *   totals. These must NEVER be used as deposit/withdraw values.
  *
- * The `subAgentRecord` mapping is a fallback for rare API versions that omit
- * standard financial keys. It should never be preferred over `record`.
+ *   getSubAgentStatistics is used only for: NGR, affiliateId, wallet, metadata.
  */
 export interface TexasFieldMappingConfig {
   wallet: {
@@ -114,9 +113,6 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "betTotal",
         "deposit",
         "chargeIn",
-        // Tree-grid fallbacks (last resort only)
-        "left",
-        "credit",
       ],
       totalWithdraw: [
         "totalWithdraw",
@@ -128,8 +124,6 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "cashout",
         "withdraw",
         "chargeOut",
-        // Tree-grid fallbacks (last resort only)
-        "right",
       ],
       ngr: [
         "ngr",
@@ -139,9 +133,6 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "netRevenue",
         "GGR",
         "ggr",
-        // Tree-grid fallbacks (last resort only)
-        "bonus",
-        "creditLine",
       ],
     },
     totalsFooter: {
