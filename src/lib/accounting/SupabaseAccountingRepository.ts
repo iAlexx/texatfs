@@ -262,7 +262,9 @@ export class SupabaseAccountingRepository implements AccountingRepository {
       .from("transactions")
       .select("type, amount")
       .eq("daily_ledger_id", ledger.id)
-      .eq("is_confirmed", true);
+      .eq("is_confirmed", true)
+      .eq("source", "whatsapp")
+      .not("whatsapp_confirmed_at", "is", null);
 
     if (error) throw error;
 

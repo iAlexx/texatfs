@@ -46,6 +46,10 @@ export {
   flagLedgerDiscrepancyIfNeeded,
   validateLedgerIntegrity,
 } from "@/lib/accounting/ledger-integrity";
+export {
+  getWaselFromWhatsApp,
+  type WaselTotals,
+} from "@/lib/accounting/whatsapp-wasel";
 export type {
   AccountingRepository,
   DailyLedgerMetrics,
