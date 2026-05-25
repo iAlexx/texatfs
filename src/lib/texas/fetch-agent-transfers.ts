@@ -44,13 +44,49 @@ function parseAmount(raw: unknown): number {
   return Number.isNaN(n) ? 0 : Math.abs(n);
 }
 
+const AMOUNT_FIELD_CANDIDATES = [
+  "amount",
+  "value",
+  "total",
+  "deposit",
+  "withdraw",
+  "left",
+  "right",
+  "balance",
+  "credit",
+  "chargeIn",
+  "chargeOut",
+  "netDeposit",
+  "sum",
+] as const;
+
+/**
+ * Extracts the numeric amount from a transfer record by trying multiple
+ * possible field names. Returns `{ amount, field }` so callers can log
+ * which key was actually used.
+ */
+function extractRecordAmount(record: AgentTransferRecord): { amount: number; field: string | null } {
+  const bag = record as Record<string, unknown>;
+  for (const key of AMOUNT_FIELD_CANDIDATES) {
+    const raw = bag[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const n = parseAmount(raw);
+    if (n > 0) return { amount: n, field: key };
+  }
+  return { amount: 0, field: null };
+}
+
 function isDepositType(record: AgentTransferRecord): boolean {
-  return String(record.type) === DEPOSIT_TYPE;
+  const t = String(record.type ?? (record as Record<string, unknown>).typeId ?? "");
+  return t === DEPOSIT_TYPE;
 }
 
 function isWithdrawType(record: AgentTransferRecord): boolean {
-  return String(record.type) === WITHDRAW_TYPE;
+  const t = String(record.type ?? (record as Record<string, unknown>).typeId ?? "");
+  return t === WITHDRAW_TYPE;
 }
+
+let _transferDiagnosticsLogged = false;
 
 export interface FetchAgentTransfersOptions {
   pageSize?: number;
@@ -158,21 +194,68 @@ export async function fetchAgentTransfers(
  * Sum deposit and withdraw amounts from transfer records.
  * Type "2" = Deposit → totalDeposit
  * Type "3" = Withdraw → totalWithdraw
+ *
+ * Tries multiple field name candidates for the amount value since the
+ * Texas API may use different keys depending on account type / version.
  */
 export function sumTransferRecords(
   records: AgentTransferRecord[]
 ): AgentTransfersTotals {
+  if (!_transferDiagnosticsLogged && records.length > 0) {
+    _transferDiagnosticsLogged = true;
+    const sample = records.slice(0, 3);
+    for (let i = 0; i < sample.length; i++) {
+      const bag = sample[i] as Record<string, unknown>;
+      const keys = Object.keys(bag).sort();
+      const values: Record<string, unknown> = {};
+      for (const k of keys) {
+        const v = bag[k];
+        if (v !== undefined && v !== null && v !== "") {
+          values[k] = typeof v === "string" && v.length > 60 ? v.slice(0, 60) + "…" : v;
+        }
+      }
+      log.info(`transfer record sample [${i}]`, {
+        keys: keys.join(","),
+        type: bag.type ?? bag.typeId ?? "unknown",
+        values,
+      });
+    }
+  }
+
   let totalDeposit = 0;
   let totalWithdraw = 0;
+  let amountFieldUsed: string | null = null;
 
   for (const record of records) {
-    const amount = parseAmount(record.amount);
+    const { amount, field } = extractRecordAmount(record);
+    if (field && !amountFieldUsed) {
+      amountFieldUsed = field;
+    }
+
     if (isDepositType(record)) {
       totalDeposit += amount;
     } else if (isWithdrawType(record)) {
       totalWithdraw += amount;
     }
   }
+
+  if (amountFieldUsed) {
+    log.info("amount field resolved", { field: amountFieldUsed });
+  } else if (records.length > 0) {
+    const firstBag = records[0] as Record<string, unknown>;
+    log.warn("no amount field found in transfer records", {
+      recordCount: records.length,
+      sampleKeys: Object.keys(firstBag).sort().join(","),
+      triedFields: AMOUNT_FIELD_CANDIDATES.join(","),
+    });
+  }
+
+  log.info("sumTransferRecords result", {
+    totalDeposit,
+    totalWithdraw,
+    transactionCount: records.length,
+    amountField: amountFieldUsed,
+  });
 
   return {
     totalDeposit,

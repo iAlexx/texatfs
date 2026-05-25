@@ -207,7 +207,9 @@ export function isTexasSignInSuccess(data: unknown): boolean {
     typeof result === "object" &&
     result !== null &&
     "type" in result &&
-    result.type === 0
+    result.type === 0 &&
+    "message" in result &&
+    result.message === "dashboard"
   );
 }
 

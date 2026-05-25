@@ -128,6 +128,15 @@ export class TexasSyncService {
       snapshot.totalWithdraw = transfers.totalWithdraw;
     }
 
+    log.info("final snapshot before scope validation", {
+      userId: context.userId,
+      totalDeposit: snapshot.totalDeposit,
+      totalWithdraw: snapshot.totalWithdraw,
+      ngr: snapshot.ngr,
+      balance: snapshot.balance,
+      source: transfers ? "transfers_override" : "statistics_mapper",
+    });
+
     validateTexasSnapshotScope(snapshot, {
       userId: context.userId,
       texasUsername: context.texasUsername ?? context.credentials.username,

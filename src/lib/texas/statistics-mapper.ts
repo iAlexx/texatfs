@@ -38,6 +38,30 @@ function sumRecords(records: SubAgentStatisticsRecord[]) {
   );
 }
 
+function sumWithDiagnostics(
+  records: SubAgentStatisticsRecord[],
+  userId: string | null
+) {
+  const result = sumRecords(records);
+  if (result.totalDeposit === 0 && result.totalWithdraw === 0 && records.length > 0) {
+    const sampleKeys = Object.keys(records[0] as Record<string, unknown>).sort().join(",");
+    log.warn("sumRecords produced 0/0 — per-row records may lack financial fields", {
+      userId,
+      recordCount: records.length,
+      sampleRowKeys: sampleKeys,
+    });
+  } else {
+    log.info("sumRecords result", {
+      userId,
+      totalDeposit: result.totalDeposit,
+      totalWithdraw: result.totalWithdraw,
+      ngr: result.ngr,
+      recordCount: records.length,
+    });
+  }
+  return result;
+}
+
 function totalsFooter(totals: SubAgentStatisticsTotals | null) {
   if (!totals) return null;
   const bag = totals as Record<string, unknown>;
@@ -99,8 +123,10 @@ export function mapSubAgentStatistics({
     logFieldMappingDiagnosticsOnce(records[0] as Record<string, unknown>);
   }
 
+  // Try result.total footer first — this is the most reliable source for all roles
+  const footer = totalsFooter(response.result?.total ?? null);
+
   if (role === "super_master") {
-    const footer = totalsFooter(response.result?.total ?? null);
     if (footer) {
       log.info("super_master: using result.total footer", {
         totalDeposit: footer.totalDeposit,
@@ -119,12 +145,13 @@ export function mapSubAgentStatistics({
   const affiliateId = texasAffiliateId?.trim() ?? "";
 
   if (!affiliateId) {
-    log.warn("texasAffiliateId missing — falling back to summing all records", {
+    log.warn("texasAffiliateId missing — using footer or summing all records", {
       userId: userId ?? null,
       role,
       recordCount: records.length,
+      hasFooter: !!footer,
     });
-    return sumRecords(records);
+    return footer ?? sumWithDiagnostics(records, userId ?? null);
   }
 
   const match = records.find((r) => {
@@ -134,15 +161,27 @@ export function mapSubAgentStatistics({
   });
 
   if (!match) {
-    log.warn("affiliateId not found in response — falling back to summing all records", {
+    log.warn("affiliateId not found in response — using footer or summing all records", {
       userId: userId ?? null,
       texasAffiliateId: affiliateId,
       recordCount: records.length,
+      hasFooter: !!footer,
     });
-    return sumRecords(records);
+    return footer ?? sumWithDiagnostics(records, userId ?? null);
   }
 
   const metrics = rowToMetrics(match);
+
+  // If per-row metrics are all zero but footer has data, prefer the footer
+  if (metrics.totalDeposit === 0 && metrics.totalWithdraw === 0 && footer) {
+    log.warn("matched row has zero totals — per-row records lack financial fields, using footer", {
+      affiliateId,
+      footerTotalDeposit: footer.totalDeposit,
+      footerTotalWithdraw: footer.totalWithdraw,
+    });
+    return footer;
+  }
+
   log.info("master/player: matched affiliate row", {
     affiliateId,
     totalDeposit: metrics.totalDeposit,

@@ -11,6 +11,14 @@ const log = createLogger("texas/fetch-stats");
 
 const DEFAULT_PAGE_SIZE = 1000;
 
+const DEFAULT_CURRENCY_FILTER: TexasFilterMap = {
+  currency: {
+    action: "=",
+    value: "multi",
+    valueLabel: "multi",
+  },
+};
+
 /** Texas API sometimes returns `records` as a non-array object — avoid spread crash. */
 function coerceRecordsArray(
   value: unknown
@@ -24,14 +32,6 @@ function coerceRecordsArray(
   }
   return [];
 }
-
-const DEFAULT_CURRENCY_FILTER: TexasFilterMap = {
-  currency: {
-    action: "=",
-    value: "multi",
-    valueLabel: "multi",
-  },
-};
 
 /**
  * Paginated fetch for getSubAgentStatistics — no Puppeteer / session imports.
@@ -54,6 +54,12 @@ export async function fetchAllSubAgentStatistics(
     ...options.extraFilter,
   };
 
+  log.info("fetching sub-agent statistics", {
+    filterKeys: Object.keys(filter),
+    pageSize: limit,
+    paginate: options.paginate ?? true,
+  });
+
   const allRecords: SubAgentStatisticsResponse["result"]["records"] = [];
   let start = 0;
   let pagesFetched = 0;
@@ -75,6 +81,8 @@ export async function fetchAllSubAgentStatistics(
       log.warn("invalid Texas statistics page", {
         start,
         error: validated.error,
+        responseType: typeof response.data,
+        hasStatus: response.data && typeof response.data === "object" ? "status" in response.data : false,
       });
       throw new Error(
         `getSubAgentStatistics invalid response at start=${start}: ${validated.error}`
@@ -122,6 +130,14 @@ export async function fetchAllSubAgentStatistics(
       totalRecordsCount: String(allRecords.length),
     },
   };
+
+  const footerTotal = merged.result?.total;
+  log.info("statistics fetch complete", {
+    pagesFetched,
+    recordCount: allRecords.length,
+    hasFooter: !!footerTotal,
+    footerKeys: footerTotal ? Object.keys(footerTotal) : [],
+  });
 
   return {
     response: merged,
