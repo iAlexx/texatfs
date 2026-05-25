@@ -49,9 +49,13 @@ export async function handleWhatsAppOnboardingPrivate(
   msg: WhatsAppPrivateMessage
 ): Promise<boolean> {
   try {
-    const phoneDigits = jidToPhoneDigits(msg.chatId);
+    // WASenderAPI provides cleanedSenderPn directly; fall back to JID parsing
+    const phoneDigits = msg.senderPhone ?? jidToPhoneDigits(msg.chatId);
     if (!phoneDigits) {
-      log.warn("could not extract phone digits from chatId", { chatId: msg.chatId });
+      log.warn("could not extract phone digits", {
+        chatId: msg.chatId,
+        senderPhone: msg.senderPhone,
+      });
       return false;
     }
 
@@ -59,6 +63,8 @@ export async function handleWhatsAppOnboardingPrivate(
       phone: phoneDigits.slice(-4),
       text: msg.text.slice(0, 20),
       messageId: msg.messageId,
+      chatIdSuffix: msg.chatId.split("@")[1] ?? "unknown",
+      usedCleanedPn: !!msg.senderPhone,
     });
 
     const user = await getUserByWhatsAppPhone(supabase, phoneDigits);

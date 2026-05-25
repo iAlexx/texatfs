@@ -91,6 +91,7 @@ export async function handleWhatsAppCashEvent(
     log.info("cash event received", {
       groupId: msg.groupId,
       senderId: msg.senderId,
+      senderPhone: msg.senderPhone,
       text: msg.text.slice(0, 60),
       messageId: msg.messageId,
       hasQuote: !!msg.quotedMessageId,

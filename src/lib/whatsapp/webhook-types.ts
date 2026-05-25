@@ -1,24 +1,27 @@
 /**
  * Normalised shape of the incoming WhatsApp gateway webhook payload.
  *
- * Most WASenderAPI-style providers send slightly different envelopes; we
- * normalise here in one place so the rest of the codebase stays clean.
+ * WASenderAPI (2025+) nests message data under `data.messages` and may
+ * use LID addressing (`@lid` suffix) instead of `@s.whatsapp.net`.
+ * We normalise here in one place so the rest of the codebase stays clean.
  */
 
 /** Private (DM) message — used for emoji onboarding handshake. */
 export interface WhatsAppPrivateMessage {
   eventType:       string;
-  /** User JID, e.g. 963988899474@s.whatsapp.net */
+  /** Chat JID — may be @s.whatsapp.net, @c.us, or @lid. */
   chatId:          string;
   messageId:       string;
   text:            string;
   quotedMessageId: string | null;
   timestamp:       number;
+  /** Cleaned sender phone (digits only) extracted from WASenderAPI `cleanedSenderPn`. */
+  senderPhone:     string | null;
 }
 
 /** Internal canonical message representation passed to the cash handler. */
 export interface WhatsAppIncomingMessage {
-  /** Event type, e.g. "messages-group.received" or "message.received". */
+  /** Event type, e.g. "messages-group.received" or "messages.received". */
   eventType:        string;
   /** WhatsApp group id, e.g. "120363023948721938@g.us". */
   groupId:          string;
@@ -32,6 +35,8 @@ export interface WhatsAppIncomingMessage {
   quotedMessageId:  string | null;
   /** Unix epoch (ms). Falls back to Date.now() if absent. */
   timestamp:        number;
+  /** Cleaned participant phone (digits only) from WASenderAPI. */
+  senderPhone:      string | null;
 }
 
 // ── Raw envelope shapes (intentionally loose) ────────────────────────────────
@@ -47,6 +52,9 @@ export interface RawWhatsAppWebhook {
 }
 
 interface RawWhatsAppData {
+  // WASenderAPI nests message under `messages`
+  messages?: RawWhatsAppData;
+
   // Group / chat identifiers (various provider conventions)
   chatId?:     string;
   groupId?:    string;
@@ -62,12 +70,33 @@ interface RawWhatsAppData {
   // Message id
   messageId?:  string;
   id?:         string;
-  key?:        { id?: string; remoteJid?: string; participant?: string };
+  key?:        {
+    id?: string;
+    remoteJid?: string;
+    participant?: string;
+    participantPn?: string;
+    cleanedSenderPn?: string;
+    cleanedParticipantPn?: string;
+    senderLid?: string;
+    participantLid?: string;
+  };
 
-  // Body
+  // Body — WASenderAPI uses `messageBody` as unified text field
+  messageBody?: string;
   body?:       string;
   text?:       string;
-  message?:    { conversation?: string; text?: string; extendedTextMessage?: { text?: string } };
+  message?:    {
+    conversation?: string;
+    text?: string;
+    extendedTextMessage?: {
+      text?: string;
+      contextInfo?: { stanzaId?: string; quotedMessage?: unknown };
+    };
+  };
+
+  // WASenderAPI cleaned phone numbers
+  cleanedSenderPn?: string;
+  cleanedParticipantPn?: string;
 
   // Quoted / reply context
   quotedMessageId?:  string;
@@ -84,7 +113,31 @@ interface RawWhatsAppData {
 // ── Normalisation ─────────────────────────────────────────────────────────────
 
 /**
- * Convert a raw provider envelope into our canonical shape.
+ * Build a list of candidate data objects from the raw envelope.
+ * WASenderAPI nests the actual message under `data.messages`,
+ * so we try that path first, then fall back to older layouts.
+ */
+function buildCandidates(raw: RawWhatsAppWebhook): RawWhatsAppData[] {
+  const out: RawWhatsAppData[] = [];
+
+  // WASenderAPI 2025+: data.messages is the actual message object
+  if (raw.data?.messages && typeof raw.data.messages === "object") {
+    out.push(raw.data.messages as RawWhatsAppData);
+  }
+
+  // Older format or other providers: data itself holds the message fields
+  if (raw.data) out.push(raw.data);
+  if (raw.payload) out.push(raw.payload);
+  if (raw.message) out.push(raw.message as RawWhatsAppData);
+
+  // Last resort: top-level envelope
+  out.push(raw as unknown as RawWhatsAppData);
+
+  return out;
+}
+
+/**
+ * Convert a raw provider envelope into our canonical GROUP shape.
  * Returns null when the payload is missing the bits we strictly need.
  */
 export function normaliseWhatsAppWebhook(
@@ -92,16 +145,7 @@ export function normaliseWhatsAppWebhook(
 ): WhatsAppIncomingMessage | null {
   const eventType = String(raw.event ?? raw.type ?? "");
 
-  // Try nested data first, then fall back to the raw envelope itself.
-  // WASenderAPI sometimes sends the fields at the top level.
-  const candidates: RawWhatsAppData[] = [
-    raw.data,
-    raw.payload,
-    raw.message,
-    raw as RawWhatsAppData,
-  ].filter(Boolean) as RawWhatsAppData[];
-
-  for (const data of candidates) {
+  for (const data of buildCandidates(raw)) {
     const parsed = extractChatAndMessage(data);
     if (!parsed.chatId || !parsed.messageId) continue;
     if (!parsed.chatId.endsWith("@g.us")) continue;
@@ -114,6 +158,7 @@ export function normaliseWhatsAppWebhook(
       text: parsed.text,
       quotedMessageId: parsed.quotedMessageId,
       timestamp: parsed.timestamp,
+      senderPhone: parsed.senderPhone,
     };
   }
 
@@ -140,6 +185,7 @@ function extractChatAndMessage(data: RawWhatsAppData): {
   text: string;
   quotedMessageId: string | null;
   senderId: string | null;
+  senderPhone: string | null;
   timestamp: number;
 } {
   const chatId =
@@ -154,8 +200,10 @@ function extractChatAndMessage(data: RawWhatsAppData): {
     pickString(data.id) ??
     pickString(data.key?.id);
 
+  // WASenderAPI `messageBody` is the unified text field (covers plain, caption, reply)
   const text =
     (
+      pickString(data.messageBody) ??
       pickString(data.body) ??
       pickString(data.text) ??
       pickString(data.message?.conversation) ??
@@ -168,6 +216,7 @@ function extractChatAndMessage(data: RawWhatsAppData): {
     pickString(data.quotedMessageId) ??
     pickString(data.reply_to_message_id) ??
     pickString(data.contextInfo?.stanzaId) ??
+    pickString(data.message?.extendedTextMessage?.contextInfo?.stanzaId) ??
     null;
 
   const senderId =
@@ -177,40 +226,44 @@ function extractChatAndMessage(data: RawWhatsAppData): {
     pickString(data.key?.participant) ??
     null;
 
+  // WASenderAPI provides cleaned phone numbers separately from LIDs
+  const senderPhone =
+    pickString(data.cleanedParticipantPn) ??
+    pickString(data.cleanedSenderPn) ??
+    pickString(data.key?.cleanedParticipantPn) ??
+    pickString(data.key?.cleanedSenderPn) ??
+    null;
+
   return {
     chatId,
     messageId,
     text,
     quotedMessageId,
     senderId,
+    senderPhone,
     timestamp: parseTimestamp(data.timestamp ?? data.t),
   };
 }
 
 /**
  * Normalise a private DM webhook payload.
- * Routing is by JID only (@s.whatsapp.net / @c.us) — never group @g.us.
+ * Accepts @s.whatsapp.net, @c.us, AND @lid (WASenderAPI LID addressing).
+ * Rejects @g.us (groups).
  */
 export function normaliseWhatsAppPrivateWebhook(
   raw: RawWhatsAppWebhook
 ): WhatsAppPrivateMessage | null {
   const eventType = String(raw.event ?? raw.type ?? "");
 
-  const candidates: RawWhatsAppData[] = [
-    raw.data,
-    raw.payload,
-    raw.message,
-    raw as RawWhatsAppData,
-  ].filter(Boolean) as RawWhatsAppData[];
-
-  for (const data of candidates) {
+  for (const data of buildCandidates(raw)) {
     const parsed = extractChatAndMessage(data);
     if (!parsed.chatId || !parsed.messageId) continue;
     if (parsed.chatId.endsWith("@g.us")) continue;
 
     const isPrivate =
       parsed.chatId.endsWith("@s.whatsapp.net") ||
-      parsed.chatId.endsWith("@c.us");
+      parsed.chatId.endsWith("@c.us") ||
+      parsed.chatId.endsWith("@lid");
     if (!isPrivate) continue;
 
     return {
@@ -220,6 +273,7 @@ export function normaliseWhatsAppPrivateWebhook(
       text: parsed.text,
       quotedMessageId: parsed.quotedMessageId,
       timestamp: parsed.timestamp,
+      senderPhone: parsed.senderPhone,
     };
   }
 

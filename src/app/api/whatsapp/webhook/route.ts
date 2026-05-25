@@ -31,10 +31,13 @@ async function processWebhookPayload(
   raw: ParsedWhatsAppWebhook,
   requestId: string
 ): Promise<void> {
-  const data = (raw.data ?? raw.payload ?? raw.message ?? raw) as Record<string, unknown>;
-  const chatId = data.chatId ?? data.groupId ?? data.remoteJid ?? data.from ?? (data.key as Record<string, unknown>)?.remoteJid ?? "";
-  const body = data.body ?? data.text ?? "";
-  const author = data.author ?? data.participant ?? data.senderId ?? "";
+  // Resolve the actual message data — WASenderAPI nests under data.messages
+  const rawData = raw.data as Record<string, unknown> | undefined;
+  const msgObj = (rawData?.messages ?? rawData ?? raw) as Record<string, unknown>;
+  const keyObj = (msgObj.key ?? {}) as Record<string, unknown>;
+  const chatId = keyObj.remoteJid ?? msgObj.chatId ?? msgObj.remoteJid ?? msgObj.from ?? "";
+  const body = msgObj.messageBody ?? msgObj.body ?? msgObj.text ?? "";
+  const author = keyObj.participant ?? keyObj.cleanedParticipantPn ?? msgObj.author ?? msgObj.senderId ?? "";
 
   log.info("webhook payload received", {
     requestId,
@@ -44,8 +47,11 @@ async function processWebhookPayload(
     body: String(body).slice(0, 60),
     isGroup: String(chatId).endsWith("@g.us"),
     isPrivate: String(chatId).endsWith("@s.whatsapp.net") || String(chatId).endsWith("@c.us"),
+    isLid: String(chatId).endsWith("@lid"),
+    hasDataMessages: !!rawData?.messages,
     topLevelKeys: Object.keys(raw).sort().join(","),
-    dataKeys: typeof data === "object" && data ? Object.keys(data).sort().join(",") : "none",
+    dataKeys: rawData ? Object.keys(rawData).sort().join(",") : "none",
+    msgKeys: typeof msgObj === "object" ? Object.keys(msgObj).sort().join(",") : "none",
   });
 
   const [{ handleWhatsAppOnboardingPrivate }, { handleWhatsAppCashEvent }] =
@@ -141,7 +147,10 @@ async function processWebhookPayload(
     log.warn("message not normalised as private or group", {
       requestId,
       chatId: String(chatId).slice(0, 50),
+      chatIdSuffix: String(chatId).split("@")[1] ?? "no-@",
       event: raw.event ?? raw.type ?? "unknown",
+      hasDataMessages: !!rawData?.messages,
+      bodyPreview: String(body).slice(0, 40),
     });
   }
 }
