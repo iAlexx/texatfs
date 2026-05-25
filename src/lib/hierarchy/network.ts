@@ -209,7 +209,7 @@ export async function fetchNetworkPayload(
       .maybeSingle(),
     directOnly
       ? loadDirectChildrenCounts(supabase, ids)
-      : Promise.resolve(new Map<string, number>()),
+      : computeChildCountsFromList(users ?? [], viewerId),
   ]);
 
   const ownLedger = ownRow ? toAgentSummary(mapLedgerRow(ownRow)) : null;
@@ -230,7 +230,7 @@ export async function fetchNetworkPayload(
         ? toAgentSummary(ledgerByUser.get(u.id)!)
         : null,
       snapshot: snapshotByUser.get(u.id) ?? null,
-      ...(directOnly ? { direct_children_count: childCountMap.get(u.id) ?? 0 } : {}),
+      direct_children_count: childCountMap.get(u.id) ?? 0,
     }))
     .sort(compareNetworkMembers);
 
@@ -244,6 +244,21 @@ export async function fetchNetworkPayload(
     members,
     own_ledger: ownLedger,
   };
+}
+
+async function computeChildCountsFromList(
+  users: Array<{ id: string; parent_id: string | null; is_active: boolean }>,
+  viewerId: string
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const u of users) {
+    if (!u.is_active || !u.parent_id) continue;
+    const pid = u.parent_id;
+    counts.set(pid, (counts.get(pid) ?? 0) + 1);
+  }
+  // Also count direct children of the viewer (they're in the list with parent_id = viewerId)
+  void viewerId;
+  return counts;
 }
 
 async function loadDirectChildrenCounts(

@@ -75,7 +75,7 @@ export interface TexasAgentDetailResponse {
 export function useNetworkData(
   ledgerDate: string,
   enabled: boolean,
-  directOnly = true
+  directOnly = false
 ) {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
 

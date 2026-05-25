@@ -1,59 +1,85 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  ChevronDown,
-  Loader2,
-  Search,
-  Users,
-} from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { ChevronDown, ChevronLeft, Loader2, Search, Users } from "lucide-react";
 import { formatMoney } from "@/lib/utils/format";
 import { ar } from "@/lib/i18n/ar";
 import type { NetworkMember, NetworkPayload } from "@/lib/hierarchy/types";
-import { useTelegram } from "@/components/providers/TelegramProvider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils/cn";
 
-/* ─── Role badge config (Agent Tree style: RM, AM, AG, PL) ─── */
+/* ─── Role badge (Agent Tree style) ─── */
 
-const ROLE_BADGE: Record<string, { code: string; label: string; color: string }> = {
-  super_master: {
-    code: "SM",
-    label: ar.roleSuperMaster,
-    color: "bg-purple-500/20 text-purple-300 ring-purple-500/40",
-  },
-  master: {
-    code: "RM",
-    label: ar.roleMaster,
-    color: "bg-amber-500/20 text-amber-300 ring-amber-500/40",
-  },
-  agent: {
-    code: "AG",
-    label: ar.roleAgent,
-    color: "bg-sky-500/20 text-sky-300 ring-sky-500/40",
-  },
-  player: {
-    code: "PL",
-    label: ar.rolePlayer,
-    color: "bg-slate-500/20 text-slate-400 ring-slate-500/40",
-  },
+const ROLE_CFG: Record<string, { code: string; bg: string; text: string }> = {
+  super_master: { code: "SM", bg: "bg-purple-500/25", text: "text-purple-300" },
+  master:       { code: "RM", bg: "bg-rose-500/25",   text: "text-rose-300" },
+  agent:        { code: "AG", bg: "bg-sky-500/25",    text: "text-sky-300" },
+  player:       { code: "PL", bg: "bg-emerald-500/25", text: "text-emerald-300" },
 };
 
-function getRoleBadge(role: string) {
-  return ROLE_BADGE[role] ?? ROLE_BADGE.agent!;
+function roleCfg(role: string) {
+  return ROLE_CFG[role] ?? ROLE_CFG.agent!;
 }
 
-/* ─── Search helper ─── */
+/* ─── Tree helpers ─── */
+
+function buildChildrenMap(members: NetworkMember[], viewerId: string) {
+  const map = new Map<string, NetworkMember[]>();
+  for (const m of members) {
+    const pid = m.parent_id ?? viewerId;
+    const list = map.get(pid);
+    if (list) list.push(m);
+    else map.set(pid, [m]);
+  }
+  return map;
+}
+
+function flattenVisibleRows(
+  parentId: string,
+  childrenMap: Map<string, NetworkMember[]>,
+  expanded: Set<string>,
+  depth: number,
+  searchActive: boolean
+): Array<{ member: NetworkMember; depth: number }> {
+  const children = childrenMap.get(parentId);
+  if (!children) return [];
+
+  const rows: Array<{ member: NetworkMember; depth: number }> = [];
+  for (const m of children) {
+    rows.push({ member: m, depth });
+    if (searchActive || expanded.has(m.id)) {
+      rows.push(...flattenVisibleRows(m.id, childrenMap, expanded, depth + 1, searchActive));
+    }
+  }
+  return rows;
+}
 
 function matchesSearch(m: NetworkMember, q: string): boolean {
   const name = (m.display_name ?? "").toLowerCase();
-  const username = (m.texas_username ?? "").toLowerCase();
-  const affiliate = (m.texas_affiliate_id ?? "").toLowerCase();
-  return name.includes(q) || username.includes(q) || affiliate.includes(q);
+  const user = (m.texas_username ?? "").toLowerCase();
+  const aff = (m.texas_affiliate_id ?? "").toLowerCase();
+  return name.includes(q) || user.includes(q) || aff.includes(q);
 }
+
+function num(v: number | undefined | null): string {
+  if (v == null || v === 0) return "0.00";
+  return formatMoney(v);
+}
+
+/* ─── Columns ─── */
+
+const COL_HEADERS = [
+  { key: "role",     label: "Role",         w: "w-[52px]"  },
+  { key: "username", label: "Username",      w: "min-w-[120px] flex-1" },
+  { key: "players",  label: ar.directPlayers, w: "w-[60px]" },
+  { key: "balance",  label: ar.sectionBalance, w: "w-[90px]" },
+  { key: "tebat",    label: ar.tebat,        w: "w-[90px]" },
+  { key: "suhoubat", label: ar.suhoubat,     w: "w-[90px]" },
+  { key: "alHarq",   label: ar.alHarq,       w: "w-[90px]" },
+  { key: "alNihai",  label: ar.alNihai,      w: "w-[130px]" },
+] as const;
 
 /* ─── Main Panel ─── */
 
@@ -73,12 +99,24 @@ export function SubAgentsTabPanel({
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const filtered = useMemo(() => {
-    const members = data?.members ?? [];
-    const q = query.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) => matchesSearch(m, q));
-  }, [data?.members, query]);
+  const viewerId = data?.viewer_id ?? "";
+  const allMembers = data?.members ?? [];
+  const searchQ = query.trim().toLowerCase();
+  const searchActive = searchQ.length > 0;
+
+  const childrenMap = useMemo(
+    () => buildChildrenMap(allMembers, viewerId),
+    [allMembers, viewerId]
+  );
+
+  const visibleRows = useMemo(() => {
+    if (searchActive) {
+      return allMembers
+        .filter((m) => matchesSearch(m, searchQ))
+        .map((m) => ({ member: m, depth: 0 }));
+    }
+    return flattenVisibleRows(viewerId, childrenMap, expanded, 0, false);
+  }, [viewerId, childrenMap, expanded, searchActive, searchQ, allMembers]);
 
   const toggleExpand = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -88,6 +126,8 @@ export function SubAgentsTabPanel({
       return next;
     });
   }, []);
+
+  /* ── Loading / Error states ── */
 
   if (isLoading && !data) {
     return (
@@ -137,34 +177,27 @@ export function SubAgentsTabPanel({
         <div className="mb-2 flex items-center gap-2">
           <Users className="h-5 w-5 text-gold" strokeWidth={1.5} />
           <div>
-            <h2 className="text-base font-bold text-gold">{ar.tabSubAgents}</h2>
+            <h2 className="text-base font-bold text-gold">Agent Tree</h2>
             <p className="text-[10px] text-steel-500">{ar.subAgentsSubtitle}</p>
           </div>
+          {stats && (
+            <span className="mr-auto rounded-full bg-obsidian/80 px-2 py-0.5 text-[9px] font-medium text-steel-400">
+              {stats.active_agents} {ar.activeAgents}
+            </span>
+          )}
         </div>
 
         {stats ? (
-          <div className="mt-3 grid grid-cols-2 gap-2 text-center">
-            <MiniStat label={ar.activeAgents} value={String(stats.active_agents)} />
-            <MiniStat
-              label={ar.totalNetworkBurnToday}
-              value={formatMoney(stats.total_network_burn)}
-            />
-            <MiniStat
-              label={ar.combinedNetworkBalance}
-              value={formatMoney(stats.combined_balance)}
-            />
+          <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+            <MiniStat label={ar.totalNetworkBurnToday} value={formatMoney(stats.total_network_burn)} />
+            <MiniStat label={ar.combinedNetworkBalance} value={formatMoney(stats.combined_balance)} />
             <MiniStat
               label={ar.highestBurnToday}
-              value={
-                stats.highest_burn_agent
-                  ? formatMoney(stats.highest_burn_agent.al_harq)
-                  : "—"
-              }
+              value={stats.highest_burn_agent ? formatMoney(stats.highest_burn_agent.al_harq) : "—"}
             />
           </div>
         ) : null}
 
-        {/* Search */}
         <div className="relative mt-3">
           <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-steel-500" />
           <Input
@@ -176,56 +209,67 @@ export function SubAgentsTabPanel({
         </div>
       </header>
 
-      {/* ── Agent Tree ── */}
-      <div className="max-h-[34rem] overflow-y-auto">
-        {filtered.length === 0 ? (
-          <div className="px-4 py-12 text-center text-xs text-steel-500">
-            {(data?.members.length ?? 0) === 0 ? ar.noSubAgents : "لا نتائج للبحث"}
-          </div>
-        ) : (
-          <ul className="divide-y divide-white/[0.04]">
-            {filtered.map((member, i) => (
-              <AgentTreeNode
-                key={member.id}
-                member={member}
-                index={i}
-                depth={0}
-                isExpanded={expanded.has(member.id)}
-                expandedSet={expanded}
-                onToggleExpand={toggleExpand}
-                onSelect={onSelectAgent}
-                ledgerDate={data?.ledger_date ?? ""}
-              />
+      {/* ── Table ── */}
+      <div className="overflow-x-auto">
+        <div className="min-w-[700px]">
+          {/* Table header */}
+          <div className="flex items-center border-b border-white/[0.08] bg-obsidian/60 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-steel-500">
+            {COL_HEADERS.map((col) => (
+              <div key={col.key} className={cn("shrink-0 px-1.5 text-center", col.w)}>
+                {col.label}
+              </div>
             ))}
-          </ul>
-        )}
+          </div>
+
+          {/* Table body */}
+          <div className="max-h-[36rem] divide-y divide-white/[0.03] overflow-y-auto">
+            {visibleRows.length === 0 ? (
+              <div className="px-4 py-12 text-center text-xs text-steel-500">
+                {allMembers.length === 0 ? ar.noSubAgents : "لا نتائج للبحث"}
+              </div>
+            ) : (
+              visibleRows.map(({ member, depth }, i) => (
+                <TreeRow
+                  key={member.id}
+                  member={member}
+                  depth={depth}
+                  index={i}
+                  isExpanded={expanded.has(member.id)}
+                  onToggle={() => toggleExpand(member.id)}
+                  onSelect={() =>
+                    onSelectAgent(
+                      member.id,
+                      member.display_name ?? member.texas_username ?? "وكيل"
+                    )
+                  }
+                />
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </motion.section>
   );
 }
 
-/* ─── Agent Tree Node (recursive) ─── */
+/* ─── Table Row ─── */
 
-function AgentTreeNode({
+function TreeRow({
   member,
-  index,
   depth,
+  index,
   isExpanded,
-  expandedSet,
-  onToggleExpand,
+  onToggle,
   onSelect,
-  ledgerDate,
 }: {
   member: NetworkMember;
-  index: number;
   depth: number;
+  index: number;
   isExpanded: boolean;
-  expandedSet: Set<string>;
-  onToggleExpand: (id: string) => void;
-  onSelect: (userId: string, label: string) => void;
-  ledgerDate: string;
+  onToggle: () => void;
+  onSelect: () => void;
 }) {
-  const badge = getRoleBadge(member.role);
+  const badge = roleCfg(member.role);
   const ledger = member.ledger;
   const snap = member.snapshot;
   const hasChildren = (member.direct_children_count ?? 0) > 0;
@@ -233,290 +277,108 @@ function AgentTreeNode({
   const isCredit = alNihai >= 0;
 
   return (
-    <motion.li
-      initial={{ opacity: 0, x: 6 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: depth === 0 ? 0.02 * Math.min(index, 12) : 0.01 * index }}
-      className="list-none"
+    <motion.div
+      className="flex items-center px-2 py-1.5 transition-colors hover:bg-white/[0.02]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: 0.01 * Math.min(index, 20) }}
     >
-      <div
-        className={cn(
-          "transition-colors hover:bg-white/[0.02]",
-          depth > 0 && "border-r-2 border-gold/10"
-        )}
-        style={{ paddingRight: `${depth * 16 + 12}px`, paddingLeft: "12px" }}
-      >
-        {/* Row 1: Badge + Name + Expand + al_nihai orientation */}
-        <div className="flex items-center gap-2 py-2.5">
-          {/* Role badge */}
+      {/* Role */}
+      <div className="flex w-[52px] shrink-0 items-center justify-center px-1.5">
+        <div style={{ paddingRight: `${depth * 14}px` }} className="flex items-center gap-1">
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="shrink-0 rounded p-0.5 text-steel-500 transition-colors hover:text-gold"
+            >
+              <ChevronDown
+                className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-180")}
+                strokeWidth={2}
+              />
+            </button>
+          ) : (
+            <span className="w-[18px]" />
+          )}
           <span
             className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold ring-1",
-              badge.color
+              "flex h-6 w-8 items-center justify-center rounded text-[10px] font-bold",
+              badge.bg,
+              badge.text
             )}
           >
             {badge.code}
           </span>
-
-          {/* Name block */}
-          <button
-            type="button"
-            onClick={() =>
-              onSelect(
-                member.id,
-                member.display_name ?? member.texas_username ?? "وكيل"
-              )
-            }
-            className="min-w-0 flex-1 text-right"
-          >
-            <p className="truncate text-sm font-semibold text-foreground">
-              {member.display_name ?? member.texas_username ?? "—"}
-            </p>
-            {member.texas_username && (
-              <p className="truncate font-mono text-[10px] text-steel-500">
-                {member.texas_username}
-              </p>
-            )}
-          </button>
-
-          {/* Children count pill */}
-          {hasChildren && (
-            <span className="flex items-center gap-0.5 rounded-full bg-obsidian/80 px-1.5 py-0.5 text-[9px] font-medium text-steel-400">
-              <Users className="h-2.5 w-2.5" strokeWidth={1.5} />
-              {member.direct_children_count}
-            </span>
-          )}
-
-          {/* al_nihai orientation label */}
-          {ledger ? (
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                isCredit
-                  ? "bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30"
-                  : "bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30"
-              )}
-            >
-              {formatMoney(Math.abs(alNihai))}{" "}
-              {isCredit ? "له ✅" : "عليه 🛑"}
-            </span>
-          ) : (
-            <span className="shrink-0 text-[10px] text-steel-600">
-              {ar.noLedgerData}
-            </span>
-          )}
-
-          {/* Expand toggle */}
-          {hasChildren && (
-            <button
-              type="button"
-              onClick={() => onToggleExpand(member.id)}
-              className="shrink-0 rounded-md p-1 text-steel-500 transition-colors hover:bg-white/[0.06] hover:text-gold"
-            >
-              <ChevronDown
-                className={cn(
-                  "h-4 w-4 transition-transform duration-200",
-                  isExpanded && "rotate-180"
-                )}
-                strokeWidth={1.5}
-              />
-            </button>
-          )}
         </div>
-
-        {/* Row 2: Balance + Deposit/Withdraw from snapshot */}
-        {snap ? (
-          <div className="flex gap-3 pb-1 text-[10px]">
-            <MetricChip label={ar.sectionBalance} value={formatMoney(snap.balance)} accent />
-            <MetricChip label={ar.tebat} value={formatMoney(snap.total_deposit)} />
-            <MetricChip label={ar.suhoubat} value={formatMoney(snap.total_withdraw)} />
-          </div>
-        ) : null}
-
-        {/* Row 3: Ledger metrics */}
-        {ledger ? (
-          <div className="flex flex-wrap gap-x-3 gap-y-0.5 pb-2 text-[10px]">
-            <LedgerMetric label={ar.alFarq} value={ledger.al_farq} />
-            <LedgerMetric label={ar.alHarq} value={ledger.al_harq} warn />
-            <LedgerMetric label={ar.baqiQadim} value={ledger.baqi_qadim} />
-            <LedgerMetric
-              label={ar.alNihai}
-              value={ledger.al_nihai}
-              highlight
-            />
-          </div>
-        ) : null}
       </div>
 
-      {/* Expanded children (lazy-loaded) */}
-      <AnimatePresence>
-        {isExpanded && hasChildren && (
-          <ChildrenSubTree
-            parentId={member.id}
-            depth={depth + 1}
-            expandedSet={expandedSet}
-            onToggleExpand={onToggleExpand}
-            onSelect={onSelect}
-            ledgerDate={ledgerDate}
-          />
+      {/* Username */}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex min-w-[120px] flex-1 shrink-0 items-center gap-1 px-1.5 text-right"
+      >
+        <div className="min-w-0">
+          <p className="truncate text-[11px] font-medium text-foreground">
+            {member.texas_username ?? member.display_name ?? "—"}
+          </p>
+        </div>
+        <ChevronLeft className="h-3 w-3 shrink-0 text-steel-700" strokeWidth={1.5} />
+      </button>
+
+      {/* Direct Players */}
+      <div className="w-[60px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-400">
+        {hasChildren ? member.direct_children_count : "—"}
+      </div>
+
+      {/* Balance */}
+      <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-gold/80">
+        {snap ? num(snap.balance) : "—"}
+      </div>
+
+      {/* تبات */}
+      <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {ledger ? num(ledger.tebat) : "—"}
+      </div>
+
+      {/* سحوبات */}
+      <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {ledger ? num(ledger.suhoubat) : "—"}
+      </div>
+
+      {/* الحرق */}
+      <div
+        className={cn(
+          "w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          ledger && ledger.al_harq !== 0 ? "text-rose-400" : "text-steel-500"
         )}
-      </AnimatePresence>
-    </motion.li>
-  );
-}
+      >
+        {ledger ? num(ledger.al_harq) : "—"}
+      </div>
 
-/* ─── Lazy-loaded children sub-tree ─── */
-
-function ChildrenSubTree({
-  parentId,
-  depth,
-  expandedSet,
-  onToggleExpand,
-  onSelect,
-  ledgerDate,
-}: {
-  parentId: string;
-  depth: number;
-  expandedSet: Set<string>;
-  onToggleExpand: (id: string) => void;
-  onSelect: (userId: string, label: string) => void;
-  ledgerDate: string;
-}) {
-  const { initData, telegramUserId } = useTelegram();
-
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["network-children", parentId, ledgerDate, telegramUserId],
-    queryFn: async () => {
-      const res = await fetch("/api/ledger/get-children", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          initData,
-          telegramUserId: telegramUserId ?? undefined,
-          parentId,
-          ledgerDate,
-        }),
-      });
-      const json = (await res.json()) as { members?: NetworkMember[]; error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Failed to load children");
-      return json.members ?? [];
-    },
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
-  });
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: "auto" }}
-      exit={{ opacity: 0, height: 0 }}
-      transition={{ duration: 0.2 }}
-      className="overflow-hidden"
-    >
-      {isLoading && (
-        <div
-          className="flex items-center gap-2 py-3 text-[10px] text-steel-500"
-          style={{ paddingRight: `${(depth) * 16 + 12}px`, paddingLeft: "12px" }}
-        >
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-gold" />
-          جاري التحميل…
-        </div>
-      )}
-      {error && (
-        <div
-          className="py-2 text-[10px] text-accent-negative"
-          style={{ paddingRight: `${(depth) * 16 + 12}px`, paddingLeft: "12px" }}
-        >
-          {error instanceof Error ? error.message : ar.errorGeneric}
-        </div>
-      )}
-      {data && data.length > 0 && (
-        <ul className="divide-y divide-white/[0.03]">
-          {data.map((child, i) => (
-            <AgentTreeNode
-              key={child.id}
-              member={child}
-              index={i}
-              depth={depth}
-              isExpanded={expandedSet.has(child.id)}
-              expandedSet={expandedSet}
-              onToggleExpand={onToggleExpand}
-              onSelect={onSelect}
-              ledgerDate={ledgerDate}
-            />
-          ))}
-        </ul>
-      )}
-      {data && data.length === 0 && (
-        <div
-          className="py-2 text-[10px] text-steel-600"
-          style={{ paddingRight: `${(depth) * 16 + 12}px`, paddingLeft: "12px" }}
-        >
-          لا يوجد تابعون
-        </div>
-      )}
+      {/* النهائي */}
+      <div className="w-[130px] shrink-0 px-1.5 text-center">
+        {ledger ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold",
+              isCredit
+                ? "bg-emerald-500/10 text-emerald-400"
+                : "bg-rose-500/10 text-rose-400"
+            )}
+          >
+            {formatMoney(Math.abs(alNihai))}
+            <span className="text-[9px]">{isCredit ? "له ✅" : "عليه 🛑"}</span>
+          </span>
+        ) : (
+          <span className="text-[10px] text-steel-600">{ar.noLedgerData}</span>
+        )}
+      </div>
     </motion.div>
   );
 }
 
-/* ─── Small helpers ─── */
-
-function MetricChip({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: boolean;
-}) {
-  return (
-    <span className="flex items-center gap-1">
-      <span className="text-steel-600">{label}:</span>
-      <span
-        className={cn(
-          "font-mono tabular-nums",
-          accent ? "font-medium text-gold" : "text-steel-300"
-        )}
-      >
-        {value}
-      </span>
-    </span>
-  );
-}
-
-function LedgerMetric({
-  label,
-  value,
-  highlight,
-  warn,
-}: {
-  label: string;
-  value: number;
-  highlight?: boolean;
-  warn?: boolean;
-}) {
-  const isZero = value === 0;
-  return (
-    <span className="flex items-center gap-1">
-      <span className="text-steel-600">{label}:</span>
-      <span
-        className={cn(
-          "font-mono tabular-nums",
-          highlight
-            ? "font-semibold text-gold"
-            : warn && !isZero
-              ? "text-rose-400"
-              : isZero
-                ? "text-steel-600"
-                : "text-steel-300"
-        )}
-      >
-        {isZero ? "—" : formatMoney(value)}
-      </span>
-    </span>
-  );
-}
+/* ─── Helpers ─── */
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
