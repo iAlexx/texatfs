@@ -1,8 +1,18 @@
 import { roundMoney } from "@/lib/accounting/formulas";
 
-/** Credit — balance favors the agent (system owes him). */
+/**
+ * Gaming settlement orientation:
+ *
+ *  Positive al_nihai → SA consumed more credits than players withdrew
+ *                     → SA owes Master real cash → عليه 🛑
+ *
+ *  Negative al_nihai → Players won more than issued credits
+ *                     → Master owes SA real cash → له ✅
+ */
+
+/** Credit — Master owes the agent (agent is owed). */
 export const BALANCE_CREDIT_LABEL = "له ✅";
-/** Debit — balance favors the master (agent owes the system). */
+/** Debit — Agent owes the Master. */
 export const BALANCE_DEBIT_LABEL = "عليه 🛑";
 
 export type BalanceOrientation = "credit" | "debit";
@@ -15,12 +25,15 @@ export interface OrientedBalance {
 }
 
 /**
- * Maps a signed ledger balance to Arabic credit/debit orientation.
- * Positive (≥ 0) → له (credit). Negative → عليه (debit).
+ * Maps a signed settlement balance to Arabic credit/debit orientation.
+ *
+ *  Positive (> 0) → عليه (agent owes master, debit).
+ *  Zero           → settled (shown as عليه with 0 amount).
+ *  Negative (< 0) → له   (master owes agent, credit).
  */
 export function orientBalance(value: number): OrientedBalance {
   const signedAmount = roundMoney(value);
-  if (signedAmount >= 0) {
+  if (signedAmount <= 0) {
     return {
       signedAmount,
       orientation: "credit",

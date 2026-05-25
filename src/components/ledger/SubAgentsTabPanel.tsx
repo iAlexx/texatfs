@@ -211,7 +211,7 @@ function AgentRow({
   const badge = roleCfg(agent.texasRole);
   const m = agent.metrics;
   const alNihai = m.al_nihai;
-  const isCredit = alNihai >= 0;
+  const isCredit = alNihai < 0;
 
   return (
     <motion.div
