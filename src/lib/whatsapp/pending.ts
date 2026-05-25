@@ -84,6 +84,31 @@ export async function getPendingByConfirmMsgId(
   return row;
 }
 
+/**
+ * Fallback: find the most recent non-expired pending row for a group.
+ * Used when the user types "1" or "2" without quoting the confirmation msg.
+ */
+export async function getLatestPendingByGroupId(
+  supabase: SupabaseClient,
+  groupId: string
+): Promise<PendingConfirmation | null> {
+  const { data, error } = await supabase
+    .from("whatsapp_pending_confirmations")
+    .select("*")
+    .eq("group_id", groupId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  const row = data as PendingConfirmation;
+  const ageMs = Date.now() - new Date(row.created_at).getTime();
+  if (ageMs > PENDING_TTL_MS) return null;
+  return row;
+}
+
 export async function deletePendingConfirmation(
   supabase: SupabaseClient,
   id: string

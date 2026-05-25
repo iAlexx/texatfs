@@ -30,6 +30,7 @@ import { getAgentByGroupId } from "@/lib/whatsapp/agent-groups";
 import {
   savePendingConfirmation,
   getPendingByConfirmMsgId,
+  getLatestPendingByGroupId,
   deletePendingConfirmation,
   type CashDirection,
 } from "@/lib/whatsapp/pending";
@@ -97,11 +98,25 @@ export async function handleWhatsAppCashEvent(
       hasQuote: !!msg.quotedMessageId,
     });
 
+    // Phase 2a: quoted reply to confirmation message
     if (msg.quotedMessageId) {
       const handled = await handleConfirmationReply(supabase, msg);
       if (handled) return true;
     }
 
+    // Phase 2b: "1"/"2" without quote — match latest pending in this group
+    const isConfirmNoQuote = CONFIRM_RE.test(msg.text);
+    const isCancelNoQuote = CANCEL_RE.test(msg.text);
+    if (!msg.quotedMessageId && (isConfirmNoQuote || isCancelNoQuote)) {
+      log.info("confirm/cancel without quote — trying group fallback", {
+        groupId: msg.groupId,
+        action: isConfirmNoQuote ? "confirm" : "cancel",
+      });
+      const handled = await handleConfirmationFallback(supabase, msg, isConfirmNoQuote);
+      if (handled) return true;
+    }
+
+    // Phase 1: trigger (✅/🛑 + amount)
     const trigger = parseTrigger(msg.text);
     if (trigger) {
       log.info("trigger parsed", {
@@ -305,6 +320,100 @@ async function handleConfirmationReply(
   await safeReply(msg.groupId, msg.messageId, finalText);
 
   log.info("transaction confirmed and recorded", {
+    transactionId: recorded.transactionId,
+    direction,
+    txType: direction === "out" ? "wasel_menho" : "wasel_eleih",
+    amount,
+    affiliateId: pending.affiliate_id,
+    duplicate: recorded.duplicate ?? false,
+  });
+
+  return true;
+}
+
+// ── Phase 2b — confirm/cancel without quoting ─────────────────────────────────
+
+async function handleConfirmationFallback(
+  supabase: SupabaseClient,
+  msg: WhatsAppIncomingMessage,
+  isConfirm: boolean
+): Promise<boolean> {
+  const pending = await getLatestPendingByGroupId(supabase, msg.groupId);
+  if (!pending) {
+    log.info("no pending confirmation in group (fallback)", {
+      groupId: msg.groupId,
+    });
+    return false;
+  }
+
+  log.info("fallback matched latest pending", {
+    pendingId: pending.id,
+    direction: pending.direction,
+    amount: Number(pending.amount),
+    affiliateId: pending.affiliate_id,
+    email: pending.email,
+    action: isConfirm ? "confirm" : "cancel",
+  });
+
+  if (!isConfirm) {
+    await deletePendingConfirmation(supabase, pending.id);
+    await safeReply(msg.groupId, msg.messageId, "❌ تم إلغاء العملية");
+    log.info("transaction cancelled (fallback)", { pendingId: pending.id });
+    return true;
+  }
+
+  const direction = pending.direction;
+  const amount = Number(pending.amount);
+  const paymentDate = resolveLedgerDate();
+  const dedupeKey = `wa-${pending.group_id}-${pending.trigger_msg_id}`;
+  const rawMessage = `${direction === "out" ? "✅" : "🛑"}${amount}`;
+
+  log.info("recording transaction (fallback)", {
+    userId: pending.user_id,
+    direction,
+    txType: direction === "out" ? "wasel_menho" : "wasel_eleih",
+    amount,
+    affiliateId: pending.affiliate_id,
+    dedupeKey,
+    paymentDate,
+  });
+
+  const recorded = await recordWhatsAppCashPayment(supabase, {
+    userId: pending.user_id,
+    groupJid: pending.group_id,
+    groupName: pending.email,
+    dedupeKey,
+    direction,
+    amount,
+    rawMessage,
+    senderJid: msg.senderId ?? null,
+    paymentDate,
+    targetAffiliateId: pending.affiliate_id ?? null,
+  });
+
+  if (!recorded.ok) {
+    log.error("transaction recording failed (fallback)", {
+      error: recorded.error,
+      dedupeKey,
+    });
+    await safeReply(
+      msg.groupId,
+      msg.messageId,
+      "❌ فشل حفظ العملية. حاول مرة أخرى."
+    );
+    return true;
+  }
+
+  await deletePendingConfirmation(supabase, pending.id);
+
+  const finalText =
+    direction === "out"
+      ? `✅ *واصل منك* *${fmt(amount)}* → *${pending.email}*`
+      : `🛑 *واصل الك* *${fmt(amount)}* ← *${pending.email}*`;
+
+  await safeReply(msg.groupId, msg.messageId, finalText);
+
+  log.info("transaction confirmed and recorded (fallback)", {
     transactionId: recorded.transactionId,
     direction,
     txType: direction === "out" ? "wasel_menho" : "wasel_eleih",
