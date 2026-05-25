@@ -170,7 +170,7 @@ async function handleTrigger(
     `\n` +
     `هل أنت متأكد أنك تريد ${verbAr} مبلغ *${fmt(amount)}* ${prepAr} *${agent.email}*؟\n` +
     `\n` +
-    `اضغط رد (Reply) على هذه الرسالة واكتب:\n` +
+    `اكتب في المجموعة:\n` +
     `1️⃣ لتأكيد العملية\n` +
     `2️⃣ لإلغاء العملية`;
 
@@ -194,11 +194,12 @@ async function handleTrigger(
     return true;
   }
 
+  const confirmMsgId = sendResult.messageId || `fallback-${msg.messageId}`;
   if (!sendResult.messageId) {
-    log.warn("gateway did not return messageId — cannot track confirmation", {
+    log.warn("gateway did not return messageId — using fallback ID", {
       groupId: msg.groupId,
+      fallbackId: confirmMsgId,
     });
-    return true;
   }
 
   try {
@@ -206,14 +207,14 @@ async function handleTrigger(
       userId:        agent.userId,
       groupId:       msg.groupId,
       triggerMsgId:  msg.messageId,
-      confirmMsgId:  sendResult.messageId,
+      confirmMsgId,
       affiliateId:   agent.affiliateId,
       email:         agent.email,
       direction,
       amount,
     });
     log.info("pending confirmation saved", {
-      confirmMsgId: sendResult.messageId,
+      confirmMsgId,
       direction,
       amount,
       affiliateId: agent.affiliateId,

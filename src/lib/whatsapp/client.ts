@@ -77,6 +77,7 @@ async function sendWhatsAppMessageOnce(
     message: text,
   };
   if (options.quotedMessageId) {
+    payload.replyTo = options.quotedMessageId;
     payload.reply_to_message_id = options.quotedMessageId;
     payload.quotedMessageId = options.quotedMessageId;
   }
@@ -128,7 +129,17 @@ async function sendWhatsAppMessageOnce(
     throw new WhatsAppError(`WhatsApp gateway error: ${errMsg}`, "upstream", res.status);
   }
 
-  return { messageId: extractMessageId(body), raw: body };
+  const msgId = extractMessageId(body);
+  if (!msgId) {
+    log.warn("send succeeded but no messageId extracted", {
+      chatIdSuffix: chatId.slice(-8),
+      responseKeys: body && typeof body === "object" ? Object.keys(body as Record<string, unknown>).join(",") : "non-object",
+      dataKeys: body && typeof body === "object" && (body as Record<string, unknown>).data && typeof (body as Record<string, unknown>).data === "object"
+        ? Object.keys((body as Record<string, unknown>).data as Record<string, unknown>).join(",")
+        : "none",
+    });
+  }
+  return { messageId: msgId, raw: body };
 }
 
 /**
@@ -168,11 +179,15 @@ function extractMessageId(body: unknown): string {
   const b = body as Record<string, unknown>;
 
   if (typeof b.messageId === "string") return b.messageId;
+  if (typeof b.msgId === "string") return b.msgId;
+  if (typeof b.msgId === "number") return String(b.msgId);
   if (typeof b.id === "string") return b.id;
 
   const data = (b.data ?? b.result) as Record<string, unknown> | undefined;
   if (data && typeof data === "object") {
     if (typeof data.messageId === "string") return data.messageId;
+    if (typeof data.msgId === "string") return data.msgId;
+    if (typeof data.msgId === "number") return String(data.msgId);
     if (typeof data.id === "string") return data.id;
     const key = data.key as Record<string, unknown> | undefined;
     if (key && typeof key.id === "string") return key.id;
