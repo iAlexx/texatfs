@@ -23,8 +23,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createLogger } from "@/lib/observability/logger";
 import {
+  sendWhatsAppMessage,
   replyToWhatsAppMessage,
-  WhatsAppError,
 } from "@/lib/whatsapp/client";
 import { getAgentByGroupId } from "@/lib/whatsapp/agent-groups";
 import {
@@ -165,6 +165,34 @@ async function handleTrigger(
   const verbAr = direction === "out" ? "إرسال"  : "استلام";
   const prepAr = direction === "out" ? "إلى"    : "من";
 
+  // Save pending row FIRST so the group fallback always works,
+  // even if sending the confirmation prompt fails.
+  const placeholderConfirmId = `pending-${msg.messageId}`;
+  try {
+    await savePendingConfirmation(supabase, {
+      userId:        agent.userId,
+      groupId:       msg.groupId,
+      triggerMsgId:  msg.messageId,
+      confirmMsgId:  placeholderConfirmId,
+      affiliateId:   agent.affiliateId,
+      email:         agent.email,
+      direction,
+      amount,
+    });
+    log.info("pending confirmation saved", {
+      confirmMsgId: placeholderConfirmId,
+      direction,
+      amount,
+      affiliateId: agent.affiliateId,
+    });
+  } catch (err) {
+    log.error("failed to persist pending row", {
+      error: err instanceof Error ? err.message : String(err),
+      groupId: msg.groupId,
+    });
+  }
+
+  // Now send the confirmation prompt to WhatsApp
   const confirmText =
     `⚠️ *تأكيد عملية مالية* ⚠️\n` +
     `\n` +
@@ -174,53 +202,14 @@ async function handleTrigger(
     `1️⃣ لتأكيد العملية\n` +
     `2️⃣ لإلغاء العملية`;
 
-  let sendResult;
   try {
-    sendResult = await replyToWhatsAppMessage(
-      msg.groupId,
-      msg.messageId,
-      confirmText
-    );
+    const sendResult = await sendWhatsAppMessage(msg.groupId, confirmText);
     log.info("confirmation prompt sent", {
       groupId: msg.groupId,
       replyMessageId: sendResult.messageId,
     });
   } catch (err) {
-    if (err instanceof WhatsAppError) {
-      log.error("reply send failed", { error: err.message, code: err.code, groupId: msg.groupId });
-    } else {
-      log.error("reply send unknown error", { error: String(err), groupId: msg.groupId });
-    }
-    return true;
-  }
-
-  const confirmMsgId = sendResult.messageId || `fallback-${msg.messageId}`;
-  if (!sendResult.messageId) {
-    log.warn("gateway did not return messageId — using fallback ID", {
-      groupId: msg.groupId,
-      fallbackId: confirmMsgId,
-    });
-  }
-
-  try {
-    await savePendingConfirmation(supabase, {
-      userId:        agent.userId,
-      groupId:       msg.groupId,
-      triggerMsgId:  msg.messageId,
-      confirmMsgId,
-      affiliateId:   agent.affiliateId,
-      email:         agent.email,
-      direction,
-      amount,
-    });
-    log.info("pending confirmation saved", {
-      confirmMsgId,
-      direction,
-      amount,
-      affiliateId: agent.affiliateId,
-    });
-  } catch (err) {
-    log.error("failed to persist pending row", {
+    log.error("confirmation prompt send failed", {
       error: err instanceof Error ? err.message : String(err),
       groupId: msg.groupId,
     });

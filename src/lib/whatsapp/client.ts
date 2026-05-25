@@ -77,7 +77,9 @@ async function sendWhatsAppMessageOnce(
     message: text,
   };
   if (options.quotedMessageId) {
-    payload.replyTo = options.quotedMessageId;
+    // WASenderAPI `replyTo` only accepts integer msgId from a prior send response.
+    // For quoting an incoming message we don't have the internal msgId,
+    // so we omit `replyTo` and send the confirmation as a plain message.
     payload.reply_to_message_id = options.quotedMessageId;
     payload.quotedMessageId = options.quotedMessageId;
   }
