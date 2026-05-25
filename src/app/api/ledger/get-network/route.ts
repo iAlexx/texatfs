@@ -49,6 +49,14 @@ export async function POST(request: Request) {
       await refreshStaleSubtreeLedgers(supabase, memberIds, ledgerDate);
     }
 
+    console.info("[get-network] fetching", {
+      userId: user.id,
+      role: user.role,
+      ledgerDate,
+      directOnly: body.directOnly ?? false,
+      syncStale: body.syncStale,
+    });
+
     const network = await fetchNetworkPayload(
       supabase,
       user.id,
@@ -56,6 +64,12 @@ export async function POST(request: Request) {
       ledgerDate,
       { directOnly: body.directOnly ?? false }
     );
+
+    console.info("[get-network] result", {
+      userId: user.id,
+      membersCount: network.members.length,
+      statsActiveAgents: network.stats.active_agents,
+    });
 
     return NextResponse.json(network);
   } catch (e) {

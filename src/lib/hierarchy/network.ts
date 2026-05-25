@@ -94,14 +94,24 @@ async function fetchDescendantMembers(
   });
 
   if (error) {
-    console.error("[hierarchy] get_descendant_user_ids failed", {
+    console.error("[hierarchy] get_descendant_user_ids RPC failed — will fall back to direct query", {
       rootId,
+      code: error.code,
       message: error.message,
     });
-    throw error;
+    return [];
   }
 
-  return (data ?? []).map((row: { id: string; depth: number }) => ({
+  if (!data || !Array.isArray(data)) {
+    console.warn("[hierarchy] get_descendant_user_ids returned non-array", {
+      rootId,
+      dataType: typeof data,
+      isNull: data === null,
+    });
+    return [];
+  }
+
+  return data.map((row: { id: string; depth: number }) => ({
     id: row.id,
     depth: row.depth,
   }));
@@ -172,13 +182,48 @@ export async function fetchNetworkPayload(
 
     ids = (directChildren ?? []).map((u) => u.id);
     depthById = new Map(ids.map((id) => [id, 1]));
+
+    console.info("[network] directOnly query", {
+      viewerId,
+      viewerRole,
+      childrenFound: ids.length,
+      firstIds: ids.slice(0, 3),
+    });
   } else {
-    const descendantRefs =
+    // Try recursive RPC first
+    let descendantRefs: Array<{ id: string; depth: number }> = [];
+
+    if (
       viewerRole === "super_master" ||
       viewerRole === "master" ||
       viewerRole === "agent"
-        ? await fetchDescendantMembers(supabase, viewerId)
-        : [];
+    ) {
+      descendantRefs = await fetchDescendantMembers(supabase, viewerId);
+    }
+
+    console.info("[network] RPC get_descendant_user_ids result", {
+      viewerId,
+      viewerRole,
+      descendantsFromRpc: descendantRefs.length,
+      firstIds: descendantRefs.slice(0, 3).map((d) => d.id),
+    });
+
+    // Fallback: if RPC returned 0 descendants, try direct parent_id query
+    if (descendantRefs.length === 0) {
+      const { data: directFallback, error: fbErr } = await supabase
+        .from("users")
+        .select("id")
+        .eq("parent_id", viewerId);
+
+      if (!fbErr && directFallback && directFallback.length > 0) {
+        console.info("[network] RPC returned 0 but direct parent_id query found children — using fallback", {
+          viewerId,
+          fallbackCount: directFallback.length,
+          firstIds: directFallback.slice(0, 3).map((u) => u.id),
+        });
+        descendantRefs = directFallback.map((u) => ({ id: u.id, depth: 1 }));
+      }
+    }
 
     ids = descendantRefs.map((d) => d.id);
     depthById = new Map(descendantRefs.map((d) => [d.id, d.depth]));
@@ -194,6 +239,20 @@ export async function fetchNetworkPayload(
     : { data: [], error: null };
 
   if (usersError) throw usersError;
+
+  console.info("[network] users loaded", {
+    viewerId,
+    directOnly,
+    idsCount: ids.length,
+    usersReturned: (users ?? []).length,
+    activeUsers: (users ?? []).filter((u) => u.is_active !== false).length,
+    firstUsers: (users ?? []).slice(0, 3).map((u) => ({
+      id: u.id,
+      role: u.role,
+      parent_id: u.parent_id,
+      name: u.display_name ?? u.texas_username,
+    })),
+  });
 
   const [ledgerByUser, snapshotByUser] = await Promise.all([
     loadLedgersForUsers(supabase, ids, ledgerDate),
