@@ -58,20 +58,37 @@ function childLabel(child: TexasChildRecord): string {
   return resolveLabel(child as Record<string, unknown>);
 }
 
+const BALANCE_KEYS: readonly string[] = [
+  ...walletMapping.balance,
+  "totalAvailable",
+  "total_available",
+  "totalBalance",
+];
+
 function indexStatisticsByAffiliate(
   records: SubAgentStatisticsRecord[]
 ): Map<string, SubAgentStatisticsRecord> {
   const map = new Map<string, SubAgentStatisticsRecord>();
   for (const row of records) {
     const id = pickAffiliateId(row);
-    if (id) map.set(id, row);
+    if (id) map.set(String(id), row);
   }
   return map;
 }
 
-function extractBalance(stats: SubAgentStatisticsRecord | null): number {
-  if (!stats) return 0;
-  return pickNumeric(stats as Record<string, unknown>, walletMapping.balance);
+function extractBalance(
+  stats: SubAgentStatisticsRecord | null,
+  child: TexasChildRecord | null
+): number {
+  if (stats) {
+    const v = pickNumeric(stats as Record<string, unknown>, BALANCE_KEYS);
+    if (v !== 0) return v;
+  }
+  if (child) {
+    const v = pickNumeric(child as Record<string, unknown>, BALANCE_KEYS);
+    if (v !== 0) return v;
+  }
+  return 0;
 }
 
 /** Live sub-agents: Texas portal data (getChildren + getSubAgentStatistics). */
@@ -87,7 +104,18 @@ export async function fetchTexasSubAgentsLive(
   const statsRecords = statsResponse.result?.records ?? [];
   const statsById = indexStatisticsByAffiliate(statsRecords);
 
-  // Log the first raw stats row to help diagnose field availability
+  // Log raw data samples to diagnose field availability
+  if (children.length > 0) {
+    const sample = children[0] as Record<string, unknown>;
+    log.info("raw children row sample", {
+      keys: Object.keys(sample).sort().join(", "),
+      affiliateId: sample.affiliateId,
+      currentWallet: sample.currentWallet,
+      balance: sample.balance,
+      totalAvailable: sample.totalAvailable,
+    });
+  }
+
   if (statsRecords.length > 0) {
     const sample = statsRecords[0] as Record<string, unknown>;
     log.info("raw stats row sample", {
@@ -95,13 +123,21 @@ export async function fetchTexasSubAgentsLive(
       affiliateId: sample.affiliateId,
       currentWallet: sample.currentWallet,
       balance: sample.balance,
-      totalDeposit: sample.totalDeposit,
-      totalWithdraw: sample.totalWithdraw,
-      ngr: sample.ngr,
     });
-  } else {
-    log.warn("getSubAgentStatistics returned 0 records", {
+  }
+
+  // Log which children matched stats and which didn't
+  const childIds = children.map((c) => String(c.affiliateId));
+  const statsIds = Array.from(statsById.keys());
+  const unmatchedChildren = childIds.filter((id) => !statsById.has(id));
+  const unmatchedStats = statsIds.filter((id) => !childIds.includes(id));
+
+  if (unmatchedChildren.length > 0 || unmatchedStats.length > 0) {
+    log.warn("affiliateId mismatch between children and stats", {
       childrenCount: children.length,
+      statsCount: statsRecords.length,
+      childrenWithoutStats: unmatchedChildren,
+      statsWithoutChildren: unmatchedStats,
     });
   }
 
@@ -109,7 +145,7 @@ export async function fetchTexasSubAgentsLive(
     const affiliateId = String(child.affiliateId);
     const stats = statsById.get(affiliateId) ?? null;
     const metrics = metricsFromTexasSources(stats);
-    const balance = extractBalance(stats);
+    const balance = extractBalance(stats, child);
 
     return {
       affiliateId,
@@ -141,8 +177,10 @@ export async function fetchTexasSubAgentsLive(
   log.info("sub-agents built", {
     childrenCount: children.length,
     statsRecords: statsRecords.length,
+    matched: children.length - unmatchedChildren.length,
+    unmatched: unmatchedChildren.length,
     agentsWithBalance: agents.filter((a) => a.balance > 0).length,
-    agentsWithMetrics: agents.filter((a) => a.metrics.tebat > 0 || a.metrics.suhoubat > 0).length,
+    balanceDetails: agents.map((a) => `${a.username}=${a.balance}`).join(", "),
   });
 
   return {
