@@ -17,7 +17,7 @@ import {
   todayIsoDate,
 } from "@/hooks/use-ledger-api";
 import {
-  useNetworkData,
+  useTexasSubAgents,
   useTexasAgentDetail,
 } from "@/hooks/use-texas-agents-api";
 import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
@@ -45,7 +45,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
     ? canManageNetwork(session.data.user.role)
     : false;
 
-  const networkQuery = useNetworkData(
+  const subAgentsQuery = useTexasSubAgents(
     selectedDate,
     telegram.isReady &&
       telegram.canAuthenticate &&
@@ -165,11 +165,6 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
     setActiveTab("account");
   }
 
-  function selectNetworkAgent(userId: string, label: string) {
-    setViewTexasAffiliateId(userId);
-    setViewAgentLabel(label);
-    setActiveTab("account");
-  }
 
   function returnToMaster() {
     setViewTexasAffiliateId(null);
@@ -247,11 +242,11 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
 
       {activeTab === "agents" && showAgentsTab ? (
         <SubAgentsTabPanel
-          data={networkQuery.data}
-          isLoading={networkQuery.isLoading}
-          error={networkQuery.error}
-          onRetry={() => void networkQuery.refetch()}
-          onSelectAgent={selectNetworkAgent}
+          data={subAgentsQuery.data}
+          isLoading={subAgentsQuery.isLoading}
+          error={subAgentsQuery.error}
+          onRetry={() => void subAgentsQuery.refetch()}
+          onSelectAgent={selectTexasAgent}
         />
       ) : null}
 

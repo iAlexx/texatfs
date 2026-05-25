@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronDown, ChevronLeft, Loader2, Search, Users } from "lucide-react";
+import { ChevronLeft, Loader2, Search, Users } from "lucide-react";
 import { formatMoney } from "@/lib/utils/format";
 import { ar } from "@/lib/i18n/ar";
-import type { NetworkMember, NetworkPayload } from "@/lib/hierarchy/types";
+import type {
+  TexasSubAgentsPayload,
+  TexasSubAgentRow,
+} from "@/lib/texas/texas-live-sub-agents";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils/cn";
 
-/* ─── Role badge (Agent Tree style) ─── */
+/* ─── Role badge ─── */
 
 const ROLE_CFG: Record<string, { code: string; bg: string; text: string }> = {
   super_master: { code: "SM", bg: "bg-purple-500/25", text: "text-purple-300" },
@@ -23,44 +26,12 @@ function roleCfg(role: string) {
   return ROLE_CFG[role] ?? ROLE_CFG.agent!;
 }
 
-/* ─── Tree helpers ─── */
-
-function buildChildrenMap(members: NetworkMember[], viewerId: string) {
-  const map = new Map<string, NetworkMember[]>();
-  for (const m of members) {
-    const pid = m.parent_id ?? viewerId;
-    const list = map.get(pid);
-    if (list) list.push(m);
-    else map.set(pid, [m]);
-  }
-  return map;
-}
-
-function flattenVisibleRows(
-  parentId: string,
-  childrenMap: Map<string, NetworkMember[]>,
-  expanded: Set<string>,
-  depth: number,
-  searchActive: boolean
-): Array<{ member: NetworkMember; depth: number }> {
-  const children = childrenMap.get(parentId);
-  if (!children) return [];
-
-  const rows: Array<{ member: NetworkMember; depth: number }> = [];
-  for (const m of children) {
-    rows.push({ member: m, depth });
-    if (searchActive || expanded.has(m.id)) {
-      rows.push(...flattenVisibleRows(m.id, childrenMap, expanded, depth + 1, searchActive));
-    }
-  }
-  return rows;
-}
-
-function matchesSearch(m: NetworkMember, q: string): boolean {
-  const name = (m.display_name ?? "").toLowerCase();
-  const user = (m.texas_username ?? "").toLowerCase();
-  const aff = (m.texas_affiliate_id ?? "").toLowerCase();
-  return name.includes(q) || user.includes(q) || aff.includes(q);
+function matchesSearch(agent: TexasSubAgentRow, q: string): boolean {
+  return (
+    agent.username.toLowerCase().includes(q) ||
+    agent.email.toLowerCase().includes(q) ||
+    agent.affiliateId.toLowerCase().includes(q)
+  );
 }
 
 function num(v: number | undefined | null): string {
@@ -71,14 +42,13 @@ function num(v: number | undefined | null): string {
 /* ─── Columns ─── */
 
 const COL_HEADERS = [
-  { key: "role",     label: "Role",         w: "w-[52px]"  },
-  { key: "username", label: "Username",      w: "min-w-[120px] flex-1" },
-  { key: "players",  label: ar.directPlayers, w: "w-[60px]" },
-  { key: "balance",  label: ar.sectionBalance, w: "w-[90px]" },
-  { key: "tebat",    label: ar.tebat,        w: "w-[90px]" },
-  { key: "suhoubat", label: ar.suhoubat,     w: "w-[90px]" },
-  { key: "alHarq",   label: ar.alHarq,       w: "w-[90px]" },
-  { key: "alNihai",  label: ar.alNihai,      w: "w-[130px]" },
+  { key: "role",     label: "Role",       w: "w-[52px]" },
+  { key: "username", label: "Username",   w: "min-w-[120px] flex-1" },
+  { key: "tebat",    label: ar.tebat,     w: "w-[90px]" },
+  { key: "suhoubat", label: ar.suhoubat,  w: "w-[90px]" },
+  { key: "alFarq",   label: ar.alFarq,    w: "w-[80px]" },
+  { key: "alHarq",   label: ar.alHarq,    w: "w-[80px]" },
+  { key: "alNihai",  label: ar.alNihai,   w: "w-[130px]" },
 ] as const;
 
 /* ─── Main Panel ─── */
@@ -90,44 +60,21 @@ export function SubAgentsTabPanel({
   onRetry,
   onSelectAgent,
 }: {
-  data: NetworkPayload | undefined;
+  data: TexasSubAgentsPayload | undefined;
   isLoading: boolean;
   error: Error | null;
   onRetry: () => void;
-  onSelectAgent: (userId: string, label: string) => void;
+  onSelectAgent: (affiliateId: string, label: string, currency: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const viewerId = data?.viewer_id ?? "";
-  const allMembers = data?.members ?? [];
+  const allAgents = data?.agents ?? [];
   const searchQ = query.trim().toLowerCase();
-  const searchActive = searchQ.length > 0;
 
-  const childrenMap = useMemo(
-    () => buildChildrenMap(allMembers, viewerId),
-    [allMembers, viewerId]
-  );
-
-  const visibleRows = useMemo(() => {
-    if (searchActive) {
-      return allMembers
-        .filter((m) => matchesSearch(m, searchQ))
-        .map((m) => ({ member: m, depth: 0 }));
-    }
-    return flattenVisibleRows(viewerId, childrenMap, expanded, 0, false);
-  }, [viewerId, childrenMap, expanded, searchActive, searchQ, allMembers]);
-
-  const toggleExpand = useCallback((id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  /* ── Loading / Error states ── */
+  const visibleAgents = useMemo(() => {
+    if (!searchQ) return allAgents;
+    return allAgents.filter((a) => matchesSearch(a, searchQ));
+  }, [allAgents, searchQ]);
 
   if (isLoading && !data) {
     return (
@@ -177,7 +124,7 @@ export function SubAgentsTabPanel({
         <div className="mb-2 flex items-center gap-2">
           <Users className="h-5 w-5 text-gold" strokeWidth={1.5} />
           <div>
-            <h2 className="text-base font-bold text-gold">Agent Tree</h2>
+            <h2 className="text-base font-bold text-gold">{ar.subAgentsTitle}</h2>
             <p className="text-[10px] text-steel-500">{ar.subAgentsSubtitle}</p>
           </div>
           {stats && (
@@ -211,7 +158,7 @@ export function SubAgentsTabPanel({
 
       {/* ── Table ── */}
       <div className="overflow-x-auto">
-        <div className="min-w-[700px]">
+        <div className="min-w-[640px]">
           {/* Table header */}
           <div className="flex items-center border-b border-white/[0.08] bg-obsidian/60 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-steel-500">
             {COL_HEADERS.map((col) => (
@@ -223,24 +170,18 @@ export function SubAgentsTabPanel({
 
           {/* Table body */}
           <div className="max-h-[36rem] divide-y divide-white/[0.03] overflow-y-auto">
-            {visibleRows.length === 0 ? (
+            {visibleAgents.length === 0 ? (
               <div className="px-4 py-12 text-center text-xs text-steel-500">
-                {allMembers.length === 0 ? ar.noSubAgents : "لا نتائج للبحث"}
+                {allAgents.length === 0 ? ar.noSubAgents : "لا نتائج للبحث"}
               </div>
             ) : (
-              visibleRows.map(({ member, depth }, i) => (
-                <TreeRow
-                  key={member.id}
-                  member={member}
-                  depth={depth}
+              visibleAgents.map((agent, i) => (
+                <AgentRow
+                  key={agent.affiliateId}
+                  agent={agent}
                   index={i}
-                  isExpanded={expanded.has(member.id)}
-                  onToggle={() => toggleExpand(member.id)}
                   onSelect={() =>
-                    onSelectAgent(
-                      member.id,
-                      member.display_name ?? member.texas_username ?? "وكيل"
-                    )
+                    onSelectAgent(agent.affiliateId, agent.username, agent.mainCurrency)
                   }
                 />
               ))
@@ -254,26 +195,18 @@ export function SubAgentsTabPanel({
 
 /* ─── Table Row ─── */
 
-function TreeRow({
-  member,
-  depth,
+function AgentRow({
+  agent,
   index,
-  isExpanded,
-  onToggle,
   onSelect,
 }: {
-  member: NetworkMember;
-  depth: number;
+  agent: TexasSubAgentRow;
   index: number;
-  isExpanded: boolean;
-  onToggle: () => void;
   onSelect: () => void;
 }) {
-  const badge = roleCfg(member.role);
-  const ledger = member.ledger;
-  const snap = member.snapshot;
-  const hasChildren = (member.direct_children_count ?? 0) > 0;
-  const alNihai = ledger?.al_nihai ?? 0;
+  const badge = roleCfg(agent.texasRole);
+  const m = agent.metrics;
+  const alNihai = m.al_nihai;
   const isCredit = alNihai >= 0;
 
   return (
@@ -285,31 +218,15 @@ function TreeRow({
     >
       {/* Role */}
       <div className="flex w-[52px] shrink-0 items-center justify-center px-1.5">
-        <div style={{ paddingRight: `${depth * 14}px` }} className="flex items-center gap-1">
-          {hasChildren ? (
-            <button
-              type="button"
-              onClick={onToggle}
-              className="shrink-0 rounded p-0.5 text-steel-500 transition-colors hover:text-gold"
-            >
-              <ChevronDown
-                className={cn("h-3.5 w-3.5 transition-transform", isExpanded && "rotate-180")}
-                strokeWidth={2}
-              />
-            </button>
-          ) : (
-            <span className="w-[18px]" />
+        <span
+          className={cn(
+            "flex h-6 w-8 items-center justify-center rounded text-[10px] font-bold",
+            badge.bg,
+            badge.text
           )}
-          <span
-            className={cn(
-              "flex h-6 w-8 items-center justify-center rounded text-[10px] font-bold",
-              badge.bg,
-              badge.text
-            )}
-          >
-            {badge.code}
-          </span>
-        </div>
+        >
+          {badge.code}
+        </span>
       </div>
 
       {/* Username */}
@@ -320,59 +237,53 @@ function TreeRow({
       >
         <div className="min-w-0">
           <p className="truncate text-[11px] font-medium text-foreground">
-            {member.texas_username ?? member.display_name ?? "—"}
+            {agent.username}
           </p>
+          {agent.email !== agent.username && (
+            <p className="truncate text-[9px] text-steel-600">{agent.email}</p>
+          )}
         </div>
         <ChevronLeft className="h-3 w-3 shrink-0 text-steel-700" strokeWidth={1.5} />
       </button>
 
-      {/* Direct Players */}
-      <div className="w-[60px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-400">
-        {hasChildren ? member.direct_children_count : "—"}
-      </div>
-
-      {/* Balance */}
-      <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-gold/80">
-        {snap ? num(snap.balance) : "—"}
-      </div>
-
-      {/* تبات */}
+      {/* التعبئات */}
       <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
-        {ledger ? num(ledger.tebat) : "—"}
+        {num(m.tebat)}
       </div>
 
       {/* سحوبات */}
       <div className="w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
-        {ledger ? num(ledger.suhoubat) : "—"}
+        {num(m.suhoubat)}
+      </div>
+
+      {/* الفرق */}
+      <div className="w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {num(m.al_farq)}
       </div>
 
       {/* الحرق */}
       <div
         className={cn(
-          "w-[90px] shrink-0 px-1.5 text-center font-mono text-[11px]",
-          ledger && ledger.al_harq !== 0 ? "text-rose-400" : "text-steel-500"
+          "w-[80px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.al_harq !== 0 ? "text-rose-400" : "text-steel-500"
         )}
       >
-        {ledger ? num(ledger.al_harq) : "—"}
+        {num(m.al_harq)}
       </div>
 
       {/* النهائي */}
       <div className="w-[130px] shrink-0 px-1.5 text-center">
-        {ledger ? (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold",
-              isCredit
-                ? "bg-emerald-500/10 text-emerald-400"
-                : "bg-rose-500/10 text-rose-400"
-            )}
-          >
-            {formatMoney(Math.abs(alNihai))}
-            <span className="text-[9px]">{isCredit ? "له ✅" : "عليه 🛑"}</span>
-          </span>
-        ) : (
-          <span className="text-[10px] text-steel-600">{ar.noLedgerData}</span>
-        )}
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold",
+            isCredit
+              ? "bg-emerald-500/10 text-emerald-400"
+              : "bg-rose-500/10 text-rose-400"
+          )}
+        >
+          {formatMoney(Math.abs(alNihai))}
+          <span className="text-[9px]">{isCredit ? "له ✅" : "عليه 🛑"}</span>
+        </span>
       </div>
     </motion.div>
   );
