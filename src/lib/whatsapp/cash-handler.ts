@@ -2,8 +2,8 @@
  * WhatsApp Cash Handler — Phase 1 (trigger) + Phase 2 (1/2 reply confirm).
  *
  *  Phase 1 — Trigger
- *    Group member types  "✅90000"  or  "/✅ 90000"  → outgoing
- *                        "🛑45000"  or  "/🛑 45000"  → incoming
+ *    Group member types  "✅90000"  or  "/✅ 90000"  → outgoing (wasel_menho)
+ *                        "🛑45000"  or  "/🛑 45000"  → incoming (wasel_eleih)
  *    Bot:
  *      • Looks up agent for this groupId.
  *      • Quotes the trigger and replies with the confirmation message.
@@ -15,8 +15,13 @@
  *               ("✅ واصل منك ..." / "🛑 واصل الك ...").
  *      • "2" → reply "❌ تم إلغاء العملية".
  *    In either case, the pending row is deleted.
+ *
+ *  Accounting mapping:
+ *    ✅ → direction "out" → wasel_menho (Super Agent paid Master real cash)
+ *    🛑 → direction "in"  → wasel_eleih (Master paid Super Agent real cash)
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createLogger } from "@/lib/observability/logger";
 import {
   replyToWhatsAppMessage,
   WhatsAppError,
@@ -32,15 +37,15 @@ import type { WhatsAppIncomingMessage } from "@/lib/whatsapp/webhook-types";
 import { recordWhatsAppCashPayment } from "@/lib/whatsapp/record-cash-transaction";
 import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 
+const log = createLogger("whatsapp/cash-handler");
+
 // ── Regex patterns ────────────────────────────────────────────────────────────
 
-// Trigger: optional leading "/", emoji, optional space, digits (with separators).
 const TRIGGER_OUT_RE = /^[/]?\s*✅\s*([\d,.،٬]+)\s*$/u;
 const TRIGGER_IN_RE  = /^[/]?\s*🛑\s*([\d,.،٬]+)\s*$/u;
 
-// Reply confirmation: "1" or "2" possibly wrapped in emoji or whitespace.
-const CONFIRM_RE = /^\s*(?:1\u20e3|١|1)\s*$/;   // 1 or ١ or 1️⃣
-const CANCEL_RE  = /^\s*(?:2\u20e3|٢|2)\s*$/;   // 2 or ٢ or 2️⃣
+const CONFIRM_RE = /^\s*(?:1\u20e3|١|1)\s*$/;
+const CANCEL_RE  = /^\s*(?:2\u20e3|٢|2)\s*$/;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,37 +83,41 @@ function fmt(n: number): string {
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-/**
- * Routes an incoming WhatsApp group message. Returns true if it was handled
- * as a cash-system event (trigger or confirmation), false otherwise.
- *
- * Errors are caught and logged; the function never throws so the webhook
- * can always return 200 OK quickly.
- */
 export async function handleWhatsAppCashEvent(
   supabase: SupabaseClient,
   msg: WhatsAppIncomingMessage
 ): Promise<boolean> {
   try {
-    // Phase 2 first: if this is a reply to one of our pending confirmations,
-    // it takes priority over the trigger regex.
+    log.info("cash event received", {
+      groupId: msg.groupId,
+      senderId: msg.senderId,
+      text: msg.text.slice(0, 60),
+      messageId: msg.messageId,
+      hasQuote: !!msg.quotedMessageId,
+    });
+
     if (msg.quotedMessageId) {
       const handled = await handleConfirmationReply(supabase, msg);
       if (handled) return true;
     }
 
-    // Phase 1: try to parse as a trigger.
     const trigger = parseTrigger(msg.text);
     if (trigger) {
+      log.info("trigger parsed", {
+        direction: trigger.direction,
+        amount: trigger.amount,
+        txType: trigger.direction === "out" ? "wasel_menho" : "wasel_eleih",
+        groupId: msg.groupId,
+      });
       return await handleTrigger(supabase, msg, trigger);
     }
 
     return false;
   } catch (err) {
-    console.error(
-      "[whatsapp-cash] handler error:",
-      err instanceof Error ? err.message : String(err)
-    );
+    log.error("handler error", {
+      error: err instanceof Error ? err.message : String(err),
+      groupId: msg.groupId,
+    });
     return false;
   }
 }
@@ -122,9 +131,19 @@ async function handleTrigger(
 ): Promise<boolean> {
   const agent = await getAgentByGroupId(supabase, msg.groupId);
   if (!agent) {
-    console.info("[whatsapp-cash] trigger in unmapped group, ignoring:", msg.groupId);
+    log.warn("trigger in unmapped group — no agent found", {
+      groupId: msg.groupId,
+      text: msg.text,
+    });
     return false;
   }
+
+  log.info("agent resolved for group", {
+    groupId: msg.groupId,
+    userId: agent.userId,
+    affiliateId: agent.affiliateId,
+    email: agent.email,
+  });
 
   const { direction, amount } = trigger;
   const verbAr = direction === "out" ? "إرسال"  : "استلام";
@@ -146,19 +165,23 @@ async function handleTrigger(
       msg.messageId,
       confirmText
     );
+    log.info("confirmation prompt sent", {
+      groupId: msg.groupId,
+      replyMessageId: sendResult.messageId,
+    });
   } catch (err) {
     if (err instanceof WhatsAppError) {
-      console.error("[whatsapp-cash] reply send failed:", err.message, err.code);
+      log.error("reply send failed", { error: err.message, code: err.code, groupId: msg.groupId });
     } else {
-      console.error("[whatsapp-cash] reply send unknown error:", err);
+      log.error("reply send unknown error", { error: String(err), groupId: msg.groupId });
     }
-    return true; // we did parse the trigger; just couldn't send
+    return true;
   }
 
   if (!sendResult.messageId) {
-    console.warn(
-      "[whatsapp-cash] gateway did not return a messageId — cannot track confirmation"
-    );
+    log.warn("gateway did not return messageId — cannot track confirmation", {
+      groupId: msg.groupId,
+    });
     return true;
   }
 
@@ -173,11 +196,17 @@ async function handleTrigger(
       direction,
       amount,
     });
+    log.info("pending confirmation saved", {
+      confirmMsgId: sendResult.messageId,
+      direction,
+      amount,
+      affiliateId: agent.affiliateId,
+    });
   } catch (err) {
-    console.error(
-      "[whatsapp-cash] failed to persist pending row:",
-      err instanceof Error ? err.message : String(err)
-    );
+    log.error("failed to persist pending row", {
+      error: err instanceof Error ? err.message : String(err),
+      groupId: msg.groupId,
+    });
   }
 
   return true;
@@ -197,18 +226,27 @@ async function handleConfirmationReply(
 
   const pending = await getPendingByConfirmMsgId(supabase, msg.quotedMessageId);
   if (!pending) {
-    // Could be expired or for a different bot message — silently ignore.
+    log.info("no matching pending confirmation (expired or not found)", {
+      quotedMessageId: msg.quotedMessageId,
+      groupId: msg.groupId,
+    });
     return false;
   }
+
+  log.info("pending confirmation found", {
+    pendingId: pending.id,
+    direction: pending.direction,
+    amount: Number(pending.amount),
+    affiliateId: pending.affiliate_id,
+    email: pending.email,
+    action: isConfirm ? "confirm" : "cancel",
+  });
 
   // ── Cancel ─────────────────────────────────────────────────────────────────
   if (isCancel) {
     await deletePendingConfirmation(supabase, pending.id);
-    await safeReply(
-      msg.groupId,
-      msg.messageId,
-      "❌ تم إلغاء العملية"
-    );
+    await safeReply(msg.groupId, msg.messageId, "❌ تم إلغاء العملية");
+    log.info("transaction cancelled", { pendingId: pending.id });
     return true;
   }
 
@@ -219,6 +257,16 @@ async function handleConfirmationReply(
 
   const dedupeKey = `wa-${pending.group_id}-${pending.trigger_msg_id}`;
   const rawMessage = `${direction === "out" ? "✅" : "🛑"}${amount}`;
+
+  log.info("recording transaction", {
+    userId: pending.user_id,
+    direction,
+    txType: direction === "out" ? "wasel_menho" : "wasel_eleih",
+    amount,
+    affiliateId: pending.affiliate_id,
+    dedupeKey,
+    paymentDate,
+  });
 
   const recorded = await recordWhatsAppCashPayment(supabase, {
     userId: pending.user_id,
@@ -234,6 +282,10 @@ async function handleConfirmationReply(
   });
 
   if (!recorded.ok) {
+    log.error("transaction recording failed", {
+      error: recorded.error,
+      dedupeKey,
+    });
     await safeReply(
       msg.groupId,
       msg.messageId,
@@ -250,6 +302,16 @@ async function handleConfirmationReply(
       : `🛑 *واصل الك* *${fmt(amount)}* ← *${pending.email}*`;
 
   await safeReply(msg.groupId, msg.messageId, finalText);
+
+  log.info("transaction confirmed and recorded", {
+    transactionId: recorded.transactionId,
+    direction,
+    txType: direction === "out" ? "wasel_menho" : "wasel_eleih",
+    amount,
+    affiliateId: pending.affiliate_id,
+    duplicate: recorded.duplicate ?? false,
+  });
+
   return true;
 }
 
@@ -263,9 +325,9 @@ async function safeReply(
   try {
     await replyToWhatsAppMessage(groupId, quotedMessageId, text);
   } catch (err) {
-    console.error(
-      "[whatsapp-cash] reply failed:",
-      err instanceof Error ? err.message : String(err)
-    );
+    log.error("reply failed", {
+      groupId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }

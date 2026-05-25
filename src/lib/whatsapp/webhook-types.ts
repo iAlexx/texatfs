@@ -91,21 +91,33 @@ export function normaliseWhatsAppWebhook(
   raw: RawWhatsAppWebhook
 ): WhatsAppIncomingMessage | null {
   const eventType = String(raw.event ?? raw.type ?? "");
-  const data: RawWhatsAppData = raw.data ?? raw.payload ?? raw.message ?? raw;
-  const parsed = extractChatAndMessage(data);
 
-  if (!parsed.chatId || !parsed.messageId) return null;
-  if (!parsed.chatId.endsWith("@g.us")) return null;
+  // Try nested data first, then fall back to the raw envelope itself.
+  // WASenderAPI sometimes sends the fields at the top level.
+  const candidates: RawWhatsAppData[] = [
+    raw.data,
+    raw.payload,
+    raw.message,
+    raw as RawWhatsAppData,
+  ].filter(Boolean) as RawWhatsAppData[];
 
-  return {
-    eventType,
-    groupId: parsed.chatId,
-    senderId: parsed.senderId,
-    messageId: parsed.messageId,
-    text: parsed.text,
-    quotedMessageId: parsed.quotedMessageId,
-    timestamp: parsed.timestamp,
-  };
+  for (const data of candidates) {
+    const parsed = extractChatAndMessage(data);
+    if (!parsed.chatId || !parsed.messageId) continue;
+    if (!parsed.chatId.endsWith("@g.us")) continue;
+
+    return {
+      eventType,
+      groupId: parsed.chatId,
+      senderId: parsed.senderId,
+      messageId: parsed.messageId,
+      text: parsed.text,
+      quotedMessageId: parsed.quotedMessageId,
+      timestamp: parsed.timestamp,
+    };
+  }
+
+  return null;
 }
 
 function pickString(v: unknown): string | undefined {
@@ -183,24 +195,33 @@ export function normaliseWhatsAppPrivateWebhook(
   raw: RawWhatsAppWebhook
 ): WhatsAppPrivateMessage | null {
   const eventType = String(raw.event ?? raw.type ?? "");
-  const data: RawWhatsAppData = raw.data ?? raw.payload ?? raw.message ?? raw;
-  const parsed = extractChatAndMessage(data);
 
-  if (!parsed.chatId || !parsed.messageId) return null;
-  if (parsed.chatId.endsWith("@g.us")) return null;
+  const candidates: RawWhatsAppData[] = [
+    raw.data,
+    raw.payload,
+    raw.message,
+    raw as RawWhatsAppData,
+  ].filter(Boolean) as RawWhatsAppData[];
 
-  const isPrivate =
-    parsed.chatId.endsWith("@s.whatsapp.net") ||
-    parsed.chatId.endsWith("@c.us");
+  for (const data of candidates) {
+    const parsed = extractChatAndMessage(data);
+    if (!parsed.chatId || !parsed.messageId) continue;
+    if (parsed.chatId.endsWith("@g.us")) continue;
 
-  if (!isPrivate) return null;
+    const isPrivate =
+      parsed.chatId.endsWith("@s.whatsapp.net") ||
+      parsed.chatId.endsWith("@c.us");
+    if (!isPrivate) continue;
 
-  return {
-    eventType,
-    chatId: parsed.chatId,
-    messageId: parsed.messageId,
-    text: parsed.text,
-    quotedMessageId: parsed.quotedMessageId,
-    timestamp: parsed.timestamp,
-  };
+    return {
+      eventType,
+      chatId: parsed.chatId,
+      messageId: parsed.messageId,
+      text: parsed.text,
+      quotedMessageId: parsed.quotedMessageId,
+      timestamp: parsed.timestamp,
+    };
+  }
+
+  return null;
 }

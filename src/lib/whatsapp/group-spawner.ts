@@ -3,6 +3,7 @@
  * 15-second delay between each group to reduce ban risk.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createLogger } from "@/lib/observability/logger";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import {
   createWhatsAppGroup,
@@ -14,7 +15,8 @@ import { phoneToWhatsAppJid } from "@/lib/whatsapp/phone";
 import { fetchTexasChildrenSafe } from "@/lib/whatsapp/texas-children-fetch";
 import type { TexasChildRecord } from "@/lib/texas/types";
 
-/** Compulsory anti-ban pacing between group creations. */
+const log = createLogger("whatsapp/group-spawner");
+
 export const GROUP_SPAWN_DELAY_MS = 15_000;
 
 function sleep(ms: number): Promise<void> {
@@ -39,6 +41,7 @@ function resolveAgentEmail(child: TexasChildRecord): string {
 
 /**
  * Creates one WhatsApp group per sub-agent (sequential, 15s apart).
+ * Each group name follows: "Texas | {email}" pattern.
  * Sends a summary DM to the master when finished.
  */
 export async function spawnAgentGroupsForMaster(
@@ -49,10 +52,12 @@ export async function spawnAgentGroupsForMaster(
   const stats = { created: 0, skipped: 0, failed: 0 };
   const masterJid = phoneToWhatsAppJid(masterPhoneDigits);
 
+  log.info("fetching Texas children", { userId });
   const texasFetch = await fetchTexasChildrenSafe(supabase, userId);
   const children: TexasChildRecord[] = texasFetch.records;
 
   if (!texasFetch.ok) {
+    log.error("Texas children fetch failed", { userId });
     await sendWhatsAppMessage(
       masterJid,
       "⚠️ تعذّر جلب قائمة الوكلاء من تكساس. يرجى التأكد من ربط حساب Texas ثم إعادة المحاولة من الدعم."
@@ -61,12 +66,19 @@ export async function spawnAgentGroupsForMaster(
   }
 
   if (!children.length) {
+    log.info("no Texas children found", { userId });
     await sendWhatsAppMessage(
       masterJid,
       "ℹ️ لا يوجد وكلاء فرعيون على حسابك في تكساس حالياً."
     ).catch(() => undefined);
     return stats;
   }
+
+  log.info("children loaded", {
+    userId,
+    childrenCount: children.length,
+    children: children.map((c) => resolveAgentLabel(c)).join(", "),
+  });
 
   const { data: existingRows } = await supabase
     .from("whatsapp_agent_groups")
@@ -78,39 +90,54 @@ export async function spawnAgentGroupsForMaster(
     (existingRows ?? []).map((r) => String(r.affiliate_id))
   );
 
+  log.info("existing groups check", {
+    userId,
+    existingCount: existingAffiliates.size,
+    total: children.length,
+    toCreate: children.filter((c) => !existingAffiliates.has(String(c.affiliateId))).length,
+  });
+
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     const affiliateId = String(child.affiliateId);
 
     if (existingAffiliates.has(affiliateId)) {
       stats.skipped += 1;
+      log.info("group exists, skipping", { affiliateId, label: resolveAgentLabel(child) });
       if (i < children.length - 1) await sleep(GROUP_SPAWN_DELAY_MS);
       continue;
     }
 
-    const groupName = resolveAgentLabel(child);
+    const label = resolveAgentLabel(child);
+    const groupName = `Texas | ${label}`;
     const email = resolveAgentEmail(child);
 
     try {
+      log.info("creating group", { affiliateId, groupName, index: i + 1, total: children.length });
+
       const { groupJid } = await createWhatsAppGroup(groupName, [masterJid]);
+
+      log.info("group created", { affiliateId, groupJid, groupName });
 
       try {
         await promoteWhatsAppGroupParticipants(groupJid, [masterJid]);
+        log.info("master promoted to admin", { groupJid });
       } catch (promoteErr) {
-        console.warn(
-          "[group-spawner] promote failed (non-fatal):",
-          promoteErr instanceof Error ? promoteErr.message : promoteErr
-        );
+        log.warn("promote failed (non-fatal)", {
+          groupJid,
+          error: promoteErr instanceof Error ? promoteErr.message : String(promoteErr),
+        });
       }
 
       let inviteLink = "";
       try {
         inviteLink = await getWhatsAppGroupInviteLink(groupJid);
+        log.info("invite link obtained", { groupJid, hasLink: !!inviteLink });
       } catch (linkErr) {
-        console.warn(
-          "[group-spawner] invite link failed (non-fatal):",
-          linkErr instanceof Error ? linkErr.message : linkErr
-        );
+        log.warn("invite link failed (non-fatal)", {
+          groupJid,
+          error: linkErr instanceof Error ? linkErr.message : String(linkErr),
+        });
       }
 
       await upsertAgentGroup(supabase, {
@@ -124,14 +151,14 @@ export async function spawnAgentGroupsForMaster(
 
       existingAffiliates.add(affiliateId);
       stats.created += 1;
-      console.info("[group-spawner] group created", { groupName, groupJid });
+      log.info("group persisted to DB", { affiliateId, groupJid, groupName });
     } catch (err) {
       stats.failed += 1;
-      console.error(
-        "[group-spawner] group create failed for",
+      log.error("group create failed", {
         affiliateId,
-        err instanceof Error ? err.message : String(err)
-      );
+        groupName,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     if (i < children.length - 1) {
@@ -152,6 +179,13 @@ export async function spawnAgentGroupsForMaster(
     .join("\n");
 
   await sendWhatsAppMessage(masterJid, summary).catch(() => undefined);
+
+  log.info("spawn finished", {
+    userId,
+    created: stats.created,
+    skipped: stats.skipped,
+    failed: stats.failed,
+  });
 
   return stats;
 }
