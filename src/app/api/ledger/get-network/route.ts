@@ -5,6 +5,7 @@ import { LedgerAuthError, resolveLedgerUser } from "@/lib/ledger/resolve-user";
 import { canManageNetwork } from "@/lib/hierarchy/access";
 import { fetchNetworkPayload } from "@/lib/hierarchy/network";
 import { refreshStaleSubtreeLedgers } from "@/lib/scraper/ensure-user-ledger-sync";
+import { resolveLedgerDate } from "@/lib/cron/ledger-date";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,8 +18,8 @@ interface Body extends LedgerAuthInput {
   directOnly?: boolean;
 }
 
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+function todayLedgerDate(): string {
+  return resolveLedgerDate();
 }
 
 export async function POST(request: Request) {
@@ -38,14 +39,15 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseServiceClient();
-    const ledgerDate = body.ledgerDate ?? todayIsoDate();
+    const ledgerDate = body.ledgerDate ?? todayLedgerDate();
 
     if (body.syncStale !== false) {
-      const { data: descendants } = await supabase.rpc(
-        "get_descendant_user_ids",
-        { p_root_id: user.id }
-      );
-      const memberIds = (descendants ?? []).map((r: { id: string }) => r.id);
+      const { data: directChildren } = await supabase
+        .from("users")
+        .select("id")
+        .eq("parent_id", user.id)
+        .eq("is_active", true);
+      const memberIds = (directChildren ?? []).map((r) => r.id as string);
       await refreshStaleSubtreeLedgers(supabase, memberIds, ledgerDate);
     }
 
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
       userId: user.id,
       role: user.role,
       ledgerDate,
-      directOnly: body.directOnly ?? false,
+      directOnly: body.directOnly ?? true,
       syncStale: body.syncStale,
     });
 
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
       user.id,
       user.role,
       ledgerDate,
-      { directOnly: body.directOnly ?? false }
+      { directOnly: body.directOnly ?? true }
     );
 
     console.info("[get-network] result", {

@@ -81,11 +81,13 @@ export async function buildLedgerSession(
 
   let networkSynced = 0;
   if (canManageNetwork(role) && options?.syncNetwork) {
-    const descendantRefs = await supabase.rpc("get_descendant_user_ids", {
-      p_root_id: user.id,
-    });
-    const memberIds = (descendantRefs.data ?? []).map(
-      (r: { id: string }) => r.id
+    const { data: directChildren } = await supabase
+      .from("users")
+      .select("id")
+      .eq("parent_id", user.id)
+      .eq("is_active", true);
+    const memberIds = (directChildren ?? []).map(
+      (r) => r.id as string
     );
     const batch = await refreshStaleSubtreeLedgers(
       supabase,

@@ -166,7 +166,7 @@ export async function fetchNetworkPayload(
   ledgerDate: string,
   options?: FetchNetworkOptions
 ): Promise<NetworkPayload> {
-  const directOnly = options?.directOnly ?? false;
+  const directOnly = options?.directOnly ?? true;
 
   let ids: string[];
   let depthById: Map<string, number>;

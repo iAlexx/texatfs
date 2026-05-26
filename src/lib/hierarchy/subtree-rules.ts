@@ -11,27 +11,16 @@ export function canManageNetwork(role: string): boolean {
 }
 
 /**
- * Who appears in "الوكلاء الفرعيون" for the viewer (recursive subtree already applied).
- * - super_master: all descendants (master, agent, player)
- * - master: all descendants (agent, player, nested masters)
- * - agent: players only
+ * Direct-Only privacy: only immediate children of the viewer are visible.
+ * The member list is already restricted to direct children by the data layer,
+ * but we enforce the parent_id check here as a defence-in-depth guard.
  */
 export function filterMembersForSubAgentsTab(
-  viewerRole: UserRole,
+  _viewerRole: UserRole,
   members: NetworkMember[],
   viewerId: string
 ): NetworkMember[] {
-  const descendants = members.filter((m) => m.id !== viewerId);
-
-  if (viewerRole === "agent") {
-    return descendants.filter((m) => m.role === "player");
-  }
-
-  if (viewerRole === "super_master" || viewerRole === "master") {
-    return descendants;
-  }
-
-  return [];
+  return members.filter((m) => m.id !== viewerId && m.parent_id === viewerId);
 }
 
 /** Roles used when counting "active agents" in network stats */
