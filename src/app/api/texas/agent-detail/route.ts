@@ -43,6 +43,26 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServiceClient();
 
   return withAuthenticatedTexasClient(supabase, body, async ({ user, client }) => {
+    // --- PRIVACY ENFORCEMENT: only allow viewing direct children ---
+    const { data: directChild } = await supabase
+      .from("users")
+      .select("id")
+      .eq("parent_id", user.id)
+      .eq("texas_affiliate_id", affiliateId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!directChild) {
+      console.warn("[agent-detail] access denied — not a direct child", {
+        viewerId: user.id,
+        requestedAffiliateId: affiliateId,
+      });
+      return Response.json(
+        { error: "غير مسموح بعرض بيانات هذا الوكيل" },
+        { status: 403 }
+      );
+    }
+
     const listCacheKey = `sub-agents:${user.id}:${ledgerDate}`;
     const cachedList = serverCacheGet<
       TexasSubAgentsPayload & { _scope?: UserScopeContext }

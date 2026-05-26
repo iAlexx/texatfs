@@ -177,6 +177,89 @@ function enrichPayload(
   };
 }
 
+/**
+ * Privacy gate: strip the Texas API response down to ONLY direct children.
+ *
+ * Strategy:
+ *  1. Query DB for users WHERE parent_id = viewer → collect their texas_affiliate_id
+ *  2. If the viewer has a texas_affiliate_id, also check each Texas record for a
+ *     parentAffiliateId field matching the viewer (handles agents not yet in DB).
+ *  3. Keep only agents that pass either check.
+ */
+async function filterToDirectChildren(
+  supabase: SupabaseClient,
+  viewerId: string,
+  viewerAffiliateId: string | null | undefined,
+  payload: TexasSubAgentsPayload
+): Promise<TexasSubAgentsPayload> {
+  const { data: directChildren } = await supabase
+    .from("users")
+    .select("texas_affiliate_id")
+    .eq("parent_id", viewerId)
+    .eq("is_active", true);
+
+  const allowedIds = new Set<string>();
+  for (const row of directChildren ?? []) {
+    if (row.texas_affiliate_id) {
+      allowedIds.add(String(row.texas_affiliate_id));
+    }
+  }
+
+  const viewerAid = viewerAffiliateId ? String(viewerAffiliateId) : null;
+
+  const agents = payload.agents.filter((agent) => {
+    if (allowedIds.has(agent.affiliateId)) return true;
+
+    if (viewerAid) {
+      const rec = agent as unknown as Record<string, unknown>;
+      const parentId =
+        rec.parentAffiliateId ?? rec.parent_affiliate_id ?? rec.parentId;
+      if (parentId !== undefined && String(parentId) === viewerAid) return true;
+    }
+
+    return false;
+  });
+
+  let totalBurn = 0;
+  let combinedBalance = 0;
+  let highest: TexasSubAgentsPayload["stats"]["highest_burn_agent"] = null;
+  for (const a of agents) {
+    totalBurn += a.metrics.al_harq;
+    combinedBalance += a.balance;
+    if (!highest || Math.abs(a.metrics.al_harq) > Math.abs(highest.al_harq)) {
+      highest = {
+        affiliateId: a.affiliateId,
+        label: a.username,
+        al_harq: a.metrics.al_harq,
+      };
+    }
+  }
+
+  console.info("[sub-agents] privacy filter applied", {
+    viewerId,
+    viewerAffiliateId: viewerAid,
+    dbDirectChildren: allowedIds.size,
+    allowedAffiliateIds: Array.from(allowedIds),
+    texasTotal: payload.agents.length,
+    afterFilter: agents.length,
+    droppedCount: payload.agents.length - agents.length,
+    dropped: payload.agents
+      .filter((a) => !agents.includes(a))
+      .map((a) => a.affiliateId),
+  });
+
+  return {
+    ...payload,
+    agents,
+    stats: {
+      active_agents: agents.length,
+      total_network_burn: roundMoney(totalBurn),
+      combined_balance: roundMoney(combinedBalance),
+      highest_burn_agent: highest,
+    },
+  };
+}
+
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body;
   const ledgerDate = body.ledgerDate ?? todayLedgerDate();
@@ -198,13 +281,23 @@ export async function POST(request: Request) {
 
     const texasPayload = await fetchTexasSubAgentsLive(client, ledgerDate);
 
-    const affiliateIds = texasPayload.agents.map((a) => a.affiliateId);
+    // --- PRIVACY ENFORCEMENT: only show direct children ---
+    const filteredPayload = await filterToDirectChildren(
+      supabase,
+      user.id,
+      creds.texas_affiliate_id,
+      texasPayload
+    );
+
+    const affiliateIds = filteredPayload.agents.map((a) => a.affiliateId);
     const dbData = await loadDbEnrichment(supabase, user.id, affiliateIds, ledgerDate);
-    const payload = enrichPayload(texasPayload, dbData);
+    const payload = enrichPayload(filteredPayload, dbData);
 
     console.info("[sub-agents] enriched", {
       userId: user.id,
       ledgerDate,
+      totalFromTexas: texasPayload.agents.length,
+      afterDirectFilter: filteredPayload.agents.length,
       agentCount: payload.agents.length,
       withWasel: Array.from(dbData.values()).filter(
         (d) => d.wasel_menho > 0 || d.wasel_eleih > 0
