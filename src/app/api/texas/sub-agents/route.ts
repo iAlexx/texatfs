@@ -15,6 +15,7 @@ import {
   stampCacheScope,
 } from "@/lib/texas/texas-data-scope";
 import type { UserScopeContext } from "@/lib/security/user-context";
+import type { TexasLiveLedgerMetrics } from "@/lib/texas/texas-live-ledger";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -38,11 +39,24 @@ function previousDate(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/* ── DB types ── */
+
+interface DirectChildRow {
+  id: string;
+  texas_affiliate_id: string | null;
+  display_name: string | null;
+  texas_username: string | null;
+  role: string | null;
+  is_active: boolean;
+}
+
 interface DbEnrichment {
   wasel_menho: number;
   wasel_eleih: number;
   baqi_qadim: number;
 }
+
+/* ── DB enrichment (WhatsApp txns + previous-day al_nihai) ── */
 
 async function loadDbEnrichment(
   supabase: SupabaseClient,
@@ -57,7 +71,6 @@ async function loadDbEnrichment(
     result.set(aid, { wasel_menho: 0, wasel_eleih: 0, baqi_qadim: 0 });
   }
 
-  // 1) WhatsApp confirmed transactions for today grouped by target_affiliate_id
   const { data: masterLedger } = await supabase
     .from("daily_ledgers")
     .select("id")
@@ -83,7 +96,6 @@ async function loadDbEnrichment(
     }
   }
 
-  // 2) Previous day's al_nihai as baqi_qadim — look up users by texas_affiliate_id
   const yesterday = previousDate(ledgerDate);
 
   const { data: linkedUsers } = await supabase
@@ -114,7 +126,6 @@ async function loadDbEnrichment(
     }
   }
 
-  // Round all values
   for (const entry of result.values()) {
     entry.wasel_menho = roundMoney(entry.wasel_menho);
     entry.wasel_eleih = roundMoney(entry.wasel_eleih);
@@ -124,15 +135,13 @@ async function loadDbEnrichment(
   return result;
 }
 
-function enrichPayload(
-  payload: TexasSubAgentsPayload,
-  enrichment: Map<string, DbEnrichment>
-): TexasSubAgentsPayload {
-  let totalBurn = 0;
-  let combinedBalance = 0;
-  let highest: TexasSubAgentsPayload["stats"]["highest_burn_agent"] = null;
+/* ── Enrich metrics with DB data (WhatsApp + baqi_qadim) ── */
 
-  const agents: TexasSubAgentRow[] = payload.agents.map((agent) => {
+function enrichAgents(
+  agents: TexasSubAgentRow[],
+  enrichment: Map<string, DbEnrichment>
+): TexasSubAgentRow[] {
+  return agents.map((agent) => {
     const db = enrichment.get(agent.affiliateId);
     if (!db) return agent;
 
@@ -147,82 +156,20 @@ function enrichPayload(
       baqi_qadim,
     });
 
-    const enrichedAgent: TexasSubAgentRow = {
+    return {
       ...agent,
       metrics: { ...m, wasel_menho, wasel_eleih, baqi_qadim, al_nihai },
     };
-
-    totalBurn += enrichedAgent.metrics.al_harq;
-    combinedBalance += enrichedAgent.balance;
-    if (!highest || enrichedAgent.metrics.al_harq > highest.al_harq) {
-      highest = {
-        affiliateId: enrichedAgent.affiliateId,
-        label: enrichedAgent.username,
-        al_harq: enrichedAgent.metrics.al_harq,
-      };
-    }
-
-    return enrichedAgent;
   });
-
-  return {
-    ...payload,
-    agents,
-    stats: {
-      active_agents: agents.length,
-      total_network_burn: roundMoney(totalBurn),
-      combined_balance: roundMoney(combinedBalance),
-      highest_burn_agent: highest,
-    },
-  };
 }
 
-/**
- * Privacy gate: strip the Texas API response down to ONLY direct children.
- *
- * Strategy:
- *  1. Query DB for users WHERE parent_id = viewer → collect their texas_affiliate_id
- *  2. If the viewer has a texas_affiliate_id, also check each Texas record for a
- *     parentAffiliateId field matching the viewer (handles agents not yet in DB).
- *  3. Keep only agents that pass either check.
- */
-async function filterToDirectChildren(
-  supabase: SupabaseClient,
-  viewerId: string,
-  viewerAffiliateId: string | null | undefined,
-  payload: TexasSubAgentsPayload
-): Promise<TexasSubAgentsPayload> {
-  const { data: directChildren } = await supabase
-    .from("users")
-    .select("texas_affiliate_id")
-    .eq("parent_id", viewerId)
-    .eq("is_active", true);
+/* ── Recompute aggregate stats for a list of agents ── */
 
-  const allowedIds = new Set<string>();
-  for (const row of directChildren ?? []) {
-    if (row.texas_affiliate_id) {
-      allowedIds.add(String(row.texas_affiliate_id));
-    }
-  }
-
-  const viewerAid = viewerAffiliateId ? String(viewerAffiliateId) : null;
-
-  const agents = payload.agents.filter((agent) => {
-    if (allowedIds.has(agent.affiliateId)) return true;
-
-    if (viewerAid) {
-      const rec = agent as unknown as Record<string, unknown>;
-      const parentId =
-        rec.parentAffiliateId ?? rec.parent_affiliate_id ?? rec.parentId;
-      if (parentId !== undefined && String(parentId) === viewerAid) return true;
-    }
-
-    return false;
-  });
-
+function computeStats(agents: TexasSubAgentRow[]): TexasSubAgentsPayload["stats"] {
   let totalBurn = 0;
   let combinedBalance = 0;
   let highest: TexasSubAgentsPayload["stats"]["highest_burn_agent"] = null;
+
   for (const a of agents) {
     totalBurn += a.metrics.al_harq;
     combinedBalance += a.balance;
@@ -235,30 +182,118 @@ async function filterToDirectChildren(
     }
   }
 
-  console.info("[sub-agents] privacy filter applied", {
+  return {
+    active_agents: agents.length,
+    total_network_burn: roundMoney(totalBurn),
+    combined_balance: roundMoney(combinedBalance),
+    highest_burn_agent: highest,
+  };
+}
+
+/* ── Zero-valued metrics placeholder ── */
+
+const ZERO_METRICS: TexasLiveLedgerMetrics = {
+  tebat: 0,
+  suhoubat: 0,
+  al_farq: 0,
+  al_harq: 0,
+  wasel_menho: 0,
+  wasel_eleih: 0,
+  baqi_qadim: 0,
+  al_nihai: 0,
+};
+
+/**
+ * PRIVACY GATE — DB is the single source of truth for visibility.
+ *
+ * 1. Load direct children from `users WHERE parent_id = viewer.id AND is_active`.
+ * 2. Build allow-list of texas_affiliate_id values.
+ * 3. Filter Texas payload to only those in the allow-list.
+ * 4. For any DB child whose texas_affiliate_id is NULL or not found in the Texas
+ *    payload, create a stub row with has_live_texas_data=false so the UI still
+ *    shows them.
+ */
+async function buildDirectChildrenPayload(
+  supabase: SupabaseClient,
+  viewerId: string,
+  texasPayload: TexasSubAgentsPayload,
+  ledgerDate: string
+): Promise<TexasSubAgentsPayload> {
+  const { data: dbChildren } = await supabase
+    .from("users")
+    .select("id, texas_affiliate_id, display_name, texas_username, role, is_active")
+    .eq("parent_id", viewerId)
+    .eq("is_active", true);
+
+  const directRows: DirectChildRow[] = (dbChildren ?? []) as DirectChildRow[];
+
+  const allowedAffiliateIds = new Set<string>();
+  for (const row of directRows) {
+    if (row.texas_affiliate_id) {
+      allowedAffiliateIds.add(String(row.texas_affiliate_id));
+    }
+  }
+
+  const texasByAffiliate = new Map<string, TexasSubAgentRow>();
+  for (const agent of texasPayload.agents) {
+    texasByAffiliate.set(agent.affiliateId, agent);
+  }
+
+  const agents: TexasSubAgentRow[] = [];
+  const matchedTexasIds = new Set<string>();
+
+  for (const dbChild of directRows) {
+    const aid = dbChild.texas_affiliate_id
+      ? String(dbChild.texas_affiliate_id)
+      : null;
+
+    if (aid && texasByAffiliate.has(aid)) {
+      agents.push(texasByAffiliate.get(aid)!);
+      matchedTexasIds.add(aid);
+    } else {
+      const label =
+        dbChild.display_name ??
+        dbChild.texas_username ??
+        aid ??
+        dbChild.id.slice(0, 8);
+
+      agents.push({
+        affiliateId: aid ?? `db:${dbChild.id}`,
+        username: label,
+        email: dbChild.texas_username ?? label,
+        texasRole: dbChild.role ?? "agent",
+        mainCurrency: "NSP",
+        balance: 0,
+        metrics: { ...ZERO_METRICS },
+      });
+    }
+  }
+
+  const droppedFromTexas = texasPayload.agents.filter(
+    (a) => !matchedTexasIds.has(a.affiliateId)
+  );
+
+  console.info("[sub-agents] privacy gate: DB-driven direct children", {
     viewerId,
-    viewerAffiliateId: viewerAid,
-    dbDirectChildren: allowedIds.size,
-    allowedAffiliateIds: Array.from(allowedIds),
-    texasTotal: payload.agents.length,
-    afterFilter: agents.length,
-    droppedCount: payload.agents.length - agents.length,
-    dropped: payload.agents
-      .filter((a) => !agents.includes(a))
-      .map((a) => a.affiliateId),
+    dbDirectChildren: directRows.length,
+    dbChildrenWithAffiliateId: allowedAffiliateIds.size,
+    texasTotal: texasPayload.agents.length,
+    matchedFromTexas: matchedTexasIds.size,
+    stubsCreated: agents.length - matchedTexasIds.size,
+    droppedFromTexas: droppedFromTexas.length,
+    droppedIds: droppedFromTexas.map((a) => a.affiliateId),
+    resultAgents: agents.length,
   });
 
   return {
-    ...payload,
+    ledger_date: ledgerDate,
+    fetched_at: texasPayload.fetched_at,
     agents,
-    stats: {
-      active_agents: agents.length,
-      total_network_burn: roundMoney(totalBurn),
-      combined_balance: roundMoney(combinedBalance),
-      highest_burn_agent: highest,
-    },
+    stats: computeStats(agents),
   };
 }
+
+/* ── Route handler ── */
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body;
@@ -281,24 +316,31 @@ export async function POST(request: Request) {
 
     const texasPayload = await fetchTexasSubAgentsLive(client, ledgerDate);
 
-    // --- PRIVACY ENFORCEMENT: only show direct children ---
-    const filteredPayload = await filterToDirectChildren(
+    const directPayload = await buildDirectChildrenPayload(
       supabase,
       user.id,
-      creds.texas_affiliate_id,
-      texasPayload
+      texasPayload,
+      ledgerDate
     );
 
-    const affiliateIds = filteredPayload.agents.map((a) => a.affiliateId);
+    const affiliateIds = directPayload.agents
+      .map((a) => a.affiliateId)
+      .filter((id) => !id.startsWith("db:"));
     const dbData = await loadDbEnrichment(supabase, user.id, affiliateIds, ledgerDate);
-    const payload = enrichPayload(filteredPayload, dbData);
+    const enrichedAgents = enrichAgents(directPayload.agents, dbData);
 
-    console.info("[sub-agents] enriched", {
+    const payload: TexasSubAgentsPayload = {
+      ledger_date: directPayload.ledger_date,
+      fetched_at: directPayload.fetched_at,
+      agents: enrichedAgents,
+      stats: computeStats(enrichedAgents),
+    };
+
+    console.info("[sub-agents] final response", {
       userId: user.id,
       ledgerDate,
       totalFromTexas: texasPayload.agents.length,
-      afterDirectFilter: filteredPayload.agents.length,
-      agentCount: payload.agents.length,
+      directChildrenReturned: payload.agents.length,
       withWasel: Array.from(dbData.values()).filter(
         (d) => d.wasel_menho > 0 || d.wasel_eleih > 0
       ).length,

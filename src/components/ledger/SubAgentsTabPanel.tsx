@@ -184,6 +184,7 @@ export function SubAgentsTabPanel({
                   key={agent.affiliateId}
                   agent={agent}
                   index={i}
+                  hasLiveData={!agent.affiliateId.startsWith("db:")}
                   onSelect={() =>
                     onSelectAgent(agent.affiliateId, agent.username, agent.mainCurrency)
                   }
@@ -202,10 +203,12 @@ export function SubAgentsTabPanel({
 function AgentRow({
   agent,
   index,
+  hasLiveData,
   onSelect,
 }: {
   agent: TexasSubAgentRow;
   index: number;
+  hasLiveData: boolean;
   onSelect: () => void;
 }) {
   const badge = roleCfg(agent.texasRole);
@@ -215,7 +218,10 @@ function AgentRow({
 
   return (
     <motion.div
-      className="flex items-center px-2 py-1.5 transition-colors hover:bg-white/[0.02]"
+      className={cn(
+        "flex items-center px-2 py-1.5 transition-colors hover:bg-white/[0.02]",
+        !hasLiveData && "opacity-60"
+      )}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ delay: 0.01 * Math.min(index, 20) }}
@@ -236,8 +242,12 @@ function AgentRow({
       {/* Username */}
       <button
         type="button"
-        onClick={onSelect}
-        className="flex min-w-[120px] flex-1 shrink-0 items-center gap-1 px-1.5 text-right"
+        onClick={hasLiveData ? onSelect : undefined}
+        disabled={!hasLiveData}
+        className={cn(
+          "flex min-w-[120px] flex-1 shrink-0 items-center gap-1 px-1.5 text-right",
+          !hasLiveData && "cursor-default"
+        )}
       >
         <div className="min-w-0">
           <p className="truncate text-[11px] font-medium text-foreground">
