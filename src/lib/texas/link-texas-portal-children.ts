@@ -163,3 +163,40 @@ export async function repairMisassignedDirectChildren(
 
   return repaired;
 }
+
+/**
+ * Hide direct children removed from the Texas portal (not in latest getChildren).
+ */
+export async function deactivateTexasChildrenRemovedFromPortal(
+  supabase: SupabaseClient,
+  viewerId: string,
+  texasAffiliateIdsPresent: Set<string>
+): Promise<number> {
+  const { data: dbChildren } = await supabase
+    .from("users")
+    .select("id, texas_affiliate_id")
+    .eq("parent_id", viewerId)
+    .eq("is_active", true);
+
+  let deactivated = 0;
+  for (const row of dbChildren ?? []) {
+    const aid = normalizeAffiliateId(row.texas_affiliate_id);
+    if (!aid || texasAffiliateIdsPresent.has(aid)) continue;
+
+    const { error } = await supabase
+      .from("users")
+      .update({ is_active: false })
+      .eq("id", row.id);
+
+    if (!error) {
+      deactivated += 1;
+      console.info("[link-texas-children] deactivated removed from Texas portal", {
+        viewerId,
+        userId: row.id,
+        affiliateId: aid,
+      });
+    }
+  }
+
+  return deactivated;
+}

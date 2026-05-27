@@ -29,7 +29,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 /**
  * Sub-agents list — visibility from DB direct children; Texas enriches metrics.
  * Rows may have has_live_texas_data=false (stub); do not filter those out client-side.
- * staleTime: 30s matches server-side cache TTL.
+ * staleTime: 15s matches server-side cache TTL.
  * Pass forceRefresh=true to bypass both client and server caches.
  */
 export function useTexasSubAgents(
@@ -48,7 +48,8 @@ export function useTexasSubAgents(
         ledgerDate,
         forceRefresh: forceRefresh || undefined,
       }),
-    staleTime: 30_000,   // matches server TTL — prevents double-fetch but shows fresh data
+    staleTime: 15_000,
+    refetchInterval: enabled ? 20_000 : false,
     gcTime:    5 * 60_000,
     retry: 1,
     refetchOnWindowFocus: true,  // refresh when user returns to tab

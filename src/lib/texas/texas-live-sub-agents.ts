@@ -57,6 +57,8 @@ export interface TexasSubAgentsPayload {
 /** Live fetch result — portal direct children are separate from stats-only rows */
 export interface TexasSubAgentsLiveResult {
   payload: TexasSubAgentsPayload;
+  /** Full getChildren response — used for DB link after viewer affiliate is resolved */
+  allChildrenRecords: TexasChildRecord[];
   /** Rows to sync into DB as viewer direct children (parent=viewer or parent missing) */
   linkableRefs: Array<{
     affiliateId: string;
@@ -432,6 +434,7 @@ export async function fetchTexasSubAgentsLive(
   });
 
   return {
+    allChildrenRecords: allChildren,
     texasParentByAffiliate,
     linkableRefs,
     payload: {

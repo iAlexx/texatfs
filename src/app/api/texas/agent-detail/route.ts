@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const listCacheKey = `sub-agents:${user.id}:${ledgerDate}`;
+    const listCacheKey = `sub-agents:v3:${user.id}:${ledgerDate}`;
     const cachedList = serverCacheGet<
       TexasSubAgentsPayload & { _scope?: UserScopeContext }
     >(listCacheKey, user.id);

@@ -21,9 +21,12 @@ import {
   type DirectChildDbRow,
 } from "@/lib/texas/sub-agents-direct-merge";
 import {
+  deactivateTexasChildrenRemovedFromPortal,
   ensureTexasPortalDirectChildrenInDb,
   repairMisassignedDirectChildren,
 } from "@/lib/texas/link-texas-portal-children";
+import { collectTexasChildrenForDbLink } from "@/lib/texas/texas-portal-hierarchy";
+import { resolveViewerTexasAffiliateId } from "@/lib/texas/resolve-viewer-affiliate";
 import { normalizeAffiliateId } from "@/lib/texas/sub-agents-direct-merge";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +34,7 @@ export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const SUB_AGENTS_TTL_MS = 90_000;
+const SUB_AGENTS_TTL_MS = 15_000;
 
 interface Body extends LedgerAuthInput {
   ledgerDate?: string;
@@ -179,7 +182,7 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServiceClient();
 
   return withAuthenticatedTexasClient(supabase, body, async ({ user, client, creds }) => {
-    const cacheKey = `sub-agents:v2:${user.id}:${ledgerDate}`;
+    const cacheKey = `sub-agents:v3:${user.id}:${ledgerDate}`;
 
     if (!body.forceRefresh) {
       const cached = serverCacheGet<
@@ -192,17 +195,27 @@ export async function POST(request: Request) {
       }
     }
 
-    const viewerAffiliateId = creds.texas_affiliate_id ?? null;
-
-    // 1) Texas live data (metrics + filtered portal direct children only)
-    const texasLive = await fetchTexasSubAgentsLive(
-      client,
-      ledgerDate,
-      viewerAffiliateId
-    );
+    // 1) Texas live data (full enrichment index from getChildren + stats + transfers)
+    const texasLive = await fetchTexasSubAgentsLive(client, ledgerDate, null);
     const texasPayload = texasLive.payload;
 
-    const linkableRefs = texasLive.linkableRefs ?? texasLive.portalDirectRefs;
+    const viewerAffiliateId = await resolveViewerTexasAffiliateId(
+      supabase,
+      user.id,
+      creds.texas_affiliate_id,
+      texasLive.texasParentByAffiliate
+    );
+
+    const linkableRefs = collectTexasChildrenForDbLink(
+      texasLive.allChildrenRecords,
+      viewerAffiliateId
+    );
+
+    const texasAffiliateIdsInPortal = new Set(
+      texasLive.allChildrenRecords
+        .map((c) => normalizeAffiliateId(String(c.affiliateId ?? "")))
+        .filter((id): id is string => Boolean(id))
+    );
 
     const trueDirectAffiliateIds = new Set(
       linkableRefs
@@ -226,6 +239,12 @@ export async function POST(request: Request) {
       linkableRefs
     );
     linkResult.repaired = repaired;
+
+    const deactivated = await deactivateTexasChildrenRemovedFromPortal(
+      supabase,
+      user.id,
+      texasAffiliateIdsInPortal
+    );
 
     // 4) Visibility: DB direct children only
     const dbChildren = await loadDirectChildren(supabase, user.id);
@@ -254,7 +273,15 @@ export async function POST(request: Request) {
     console.info("[sub-agents] visibility merge", {
       viewerId: user.id,
       ledgerDate,
-      texasPortalDirectCount: texasLive.portalDirectAffiliateIds.length,
+      viewerAffiliateId,
+      viewerAffiliateSource: creds.texas_affiliate_id
+        ? "creds"
+        : viewerAffiliateId
+          ? "db_or_inferred"
+          : "none",
+      texasChildrenInPortal: texasLive.allChildrenRecords.length,
+      linkableForDb: linkableRefs.length,
+      deactivatedFromPortal: deactivated,
       linkResult,
       ...diagnostics,
       directChildrenReturned: payload.agents.length,

@@ -57,19 +57,63 @@ export function filterTexasPortalDirectChildren(
  * - parent missing (common for agents just created in Texas panel) → treat as direct
  * - parent === someone else → grandchild, do NOT link under viewer
  */
+function affiliateIdsInTree(records: TexasChildRecord[]): Set<string> {
+  const set = new Set<string>();
+  for (const record of records) {
+    const id = normalizeAffiliateId(String(record.affiliateId ?? ""));
+    if (id) set.add(id);
+  }
+  return set;
+}
+
+/**
+ * When viewer texas_affiliate_id is missing, infer from getChildren parent map:
+ * the affiliate referenced most often as parent is the session owner (master).
+ */
+export function inferViewerAffiliateFromTexasTree(
+  texasParentByAffiliate: Map<string, string | null>
+): string | null {
+  const freq = new Map<string, number>();
+  for (const parent of texasParentByAffiliate.values()) {
+    const p = normalizeAffiliateId(parent);
+    if (p) freq.set(p, (freq.get(p) ?? 0) + 1);
+  }
+
+  let best: string | null = null;
+  let max = 0;
+  for (const [id, count] of freq) {
+    if (count > max) {
+      max = count;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/**
+ * Texas rows to sync into Supabase as viewer's direct children.
+ *
+ * With viewer affiliate id:
+ *   - parent === viewer, or parent missing (new panel agent)
+ *
+ * Without viewer affiliate id (fallback for masters missing DB field):
+ *   - include unless parent points at another agent in the same getChildren tree (grandchild)
+ */
 export function collectTexasChildrenForDbLink(
   allChildren: TexasChildRecord[],
   viewerAffiliateId: string | null | undefined
 ): TexasPortalChildRef[] {
   const viewerNorm = normalizeAffiliateId(viewerAffiliateId);
-  if (!viewerNorm) return [];
+  const inTree = affiliateIdsInTree(allChildren);
 
   const refs: TexasPortalChildRef[] = [];
   for (const record of allChildren) {
     const bag = record as Record<string, unknown>;
     const parentNorm = extractTexasParentAffiliateId(bag);
 
-    if (parentNorm && parentNorm !== viewerNorm) {
+    if (viewerNorm) {
+      if (parentNorm && parentNorm !== viewerNorm) continue;
+    } else if (parentNorm && inTree.has(parentNorm)) {
       continue;
     }
 

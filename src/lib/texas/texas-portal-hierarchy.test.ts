@@ -4,6 +4,7 @@ import {
   buildParentAffiliateIndex,
   collectTexasChildrenForDbLink,
   filterTexasPortalDirectChildren,
+  inferViewerAffiliateFromTexasTree,
   isTexasPortalDirectChild,
 } from "@/lib/texas/texas-portal-hierarchy";
 import type { TexasChildRecord } from "@/lib/texas/types";
@@ -67,5 +68,19 @@ describe("texas portal direct-child filter", () => {
     assert.ok(ids.includes("101"));
     assert.ok(ids.includes("999"));
     assert.ok(!ids.includes("202"));
+  });
+
+  it("collectTexasChildrenForDbLink without viewer affiliate excludes in-tree grandchildren", () => {
+    const linkable = collectTexasChildrenForDbLink(tree, null);
+    const ids = linkable.map((r) => r.affiliateId);
+    assert.ok(ids.includes("101"));
+    assert.ok(ids.includes("201"));
+    assert.ok(!ids.includes("202"));
+    assert.ok(!ids.includes("203"));
+  });
+
+  it("inferViewerAffiliateFromTexasTree picks master as most common parent", () => {
+    const idx = buildParentAffiliateIndex(tree);
+    assert.equal(inferViewerAffiliateFromTexasTree(idx), MASTER_AFF);
   });
 });
