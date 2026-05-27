@@ -184,7 +184,7 @@ export function SubAgentsTabPanel({
                   key={agent.affiliateId}
                   agent={agent}
                   index={i}
-                  hasLiveData={!agent.affiliateId.startsWith("db:")}
+                  hasLiveData={agent.has_live_texas_data !== false}
                   onSelect={() =>
                     onSelectAgent(agent.affiliateId, agent.username, agent.mainCurrency)
                   }
@@ -256,8 +256,15 @@ function AgentRow({
           {agent.email !== agent.username && (
             <p className="truncate text-[9px] text-steel-600">{agent.email}</p>
           )}
+          {!hasLiveData ? (
+            <span className="mt-0.5 inline-block rounded bg-steel-800/80 px-1.5 py-px text-[8px] text-steel-400">
+              {ar.noLiveTexasData}
+            </span>
+          ) : null}
         </div>
-        <ChevronLeft className="h-3 w-3 shrink-0 text-steel-700" strokeWidth={1.5} />
+        {hasLiveData ? (
+          <ChevronLeft className="h-3 w-3 shrink-0 text-steel-700" strokeWidth={1.5} />
+        ) : null}
       </button>
 
       {/* الرصيد */}

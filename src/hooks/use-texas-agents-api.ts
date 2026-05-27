@@ -27,7 +27,8 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 /**
- * Sub-agents list — data is live from Texas API.
+ * Sub-agents list — visibility from DB direct children; Texas enriches metrics.
+ * Rows may have has_live_texas_data=false (stub); do not filter those out client-side.
  * staleTime: 30s matches server-side cache TTL.
  * Pass forceRefresh=true to bypass both client and server caches.
  */

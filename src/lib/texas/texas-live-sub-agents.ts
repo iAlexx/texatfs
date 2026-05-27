@@ -25,12 +25,16 @@ const log = createLogger("texas/live-sub-agents");
 
 export interface TexasSubAgentRow {
   affiliateId: string;
+  /** App user id when row is built from DB direct-child merge */
+  user_id?: string;
   username: string;
   email: string;
   texasRole: string;
   mainCurrency: string;
   balance: number;
   metrics: TexasLiveLedgerMetrics;
+  /** True when tebat/suhoubat/balance came from Texas live APIs */
+  has_live_texas_data?: boolean;
 }
 
 export interface TexasSubAgentsPayload {
@@ -300,8 +304,31 @@ export async function fetchTexasSubAgentsLive(
       mainCurrency: child.mainCurrency?.trim() || "NSP",
       balance,
       metrics,
+      has_live_texas_data: true,
     };
   });
+
+  // Stats-only rows: enrich lookup for DB children missing from getChildren
+  for (const row of statsRecords) {
+    const affiliateId = pickAffiliateId(row);
+    if (!affiliateId || agents.some((a) => a.affiliateId === affiliateId)) {
+      continue;
+    }
+    const balance = extractBalance(row, null);
+    const transfers = transfersByAgent.get(affiliateId);
+    const tebat = transfers?.tebat ?? 0;
+    const suhoubat = transfers?.suhoubat ?? 0;
+    agents.push({
+      affiliateId,
+      username: resolveLabel(row as Record<string, unknown>) || affiliateId,
+      email: affiliateId,
+      texasRole: "agent",
+      mainCurrency: "NSP",
+      balance,
+      metrics: buildMetrics(tebat, suhoubat),
+      has_live_texas_data: true,
+    });
+  }
 
   let totalBurn = 0;
   let combinedBalance = 0;

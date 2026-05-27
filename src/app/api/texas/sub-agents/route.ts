@@ -15,7 +15,11 @@ import {
   stampCacheScope,
 } from "@/lib/texas/texas-data-scope";
 import type { UserScopeContext } from "@/lib/security/user-context";
-import type { TexasLiveLedgerMetrics } from "@/lib/texas/texas-live-ledger";
+import {
+  auditDirectChildVisibility,
+  mergeDirectChildrenWithTexas,
+  type DirectChildDbRow,
+} from "@/lib/texas/sub-agents-direct-merge";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -39,24 +43,25 @@ function previousDate(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-/* ── DB types ── */
-
-interface DirectChildRow {
-  id: string;
-  texas_affiliate_id: string | null;
-  display_name: string | null;
-  texas_username: string | null;
-  role: string | null;
-  is_active: boolean;
-}
-
 interface DbEnrichment {
   wasel_menho: number;
   wasel_eleih: number;
   baqi_qadim: number;
 }
 
-/* ── DB enrichment (WhatsApp txns + previous-day al_nihai) ── */
+async function loadDirectChildren(
+  supabase: SupabaseClient,
+  viewerId: string
+): Promise<DirectChildDbRow[]> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, texas_affiliate_id, display_name, texas_username, role, is_active")
+    .eq("parent_id", viewerId)
+    .eq("is_active", true);
+
+  if (error) throw error;
+  return (data ?? []) as DirectChildDbRow[];
+}
 
 async function loadDbEnrichment(
   supabase: SupabaseClient,
@@ -135,13 +140,13 @@ async function loadDbEnrichment(
   return result;
 }
 
-/* ── Enrich metrics with DB data (WhatsApp + baqi_qadim) ── */
-
 function enrichAgents(
   agents: TexasSubAgentRow[],
   enrichment: Map<string, DbEnrichment>
 ): TexasSubAgentRow[] {
   return agents.map((agent) => {
+    if (!agent.has_live_texas_data) return agent;
+
     const db = enrichment.get(agent.affiliateId);
     if (!db) return agent;
 
@@ -163,138 +168,6 @@ function enrichAgents(
   });
 }
 
-/* ── Recompute aggregate stats for a list of agents ── */
-
-function computeStats(agents: TexasSubAgentRow[]): TexasSubAgentsPayload["stats"] {
-  let totalBurn = 0;
-  let combinedBalance = 0;
-  let highest: TexasSubAgentsPayload["stats"]["highest_burn_agent"] = null;
-
-  for (const a of agents) {
-    totalBurn += a.metrics.al_harq;
-    combinedBalance += a.balance;
-    if (!highest || Math.abs(a.metrics.al_harq) > Math.abs(highest.al_harq)) {
-      highest = {
-        affiliateId: a.affiliateId,
-        label: a.username,
-        al_harq: a.metrics.al_harq,
-      };
-    }
-  }
-
-  return {
-    active_agents: agents.length,
-    total_network_burn: roundMoney(totalBurn),
-    combined_balance: roundMoney(combinedBalance),
-    highest_burn_agent: highest,
-  };
-}
-
-/* ── Zero-valued metrics placeholder ── */
-
-const ZERO_METRICS: TexasLiveLedgerMetrics = {
-  tebat: 0,
-  suhoubat: 0,
-  al_farq: 0,
-  al_harq: 0,
-  wasel_menho: 0,
-  wasel_eleih: 0,
-  baqi_qadim: 0,
-  al_nihai: 0,
-};
-
-/**
- * PRIVACY GATE — DB is the single source of truth for visibility.
- *
- * 1. Load direct children from `users WHERE parent_id = viewer.id AND is_active`.
- * 2. Build allow-list of texas_affiliate_id values.
- * 3. Filter Texas payload to only those in the allow-list.
- * 4. For any DB child whose texas_affiliate_id is NULL or not found in the Texas
- *    payload, create a stub row with has_live_texas_data=false so the UI still
- *    shows them.
- */
-async function buildDirectChildrenPayload(
-  supabase: SupabaseClient,
-  viewerId: string,
-  texasPayload: TexasSubAgentsPayload,
-  ledgerDate: string
-): Promise<TexasSubAgentsPayload> {
-  const { data: dbChildren } = await supabase
-    .from("users")
-    .select("id, texas_affiliate_id, display_name, texas_username, role, is_active")
-    .eq("parent_id", viewerId)
-    .eq("is_active", true);
-
-  const directRows: DirectChildRow[] = (dbChildren ?? []) as DirectChildRow[];
-
-  const allowedAffiliateIds = new Set<string>();
-  for (const row of directRows) {
-    if (row.texas_affiliate_id) {
-      allowedAffiliateIds.add(String(row.texas_affiliate_id));
-    }
-  }
-
-  const texasByAffiliate = new Map<string, TexasSubAgentRow>();
-  for (const agent of texasPayload.agents) {
-    texasByAffiliate.set(agent.affiliateId, agent);
-  }
-
-  const agents: TexasSubAgentRow[] = [];
-  const matchedTexasIds = new Set<string>();
-
-  for (const dbChild of directRows) {
-    const aid = dbChild.texas_affiliate_id
-      ? String(dbChild.texas_affiliate_id)
-      : null;
-
-    if (aid && texasByAffiliate.has(aid)) {
-      agents.push(texasByAffiliate.get(aid)!);
-      matchedTexasIds.add(aid);
-    } else {
-      const label =
-        dbChild.display_name ??
-        dbChild.texas_username ??
-        aid ??
-        dbChild.id.slice(0, 8);
-
-      agents.push({
-        affiliateId: aid ?? `db:${dbChild.id}`,
-        username: label,
-        email: dbChild.texas_username ?? label,
-        texasRole: dbChild.role ?? "agent",
-        mainCurrency: "NSP",
-        balance: 0,
-        metrics: { ...ZERO_METRICS },
-      });
-    }
-  }
-
-  const droppedFromTexas = texasPayload.agents.filter(
-    (a) => !matchedTexasIds.has(a.affiliateId)
-  );
-
-  console.info("[sub-agents] privacy gate: DB-driven direct children", {
-    viewerId,
-    dbDirectChildren: directRows.length,
-    dbChildrenWithAffiliateId: allowedAffiliateIds.size,
-    texasTotal: texasPayload.agents.length,
-    matchedFromTexas: matchedTexasIds.size,
-    stubsCreated: agents.length - matchedTexasIds.size,
-    droppedFromTexas: droppedFromTexas.length,
-    droppedIds: droppedFromTexas.map((a) => a.affiliateId),
-    resultAgents: agents.length,
-  });
-
-  return {
-    ledger_date: ledgerDate,
-    fetched_at: texasPayload.fetched_at,
-    agents,
-    stats: computeStats(agents),
-  };
-}
-
-/* ── Route handler ── */
-
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body;
   const ledgerDate = body.ledgerDate ?? todayLedgerDate();
@@ -314,39 +187,45 @@ export async function POST(request: Request) {
       }
     }
 
+    // 1) Visibility: DB direct children only
+    const dbChildren = await loadDirectChildren(supabase, user.id);
+
+    // 2) Texas enrichment (stats + transfers + children labels — NOT used for visibility)
     const texasPayload = await fetchTexasSubAgentsLive(client, ledgerDate);
 
-    const directPayload = await buildDirectChildrenPayload(
-      supabase,
-      user.id,
-      texasPayload,
-      ledgerDate
+    // 3) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
+    const { agents: mergedAgents, stats, diagnostics } = mergeDirectChildrenWithTexas(
+      dbChildren,
+      texasPayload
     );
 
-    const affiliateIds = directPayload.agents
-      .map((a) => a.affiliateId)
-      .filter((id) => !id.startsWith("db:"));
+    const audit = auditDirectChildVisibility(user.id, dbChildren, texasPayload);
+
+    const affiliateIds = mergedAgents
+      .filter((a) => a.has_live_texas_data)
+      .map((a) => a.affiliateId);
     const dbData = await loadDbEnrichment(supabase, user.id, affiliateIds, ledgerDate);
-    const enrichedAgents = enrichAgents(directPayload.agents, dbData);
+    const enrichedAgents = enrichAgents(mergedAgents, dbData);
 
     const payload: TexasSubAgentsPayload = {
-      ledger_date: directPayload.ledger_date,
-      fetched_at: directPayload.fetched_at,
+      ledger_date: ledgerDate,
+      fetched_at: texasPayload.fetched_at,
       agents: enrichedAgents,
-      stats: computeStats(enrichedAgents),
+      stats,
     };
 
-    console.info("[sub-agents] final response", {
-      userId: user.id,
+    console.info("[sub-agents] visibility merge", {
+      viewerId: user.id,
       ledgerDate,
-      totalFromTexas: texasPayload.agents.length,
+      ...diagnostics,
       directChildrenReturned: payload.agents.length,
-      withWasel: Array.from(dbData.values()).filter(
-        (d) => d.wasel_menho > 0 || d.wasel_eleih > 0
-      ).length,
-      withBaqiQadim: Array.from(dbData.values()).filter(
-        (d) => d.baqi_qadim !== 0
-      ).length,
+      renderedEnriched: payload.agents.filter((a) => a.has_live_texas_data).length,
+      renderedStubs: payload.agents.filter((a) => !a.has_live_texas_data).length,
+    });
+
+    console.info("[sub-agents] per-child audit", {
+      viewerId: user.id,
+      rows: audit,
     });
 
     const scoped = stampCacheScope(payload, {

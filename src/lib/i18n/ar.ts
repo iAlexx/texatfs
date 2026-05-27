@@ -35,6 +35,7 @@ export const ar = {
   finalBalance: "الرصيد النهائي",
   subAgentsTitle: "تفصيل الوكلاء الفرعيين",
   subAgentsSubtitle: "أداء الشبكة تحت إدارتك",
+  noLiveTexasData: "لا بيانات Texas مباشرة",
   consolidatedBurn: "إجمالي الحرق",
   consolidatedFinal: "إجمالي النهائي",
   agentCount: "عدد الوكلاء",
