@@ -23,7 +23,6 @@ import type {
 import {
   buildParentAffiliateIndex,
   filterTexasPortalDirectChildren,
-  isTexasPortalDirectChild,
   toTexasPortalChildRef,
 } from "@/lib/texas/texas-portal-hierarchy";
 
@@ -291,12 +290,22 @@ export async function fetchTexasSubAgentsLive(
   const statsRecords = statsResponse.result?.records ?? [];
   const statsById = indexStatisticsByAffiliate(statsRecords);
 
-  const childAffiliateIds = new Set(
-    portalDirectChildren.map((c) => String(c.affiliateId)).filter(Boolean)
+  const childrenByAffiliate = new Map(
+    allChildren.map((c) => [String(c.affiliateId), c])
   );
+
+  // Transfers grouped for ALL affiliates in tree (enrichment only — not visibility)
+  const enrichmentAffiliateIds = new Set<string>();
+  for (const c of allChildren) {
+    if (c.affiliateId) enrichmentAffiliateIds.add(String(c.affiliateId));
+  }
+  for (const row of statsRecords) {
+    const id = pickAffiliateId(row);
+    if (id) enrichmentAffiliateIds.add(id);
+  }
   const transfersByAgent = groupTransfersByAffiliate(
     transferRecords,
-    childAffiliateIds
+    enrichmentAffiliateIds
   );
 
   log.info("API responses", {
@@ -320,7 +329,8 @@ export async function fetchTexasSubAgentsLive(
     });
   }
 
-  const agents: TexasSubAgentRow[] = portalDirectChildren.map((child) => {
+  // Full enrichment index (all Texas rows) — visibility is enforced later via DB parent_id
+  const agents: TexasSubAgentRow[] = allChildren.map((child) => {
     const affiliateId = String(child.affiliateId);
     const stats = statsById.get(affiliateId) ?? null;
     const transfers = transfersByAgent.get(affiliateId);
@@ -342,33 +352,35 @@ export async function fetchTexasSubAgentsLive(
     };
   });
 
-  // Stats-only rows: only for portal-direct children (never grandchildren)
   for (const row of statsRecords) {
     const affiliateId = pickAffiliateId(row);
     if (!affiliateId || agents.some((a) => a.affiliateId === affiliateId)) {
       continue;
     }
-    if (
-      viewerAffiliateId &&
-      !isTexasPortalDirectChild(row as TexasChildRecord, viewerAffiliateId)
-    ) {
-      continue;
-    }
-    const balance = extractBalance(row, null);
+    const childRecord = childrenByAffiliate.get(affiliateId) ?? null;
+    const balance = extractBalance(row, childRecord);
     const transfers = transfersByAgent.get(affiliateId);
     const tebat = transfers?.tebat ?? 0;
     const suhoubat = transfers?.suhoubat ?? 0;
     agents.push({
       affiliateId,
       username: resolveLabel(row as Record<string, unknown>) || affiliateId,
-      email: affiliateId,
-      texasRole: "agent",
-      mainCurrency: "NSP",
+      email:
+        childRecord?.email?.trim() ||
+        childRecord?.username?.trim() ||
+        affiliateId,
+      texasRole: texasRoleLabel(childRecord?.role),
+      mainCurrency: childRecord?.mainCurrency?.trim() || "NSP",
       balance,
       metrics: buildMetrics(tebat, suhoubat),
       has_live_texas_data: true,
     });
   }
+
+  log.info("texas enrichment index built", {
+    enrichmentAgentCount: agents.length,
+    portalDirectChildren: portalDirectChildren.length,
+  });
 
   let totalBurn = 0;
   let combinedBalance = 0;

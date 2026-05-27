@@ -135,6 +135,35 @@ describe("mergeDirectChildrenWithTexas — A -> B -> C, D stub", () => {
   });
 });
 
+describe("mergeDirectChildrenWithTexas — enrich from full Texas index", () => {
+  it("enriches DB direct child via affiliateId even when not in portal-direct filter", () => {
+    const dbChild = {
+      id: "user-b",
+      texas_affiliate_id: "aff-b",
+      display_name: "Agent B",
+      texas_username: "b@test",
+      role: "agent",
+      is_active: true,
+    };
+
+    const texasPayload = emptyTexasPayload([
+      texasAgent("aff-b", "Agent B", 500),
+      texasAgent("aff-c", "Grandchild C", 999),
+    ]);
+
+    const { agents, diagnostics } = mergeDirectChildrenWithTexas(
+      [dbChild],
+      texasPayload
+    );
+
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0]!.has_live_texas_data, true);
+    assert.equal(agents[0]!.metrics.al_harq, 500);
+    assert.equal(diagnostics.matchedEnriched, 1);
+    assert.equal(diagnostics.droppedTexasRows, 1);
+  });
+});
+
 describe("mergeDirectChildrenWithTexas — why 5 Texas rows but 1 visible", () => {
   it("only DB direct children appear even when Texas returns 5", () => {
     const dbOne: DirectChildDbRow = {

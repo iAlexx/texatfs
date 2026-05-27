@@ -61,6 +61,41 @@ export function findTexasAgentRow(
   return undefined;
 }
 
+function normalizeLogin(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Match DB child to Texas enrichment by affiliateId, then by texas_username/email.
+ */
+export function findTexasRowForDbChild(
+  texasByAffiliate: Map<string, TexasSubAgentRow>,
+  texasAgents: TexasSubAgentRow[],
+  dbChild: DirectChildDbRow
+): TexasSubAgentRow | undefined {
+  const byId = findTexasAgentRow(
+    texasByAffiliate,
+    dbChild.texas_affiliate_id
+  );
+  if (byId) return byId;
+
+  const dbLogin = normalizeLogin(
+    dbChild.texas_username ?? dbChild.display_name
+  );
+  if (!dbLogin) return undefined;
+
+  for (const agent of texasAgents) {
+    const email = normalizeLogin(agent.email);
+    const username = normalizeLogin(agent.username);
+    if (email === dbLogin || username === dbLogin) {
+      return agent;
+    }
+  }
+
+  return undefined;
+}
+
 export interface MergeDirectChildrenResult {
   agents: TexasSubAgentRow[];
   stats: TexasSubAgentsPayload["stats"];
@@ -131,10 +166,17 @@ export function mergeDirectChildrenWithTexas(
     const aid = normalizeAffiliateId(dbChild.texas_affiliate_id);
     if (aid) childrenWithAffiliateId += 1;
 
-    const texasRow = aid ? findTexasAgentRow(texasByAffiliate, aid) : undefined;
+    const texasRow = findTexasRowForDbChild(
+      texasByAffiliate,
+      texasPayload.agents,
+      dbChild
+    );
+    const matchedAid = normalizeAffiliateId(
+      texasRow?.affiliateId ?? aid
+    );
 
-    if (texasRow && aid) {
-      matchedTexasIds.add(aid);
+    if (texasRow && matchedAid) {
+      matchedTexasIds.add(matchedAid);
       agents.push({
         ...texasRow,
         user_id: dbChild.id,
@@ -195,7 +237,11 @@ export function auditDirectChildVisibility(
   const texasByAffiliate = indexTexasAgentsByAffiliate(texasPayload.agents);
   return dbChildren.map((child) => {
     const aid = normalizeAffiliateId(child.texas_affiliate_id);
-    const texasRow = aid ? findTexasAgentRow(texasByAffiliate, aid) : undefined;
+    const texasRow = findTexasRowForDbChild(
+      texasByAffiliate,
+      texasPayload.agents,
+      child
+    );
     const parentMatch = true; // rows already filtered by parent_id = viewerId
 
     if (!child.is_active) {
