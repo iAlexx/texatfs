@@ -179,7 +179,7 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServiceClient();
 
   return withAuthenticatedTexasClient(supabase, body, async ({ user, client, creds }) => {
-    const cacheKey = `sub-agents:${user.id}:${ledgerDate}`;
+    const cacheKey = `sub-agents:v2:${user.id}:${ledgerDate}`;
 
     if (!body.forceRefresh) {
       const cached = serverCacheGet<
@@ -202,8 +202,10 @@ export async function POST(request: Request) {
     );
     const texasPayload = texasLive.payload;
 
+    const linkableRefs = texasLive.linkableRefs ?? texasLive.portalDirectRefs;
+
     const trueDirectAffiliateIds = new Set(
-      texasLive.portalDirectRefs
+      linkableRefs
         .map((r) => normalizeAffiliateId(r.affiliateId))
         .filter((id): id is string => Boolean(id))
     );
@@ -221,7 +223,7 @@ export async function POST(request: Request) {
     const linkResult = await ensureTexasPortalDirectChildrenInDb(
       supabase,
       user.id,
-      texasLive.portalDirectRefs
+      linkableRefs
     );
     linkResult.repaired = repaired;
 

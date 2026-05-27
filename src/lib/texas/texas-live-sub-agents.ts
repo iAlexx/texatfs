@@ -22,8 +22,8 @@ import type {
 } from "@/lib/texas/types";
 import {
   buildParentAffiliateIndex,
+  collectTexasChildrenForDbLink,
   filterTexasPortalDirectChildren,
-  toTexasPortalChildRef,
 } from "@/lib/texas/texas-portal-hierarchy";
 
 const log = createLogger("texas/live-sub-agents");
@@ -57,8 +57,15 @@ export interface TexasSubAgentsPayload {
 /** Live fetch result — portal direct children are separate from stats-only rows */
 export interface TexasSubAgentsLiveResult {
   payload: TexasSubAgentsPayload;
-  /** Affiliate IDs from POST /Agent/getChildren only (Texas portal direct downline) */
+  /** Rows to sync into DB as viewer direct children (parent=viewer or parent missing) */
+  linkableRefs: Array<{
+    affiliateId: string;
+    username: string | null;
+    parentAffiliateId: string | null;
+  }>;
+  /** @deprecated use linkableRefs */
   portalDirectAffiliateIds: string[];
+  /** @deprecated use linkableRefs */
   portalDirectRefs: Array<{
     affiliateId: string;
     username: string | null;
@@ -413,10 +420,20 @@ export async function fetchTexasSubAgentsLive(
     })),
   });
 
-  const portalDirectRefs = portalDirectChildren.map(toTexasPortalChildRef);
+  const linkableRefs = collectTexasChildrenForDbLink(
+    allChildren,
+    viewerAffiliateId
+  );
+
+  log.info("texas children link candidates", {
+    allChildren: allChildren.length,
+    strictPortalDirect: portalDirectChildren.length,
+    linkableForDb: linkableRefs.length,
+  });
 
   return {
     texasParentByAffiliate,
+    linkableRefs,
     payload: {
       ledger_date: ledgerDate,
       fetched_at: new Date().toISOString(),
@@ -428,8 +445,8 @@ export async function fetchTexasSubAgentsLive(
         highest_burn_agent: highest,
       },
     },
-    portalDirectAffiliateIds: portalDirectRefs.map((r) => r.affiliateId),
-    portalDirectRefs,
+    portalDirectAffiliateIds: linkableRefs.map((r) => r.affiliateId),
+    portalDirectRefs: linkableRefs,
   };
 }
 

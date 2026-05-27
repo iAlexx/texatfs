@@ -50,6 +50,35 @@ export function filterTexasPortalDirectChildren(
   return filtered;
 }
 
+/**
+ * Texas rows to sync into Supabase as viewer's direct children.
+ *
+ * - parent === viewer affiliate → direct child
+ * - parent missing (common for agents just created in Texas panel) → treat as direct
+ * - parent === someone else → grandchild, do NOT link under viewer
+ */
+export function collectTexasChildrenForDbLink(
+  allChildren: TexasChildRecord[],
+  viewerAffiliateId: string | null | undefined
+): TexasPortalChildRef[] {
+  const viewerNorm = normalizeAffiliateId(viewerAffiliateId);
+  if (!viewerNorm) return [];
+
+  const refs: TexasPortalChildRef[] = [];
+  for (const record of allChildren) {
+    const bag = record as Record<string, unknown>;
+    const parentNorm = extractTexasParentAffiliateId(bag);
+
+    if (parentNorm && parentNorm !== viewerNorm) {
+      continue;
+    }
+
+    refs.push(toTexasPortalChildRef(record));
+  }
+
+  return refs;
+}
+
 export function toTexasPortalChildRef(record: TexasChildRecord): TexasPortalChildRef {
   const bag = record as Record<string, unknown>;
   const affiliateId = String(record.affiliateId ?? "");
