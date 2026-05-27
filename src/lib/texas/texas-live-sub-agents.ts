@@ -49,6 +49,14 @@ export interface TexasSubAgentsPayload {
   };
 }
 
+/** Live fetch result — portal direct children are separate from stats-only rows */
+export interface TexasSubAgentsLiveResult {
+  payload: TexasSubAgentsPayload;
+  /** Affiliate IDs from POST /Agent/getChildren only (Texas portal direct downline) */
+  portalDirectAffiliateIds: string[];
+  portalDirectRefs: Array<{ affiliateId: string; username: string | null }>;
+}
+
 function resolveLabel(record: Record<string, unknown>): string {
   const candidates = [
     record.username,
@@ -245,7 +253,7 @@ function buildMetrics(tebat: number, suhoubat: number): TexasLiveLedgerMetrics {
 export async function fetchTexasSubAgentsLive(
   client: TexasHttpClient,
   ledgerDate: string
-): Promise<TexasSubAgentsPayload> {
+): Promise<TexasSubAgentsLiveResult> {
   const [
     { records: children },
     { response: statsResponse },
@@ -361,16 +369,29 @@ export async function fetchTexasSubAgentsLive(
     })),
   });
 
+  const portalDirectRefs = children.map((child) => ({
+    affiliateId: String(child.affiliateId),
+    username:
+      child.username?.trim() ||
+      child.email?.trim() ||
+      childLabel(child) ||
+      null,
+  }));
+
   return {
-    ledger_date: ledgerDate,
-    fetched_at: new Date().toISOString(),
-    agents,
-    stats: {
-      active_agents: agents.length,
-      total_network_burn: roundAgg(totalBurn),
-      combined_balance: roundAgg(combinedBalance),
-      highest_burn_agent: highest,
+    payload: {
+      ledger_date: ledgerDate,
+      fetched_at: new Date().toISOString(),
+      agents,
+      stats: {
+        active_agents: agents.length,
+        total_network_burn: roundAgg(totalBurn),
+        combined_balance: roundAgg(combinedBalance),
+        highest_burn_agent: highest,
+      },
     },
+    portalDirectAffiliateIds: portalDirectRefs.map((r) => r.affiliateId),
+    portalDirectRefs,
   };
 }
 

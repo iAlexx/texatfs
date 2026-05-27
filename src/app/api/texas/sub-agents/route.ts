@@ -20,6 +20,7 @@ import {
   mergeDirectChildrenWithTexas,
   type DirectChildDbRow,
 } from "@/lib/texas/sub-agents-direct-merge";
+import { linkTexasPortalDirectChildrenToViewer } from "@/lib/texas/link-texas-portal-children";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -187,13 +188,21 @@ export async function POST(request: Request) {
       }
     }
 
-    // 1) Visibility: DB direct children only
+    // 1) Texas live data (metrics + portal getChildren list)
+    const texasLive = await fetchTexasSubAgentsLive(client, ledgerDate);
+    const texasPayload = texasLive.payload;
+
+    // 2) Link Texas portal direct children → users.parent_id = viewer (DB visibility)
+    const linkResult = await linkTexasPortalDirectChildrenToViewer(
+      supabase,
+      user.id,
+      texasLive.portalDirectRefs
+    );
+
+    // 3) Visibility: DB direct children only (after link)
     const dbChildren = await loadDirectChildren(supabase, user.id);
 
-    // 2) Texas enrichment (stats + transfers + children labels — NOT used for visibility)
-    const texasPayload = await fetchTexasSubAgentsLive(client, ledgerDate);
-
-    // 3) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
+    // 4) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
     const { agents: mergedAgents, stats, diagnostics } = mergeDirectChildrenWithTexas(
       dbChildren,
       texasPayload
@@ -217,6 +226,8 @@ export async function POST(request: Request) {
     console.info("[sub-agents] visibility merge", {
       viewerId: user.id,
       ledgerDate,
+      texasPortalDirectCount: texasLive.portalDirectAffiliateIds.length,
+      linkResult,
       ...diagnostics,
       directChildrenReturned: payload.agents.length,
       renderedEnriched: payload.agents.filter((a) => a.has_live_texas_data).length,
