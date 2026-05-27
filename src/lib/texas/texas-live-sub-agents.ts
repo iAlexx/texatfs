@@ -20,6 +20,12 @@ import type {
   SubAgentStatisticsRecord,
   TexasChildRecord,
 } from "@/lib/texas/types";
+import {
+  buildParentAffiliateIndex,
+  filterTexasPortalDirectChildren,
+  isTexasPortalDirectChild,
+  toTexasPortalChildRef,
+} from "@/lib/texas/texas-portal-hierarchy";
 
 const log = createLogger("texas/live-sub-agents");
 
@@ -54,7 +60,12 @@ export interface TexasSubAgentsLiveResult {
   payload: TexasSubAgentsPayload;
   /** Affiliate IDs from POST /Agent/getChildren only (Texas portal direct downline) */
   portalDirectAffiliateIds: string[];
-  portalDirectRefs: Array<{ affiliateId: string; username: string | null }>;
+  portalDirectRefs: Array<{
+    affiliateId: string;
+    username: string | null;
+    parentAffiliateId: string | null;
+  }>;
+  texasParentByAffiliate: Map<string, string | null>;
 }
 
 function resolveLabel(record: Record<string, unknown>): string {
@@ -252,10 +263,11 @@ function buildMetrics(tebat: number, suhoubat: number): TexasLiveLedgerMetrics {
  */
 export async function fetchTexasSubAgentsLive(
   client: TexasHttpClient,
-  ledgerDate: string
+  ledgerDate: string,
+  viewerAffiliateId?: string | null
 ): Promise<TexasSubAgentsLiveResult> {
   const [
-    { records: children },
+    { records: allChildren },
     { response: statsResponse },
     { records: transferRecords, totals: networkTotals },
   ] = await Promise.all([
@@ -264,11 +276,23 @@ export async function fetchTexasSubAgentsLive(
     fetchAgentTransfers(client, { paginate: true }),
   ]);
 
+  const texasParentByAffiliate = buildParentAffiliateIndex(allChildren);
+  const portalDirectChildren = filterTexasPortalDirectChildren(
+    allChildren,
+    viewerAffiliateId
+  );
+
+  log.info("getChildren parent filter", {
+    viewerAffiliateId: viewerAffiliateId ?? null,
+    allChildren: allChildren.length,
+    portalDirectChildren: portalDirectChildren.length,
+  });
+
   const statsRecords = statsResponse.result?.records ?? [];
   const statsById = indexStatisticsByAffiliate(statsRecords);
 
   const childAffiliateIds = new Set(
-    children.map((c) => String(c.affiliateId)).filter(Boolean)
+    portalDirectChildren.map((c) => String(c.affiliateId)).filter(Boolean)
   );
   const transfersByAgent = groupTransfersByAffiliate(
     transferRecords,
@@ -276,7 +300,8 @@ export async function fetchTexasSubAgentsLive(
   );
 
   log.info("API responses", {
-    children: children.length,
+    children: allChildren.length,
+    portalDirectChildren: portalDirectChildren.length,
     statsRecords: statsRecords.length,
     transferRecords: transferRecords.length,
     agentsWithTransfers: transfersByAgent.size,
@@ -284,17 +309,18 @@ export async function fetchTexasSubAgentsLive(
     networkTotalWithdraw: networkTotals.totalWithdraw,
   });
 
-  if (children.length > 0) {
-    const s = children[0] as Record<string, unknown>;
+  if (allChildren.length > 0) {
+    const s = allChildren[0] as Record<string, unknown>;
     log.info("children row sample", {
       keys: Object.keys(s).sort().join(", "),
       affiliateId: s.affiliateId,
+      parent: s.parent ?? s.parentId ?? s.parentAffiliateId,
       balance: s.balance,
       currentWallet: s.currentWallet,
     });
   }
 
-  const agents: TexasSubAgentRow[] = children.map((child) => {
+  const agents: TexasSubAgentRow[] = portalDirectChildren.map((child) => {
     const affiliateId = String(child.affiliateId);
     const stats = statsById.get(affiliateId) ?? null;
     const transfers = transfersByAgent.get(affiliateId);
@@ -316,10 +342,16 @@ export async function fetchTexasSubAgentsLive(
     };
   });
 
-  // Stats-only rows: enrich lookup for DB children missing from getChildren
+  // Stats-only rows: only for portal-direct children (never grandchildren)
   for (const row of statsRecords) {
     const affiliateId = pickAffiliateId(row);
     if (!affiliateId || agents.some((a) => a.affiliateId === affiliateId)) {
+      continue;
+    }
+    if (
+      viewerAffiliateId &&
+      !isTexasPortalDirectChild(row as TexasChildRecord, viewerAffiliateId)
+    ) {
       continue;
     }
     const balance = extractBalance(row, null);
@@ -369,16 +401,10 @@ export async function fetchTexasSubAgentsLive(
     })),
   });
 
-  const portalDirectRefs = children.map((child) => ({
-    affiliateId: String(child.affiliateId),
-    username:
-      child.username?.trim() ||
-      child.email?.trim() ||
-      childLabel(child) ||
-      null,
-  }));
+  const portalDirectRefs = portalDirectChildren.map(toTexasPortalChildRef);
 
   return {
+    texasParentByAffiliate,
     payload: {
       ledger_date: ledgerDate,
       fetched_at: new Date().toISOString(),

@@ -20,7 +20,11 @@ import {
   mergeDirectChildrenWithTexas,
   type DirectChildDbRow,
 } from "@/lib/texas/sub-agents-direct-merge";
-import { linkTexasPortalDirectChildrenToViewer } from "@/lib/texas/link-texas-portal-children";
+import {
+  ensureTexasPortalDirectChildrenInDb,
+  repairMisassignedDirectChildren,
+} from "@/lib/texas/link-texas-portal-children";
+import { normalizeAffiliateId } from "@/lib/texas/sub-agents-direct-merge";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -188,21 +192,43 @@ export async function POST(request: Request) {
       }
     }
 
-    // 1) Texas live data (metrics + portal getChildren list)
-    const texasLive = await fetchTexasSubAgentsLive(client, ledgerDate);
+    const viewerAffiliateId = creds.texas_affiliate_id ?? null;
+
+    // 1) Texas live data (metrics + filtered portal direct children only)
+    const texasLive = await fetchTexasSubAgentsLive(
+      client,
+      ledgerDate,
+      viewerAffiliateId
+    );
     const texasPayload = texasLive.payload;
 
-    // 2) Link Texas portal direct children → users.parent_id = viewer (DB visibility)
-    const linkResult = await linkTexasPortalDirectChildrenToViewer(
+    const trueDirectAffiliateIds = new Set(
+      texasLive.portalDirectRefs
+        .map((r) => normalizeAffiliateId(r.affiliateId))
+        .filter((id): id is string => Boolean(id))
+    );
+
+    // 2) Repair mistaken parent_id=viewer on grandchildren (from prior reparent bug)
+    const repaired = await repairMisassignedDirectChildren(
+      supabase,
+      user.id,
+      viewerAffiliateId,
+      texasLive.texasParentByAffiliate,
+      trueDirectAffiliateIds
+    );
+
+    // 3) Create only missing DB rows for verified portal-direct children (no reparent)
+    const linkResult = await ensureTexasPortalDirectChildrenInDb(
       supabase,
       user.id,
       texasLive.portalDirectRefs
     );
+    linkResult.repaired = repaired;
 
-    // 3) Visibility: DB direct children only (after link)
+    // 4) Visibility: DB direct children only
     const dbChildren = await loadDirectChildren(supabase, user.id);
 
-    // 4) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
+    // 5) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
     const { agents: mergedAgents, stats, diagnostics } = mergeDirectChildrenWithTexas(
       dbChildren,
       texasPayload

@@ -237,34 +237,6 @@ export class DailyReportOrchestrator {
             child.username
           );
           created += 1;
-        } else {
-          const existingRow = (existingUsers ?? []).find(
-            (u) => u.texas_affiliate_id === child.affiliateId
-          );
-          if (existingRow && existingRow.parent_id !== masterUserId) {
-            const { error: reparentErr } = await this.supabase
-              .from("users")
-              .update({ parent_id: masterUserId })
-              .eq("id", childUserId);
-
-            if (reparentErr) {
-              log.warn("failed to reparent existing child to master", {
-                masterUserId,
-                childUserId,
-                affiliateId: child.affiliateId,
-                previousParentId: existingRow.parent_id,
-                error: reparentErr.message,
-              });
-            } else {
-              updated += 1;
-              log.info("reparented existing child to master", {
-                masterUserId,
-                childUserId,
-                affiliateId: child.affiliateId,
-                previousParentId: existingRow.parent_id,
-              });
-            }
-          }
         }
 
         const snapshotInsert = await this.repository.insertSnapshot(
