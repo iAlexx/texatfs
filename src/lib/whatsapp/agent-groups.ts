@@ -15,6 +15,7 @@ export interface WhatsAppAgentGroup {
   group_name:   string | null;
   invite_link:  string | null;
   is_active:    boolean;
+  created_by_bot: boolean;
   created_at:   string;
   updated_at:   string;
 }
@@ -65,6 +66,7 @@ export interface UpsertAgentGroupInput {
   groupId:     string;
   groupName?:  string | null;
   inviteLink?: string | null;
+  createdByBot?: boolean;
 }
 
 /**
@@ -87,6 +89,7 @@ export async function upsertAgentGroup(
         group_name:   input.groupName ?? null,
         invite_link:  input.inviteLink ?? null,
         is_active:    true,
+        created_by_bot: input.createdByBot ?? true,
       },
       { onConflict: "user_id,affiliate_id", ignoreDuplicates: false }
     )

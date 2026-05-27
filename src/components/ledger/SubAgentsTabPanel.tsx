@@ -41,18 +41,16 @@ function num(v: number | undefined | null): string {
 
 /* ─── Columns ─── */
 
-const COL_HEADERS = [
-  { key: "role",       label: "Role",            w: "w-[48px]" },
-  { key: "username",   label: "Username",        w: "min-w-[110px] flex-1" },
-  { key: "balance",    label: ar.sectionBalance,  w: "w-[82px]" },
-  { key: "tebat",      label: ar.tebat,          w: "w-[78px]" },
-  { key: "suhoubat",   label: ar.suhoubat,       w: "w-[78px]" },
-  { key: "alFarq",     label: ar.alFarq,         w: "w-[72px]" },
-  { key: "alHarq",     label: ar.alHarq,         w: "w-[72px]" },
-  { key: "waselMenho", label: ar.waselMenho,     w: "w-[78px]" },
-  { key: "waselEleih", label: ar.waselEleih,     w: "w-[78px]" },
-  { key: "baqiQadim",  label: ar.baqiQadim,      w: "w-[78px]" },
-  { key: "alNihai",    label: ar.alNihai,        w: "w-[130px]" },
+export const SUBAGENTS_COL_HEADERS = [
+  { key: "agentName", label: "Agent Name", w: "min-w-[220px] flex-1" },
+  { key: "alNihai", label: ar.alNihai, w: "w-[130px]" },
+  { key: "tebat", label: ar.tebat, w: "w-[78px]" },
+  { key: "suhoubat", label: ar.suhoubat, w: "w-[78px]" },
+  { key: "alFarq", label: ar.alFarq, w: "w-[72px]" },
+  { key: "alHarq", label: ar.alHarq, w: "w-[72px]" },
+  { key: "waselMenho", label: ar.waselMenho, w: "w-[78px]" },
+  { key: "waselEleih", label: ar.waselEleih, w: "w-[78px]" },
+  { key: "baqiQadim", label: ar.baqiQadim, w: "w-[78px]" },
 ] as const;
 
 /* ─── Main Panel ─── */
@@ -162,10 +160,10 @@ export function SubAgentsTabPanel({
 
       {/* ── Table ── */}
       <div className="overflow-x-auto">
-        <div className="min-w-[920px]">
+          <div className="min-w-[760px]">
           {/* Table header */}
           <div className="flex items-center border-b border-white/[0.08] bg-obsidian/60 px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-steel-500">
-            {COL_HEADERS.map((col) => (
+            {SUBAGENTS_COL_HEADERS.map((col) => (
               <div key={col.key} className={cn("shrink-0 px-1.5 text-center", col.w)}>
                 {col.label}
               </div>
@@ -226,31 +224,27 @@ function AgentRow({
       animate={{ opacity: 1 }}
       transition={{ delay: 0.01 * Math.min(index, 20) }}
     >
-      {/* Role */}
-      <div className="flex w-[52px] shrink-0 items-center justify-center px-1.5">
+      <button
+        type="button"
+        onClick={hasLiveData ? onSelect : undefined}
+        disabled={!hasLiveData}
+        className={cn(
+          "flex min-w-[220px] shrink-0 flex-1 items-center gap-2 px-1.5 text-right",
+          !hasLiveData && "cursor-default"
+        )}
+      >
         <span
           className={cn(
-            "flex h-6 w-8 items-center justify-center rounded text-[10px] font-bold",
+            "flex h-6 w-10 items-center justify-center rounded text-[10px] font-bold",
             badge.bg,
             badge.text
           )}
         >
           {badge.code}
         </span>
-      </div>
 
-      {/* Username */}
-      <button
-        type="button"
-        onClick={hasLiveData ? onSelect : undefined}
-        disabled={!hasLiveData}
-        className={cn(
-          "flex min-w-[120px] flex-1 shrink-0 items-center gap-1 px-1.5 text-right",
-          !hasLiveData && "cursor-default"
-        )}
-      >
-        <div className="min-w-0">
-          <p className="truncate text-[11px] font-medium text-foreground">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[12px] font-bold text-foreground">
             {agent.username}
           </p>
           {agent.email !== agent.username && (
@@ -267,72 +261,7 @@ function AgentRow({
         ) : null}
       </button>
 
-      {/* الرصيد */}
-      <div
-        className={cn(
-          "w-[82px] shrink-0 px-1.5 text-center font-mono text-[11px] font-semibold",
-          agent.balance > 0 ? "text-gold" : "text-steel-500"
-        )}
-      >
-        {num(agent.balance)}
-      </div>
-
-      {/* التعبئات */}
-      <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
-        {num(m.tebat)}
-      </div>
-
-      {/* سحوبات */}
-      <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
-        {num(m.suhoubat)}
-      </div>
-
-      {/* الفرق */}
-      <div className="w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
-        {num(m.al_farq)}
-      </div>
-
-      {/* الحرق */}
-      <div
-        className={cn(
-          "w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px]",
-          m.al_harq !== 0 ? "text-rose-400" : "text-steel-500"
-        )}
-      >
-        {num(m.al_harq)}
-      </div>
-
-      {/* واصل منه */}
-      <div
-        className={cn(
-          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
-          m.wasel_menho > 0 ? "text-amber-400" : "text-steel-600"
-        )}
-      >
-        {num(m.wasel_menho)}
-      </div>
-
-      {/* واصل إليه */}
-      <div
-        className={cn(
-          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
-          m.wasel_eleih > 0 ? "text-sky-400" : "text-steel-600"
-        )}
-      >
-        {num(m.wasel_eleih)}
-      </div>
-
-      {/* باقي قديم */}
-      <div
-        className={cn(
-          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
-          m.baqi_qadim !== 0 ? "text-orange-400" : "text-steel-600"
-        )}
-      >
-        {num(m.baqi_qadim)}
-      </div>
-
-      {/* النهائي */}
+      {/* Al Nihai */}
       <div className="w-[130px] shrink-0 px-1.5 text-center">
         <span
           className={cn(
@@ -345,6 +274,55 @@ function AgentRow({
           {formatMoney(Math.abs(alNihai))}
           <span className="text-[9px]">{isCredit ? "له ✅" : "عليه 🛑"}</span>
         </span>
+      </div>
+
+      {/* Remaining metrics (order matches headers) */}
+      <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {num(m.tebat)}
+      </div>
+
+      <div className="w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {num(m.suhoubat)}
+      </div>
+
+      <div className="w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px] text-steel-300">
+        {num(m.al_farq)}
+      </div>
+
+      <div
+        className={cn(
+          "w-[72px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.al_harq !== 0 ? "text-rose-400" : "text-steel-500"
+        )}
+      >
+        {num(m.al_harq)}
+      </div>
+
+      <div
+        className={cn(
+          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.wasel_menho > 0 ? "text-amber-400" : "text-steel-600"
+        )}
+      >
+        {num(m.wasel_menho)}
+      </div>
+
+      <div
+        className={cn(
+          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.wasel_eleih > 0 ? "text-sky-400" : "text-steel-600"
+        )}
+      >
+        {num(m.wasel_eleih)}
+      </div>
+
+      <div
+        className={cn(
+          "w-[78px] shrink-0 px-1.5 text-center font-mono text-[11px]",
+          m.baqi_qadim !== 0 ? "text-orange-400" : "text-steel-600"
+        )}
+      >
+        {num(m.baqi_qadim)}
       </div>
     </motion.div>
   );

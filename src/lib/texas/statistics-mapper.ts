@@ -76,12 +76,46 @@ export function mapSubAgentStatistics({
     logFieldMappingDiagnosticsOnce(records[0] as Record<string, unknown>);
   }
 
-  const footerNgr = ngrFromFooter(response.result?.total ?? null);
+  const footer = response.result?.total ?? null;
+  const footerNgr = ngrFromFooter(footer);
+
+  const sums = records.reduce(
+    (acc, row) => {
+      const bag = row as Record<string, unknown>;
+      const m = pickStatsRecordMetrics(bag);
+      acc.totalDeposit += m.totalDeposit;
+      acc.totalWithdraw += m.totalWithdraw;
+      acc.ngr += m.ngr;
+      return acc;
+    },
+    { totalDeposit: 0, totalWithdraw: 0, ngr: 0 }
+  );
+
+  let totalDeposit = 0;
+  let totalWithdraw = 0;
   let ngr = 0;
 
   if (role === "super_master") {
-    ngr = footerNgr ?? sumNgrFromRecords(records);
-    log.info("super_master: NGR extracted", { ngr, source: footerNgr !== null ? "footer" : "sum" });
+    if (footer) {
+      const bag = footer as Record<string, unknown>;
+      totalDeposit = pickNumeric(bag, statsTotalsMapping.totalDeposit);
+      totalWithdraw = pickNumeric(bag, statsTotalsMapping.totalWithdraw);
+      ngr = footerNgr ?? sums.ngr;
+      log.info("super_master: totals extracted from footer", {
+        totalDeposit,
+        totalWithdraw,
+        ngr,
+      });
+    } else {
+      totalDeposit = sums.totalDeposit;
+      totalWithdraw = sums.totalWithdraw;
+      ngr = sums.ngr;
+      log.info("super_master: totals summed from records", {
+        totalDeposit,
+        totalWithdraw,
+        ngr,
+      });
+    }
   } else {
     const affiliateId = texasAffiliateId?.trim() ?? "";
 
@@ -91,17 +125,37 @@ export function mapSubAgentStatistics({
         const id = pickString(bag, statsRecordMapping.affiliateId);
         return id !== null && id === affiliateId;
       });
+
       if (match) {
-        ngr = extractNgrFromRow(match);
-        log.info("NGR extracted from matched row", { affiliateId, ngr });
+        const m = pickStatsRecordMetrics(match as Record<string, unknown>);
+        totalDeposit = m.totalDeposit;
+        totalWithdraw = m.totalWithdraw;
+        ngr = m.ngr;
+        log.info("statistics mapper: matched affiliate row totals", {
+          affiliateId,
+          totalDeposit,
+          totalWithdraw,
+          ngr,
+        });
       } else {
-        ngr = footerNgr ?? sumNgrFromRecords(records);
-        log.warn("affiliateId not found — NGR from footer/sum", { affiliateId, ngr });
+        totalDeposit = sums.totalDeposit;
+        totalWithdraw = sums.totalWithdraw;
+        ngr = footerNgr ?? sums.ngr;
+        log.warn("affiliateId not found — totals from footer/sum", {
+          affiliateId,
+          totalDeposit,
+          totalWithdraw,
+          ngr,
+        });
       }
     } else {
-      ngr = footerNgr ?? sumNgrFromRecords(records);
-      log.warn("texasAffiliateId missing — NGR from footer/sum", {
+      totalDeposit = sums.totalDeposit;
+      totalWithdraw = sums.totalWithdraw;
+      ngr = footerNgr ?? sums.ngr;
+      log.warn("texasAffiliateId missing — totals from footer/sum", {
         userId: userId ?? null,
+        totalDeposit,
+        totalWithdraw,
         ngr,
       });
     }
@@ -111,11 +165,11 @@ export function mapSubAgentStatistics({
     userId: userId ?? null,
     role,
     ngr,
-    totalDeposit: 0,
-    totalWithdraw: 0,
+    totalDeposit,
+    totalWithdraw,
   });
 
-  return { totalDeposit: 0, totalWithdraw: 0, ngr };
+  return { totalDeposit, totalWithdraw, ngr };
 }
 
 export function mapWalletBalance(wallet: TexasWalletRecord): Pick<

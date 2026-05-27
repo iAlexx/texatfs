@@ -28,6 +28,7 @@ import {
 import { collectTexasChildrenForDbLink } from "@/lib/texas/texas-portal-hierarchy";
 import { resolveViewerTexasAffiliateId } from "@/lib/texas/resolve-viewer-affiliate";
 import { normalizeAffiliateId } from "@/lib/texas/sub-agents-direct-merge";
+import { scheduleGroupSpawnJob } from "@/lib/whatsapp/group-spawn-job";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -239,6 +240,34 @@ export async function POST(request: Request) {
       linkableRefs
     );
     linkResult.repaired = repaired;
+
+    // 3.5) Auto-create WhatsApp groups for newly linked direct agents
+    if (linkResult.createdItems.length) {
+      const { data: parentRow } = await supabase
+        .from("users")
+        .select("whatsapp_phone")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const masterPhoneDigits = parentRow?.whatsapp_phone ?? null;
+      if (masterPhoneDigits) {
+        scheduleGroupSpawnJob(
+          supabase,
+          user.id,
+          masterPhoneDigits,
+          linkResult.createdItems.map((it) => ({
+            affiliateId: it.affiliateId,
+            displayName: it.displayName,
+            username: it.username,
+          }))
+        );
+      } else {
+        console.info(
+          "[sub-agents] WhatsApp group auto-create skipped (missing whatsapp_phone)",
+          { viewerId: user.id, createdCount: linkResult.createdItems.length }
+        );
+      }
+    }
 
     const deactivated = await deactivateTexasChildrenRemovedFromPortal(
       supabase,

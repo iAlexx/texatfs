@@ -48,7 +48,7 @@ export function useLedgerHistory() {
 export function useLedgerSession(
   ledgerDate: string,
   viewUserId?: string | null,
-  options?: { forceSync?: boolean; syncNetwork?: boolean }
+  options?: { forceSync?: boolean; syncNetwork?: boolean; viewMode?: "daily" | "monthly" }
 ) {
   const { initData, telegramUserId, isReady, canAuthenticate } = useTelegram();
   const queryClient = useQueryClient();
@@ -62,6 +62,7 @@ export function useLedgerSession(
       viewUserId ?? "self",
       options?.forceSync ?? false,
       options?.syncNetwork ?? false,
+      options?.viewMode ?? "monthly",
     ],
     enabled: isReady && canAuthenticate && !!ledgerDate,
     queryFn: async () => {
@@ -75,6 +76,7 @@ export function useLedgerSession(
           agent_id: viewUserId ?? undefined,
           forceSync: options?.forceSync === true,
           syncNetwork: options?.syncNetwork === true,
+          viewMode: options?.viewMode ?? "monthly",
         }),
       });
 
@@ -143,7 +145,15 @@ export function useLedgerSession(
           if (rowDate !== ledgerDate) return;
 
           queryClient.setQueryData<LedgerSessionResponse>(
-            ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
+            [
+              "ledger",
+              "daily",
+              ledgerDate,
+              viewUserId ?? "self",
+              options?.forceSync ?? false,
+              options?.syncNetwork ?? false,
+              options?.viewMode ?? "monthly",
+            ],
             (prev) =>
               prev
                 ? { ...prev, ledger: mapLedgerRow(row) }
@@ -154,10 +164,19 @@ export function useLedgerSession(
       .subscribe();
 
     const pollMs = Number(process.env.NEXT_PUBLIC_LEDGER_POLL_MS ?? 15000);
+    const viewMode = options?.viewMode ?? "monthly";
     const pollId = setInterval(() => {
       if (ledgerStatus === "open") {
         void queryClient.invalidateQueries({
-          queryKey: ["ledger", "daily", ledgerDate, viewUserId ?? "self"],
+          queryKey: [
+            "ledger",
+            "daily",
+            ledgerDate,
+            viewUserId ?? "self",
+            options?.forceSync ?? false,
+            options?.syncNetwork ?? false,
+            viewMode,
+          ],
         });
       }
     }, pollMs);
@@ -174,6 +193,9 @@ export function useLedgerSession(
     subscriptionExpired,
     queryClient,
     viewUserId,
+    options?.forceSync,
+    options?.syncNetwork,
+    options?.viewMode,
   ]);
 
   return {

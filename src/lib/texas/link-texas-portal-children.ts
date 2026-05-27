@@ -11,6 +11,11 @@ export interface LinkTexasPortalChildrenResult {
   reparented: number;
   repaired: number;
   skipped: number;
+  createdItems: Array<{
+    affiliateId: string;
+    username: string | null;
+    displayName: string;
+  }>;
 }
 
 /**
@@ -29,6 +34,7 @@ export async function ensureTexasPortalDirectChildrenInDb(
     reparented: 0,
     repaired: 0,
     skipped: 0,
+    createdItems: [],
   };
 
   for (const ref of refs) {
@@ -68,6 +74,11 @@ export async function ensureTexasPortalDirectChildrenInDb(
 
       result.created += 1;
       result.linked += 1;
+      result.createdItems.push({
+        affiliateId,
+        username: ref.username ?? null,
+        displayName,
+      });
       continue;
     }
 

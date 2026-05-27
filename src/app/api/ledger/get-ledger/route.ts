@@ -19,6 +19,8 @@ interface Body extends LedgerAuthInput {
   forceSync?: boolean;
   /** Refresh stale subtree member ledgers (agents tab) */
   syncNetwork?: boolean;
+  /** UI-only view mode (view-layer monthly cumulative) */
+  viewMode?: "daily" | "monthly";
 }
 
 function todayIsoDate(): string {
@@ -33,9 +35,13 @@ export async function POST(request: Request) {
     const targetUserId =
       body.target_user_id ?? body.agent_id ?? body.viewUserId;
     const supabase = getSupabaseServiceClient();
+    const viewMode: "daily" | "monthly" =
+      body.viewMode === "monthly" ? "monthly" : "daily";
+
     const sessionOptions = {
       forceSync: body.forceSync === true,
       syncNetwork: body.syncNetwork === true,
+      viewMode,
     };
 
     if (!subscriptionActive) {

@@ -15,20 +15,38 @@ const log = createLogger("whatsapp/group-spawn");
 const SPAWN_DEDUP_TTL_MS = 5 * 60 * 1000;
 const SPAWN_JOB_TIMEOUT_MS = 45 * 60 * 1000;
 
+export interface GroupSpawnTarget {
+  affiliateId: string;
+  displayName: string;
+  username?: string | null;
+}
+
 export function scheduleGroupSpawnJob(
   supabase: SupabaseClient,
   userId: string,
-  masterPhoneDigits: string
+  masterPhoneDigits: string,
+  targets?: GroupSpawnTarget[]
 ): void {
-  const dedupeKey = `spawn:${userId}`;
+  const dedupeSuffix =
+    targets && targets.length
+      ? targets
+          .map((t) => t.affiliateId)
+          .sort()
+          .join(",")
+      : "all";
+  const dedupeKey = `spawn:${userId}:${dedupeSuffix}`;
   if (!oncePerKey(dedupeKey, SPAWN_DEDUP_TTL_MS)) {
     log.info("duplicate spawn skipped (within dedup window)", { userId });
     return;
   }
 
-  log.info("scheduling group spawn job", { userId, masterPhoneDigits: masterPhoneDigits.slice(-4) });
+  log.info("scheduling group spawn job", {
+    userId,
+    masterPhoneDigits: masterPhoneDigits.slice(-4),
+    targets: targets?.length ?? 0,
+  });
 
-  void runGroupSpawnJob(supabase, userId, masterPhoneDigits).catch((err) => {
+  void runGroupSpawnJob(supabase, userId, masterPhoneDigits, targets).catch((err) => {
     log.error("unhandled error", {
       userId,
       error: err instanceof Error ? err.message : String(err),
@@ -40,7 +58,8 @@ export function scheduleGroupSpawnJob(
 async function runGroupSpawnJob(
   supabase: SupabaseClient,
   userId: string,
-  masterPhoneDigits: string
+  masterPhoneDigits: string,
+  targets?: GroupSpawnTarget[]
 ): Promise<void> {
   try {
     log.info("spawn job starting", { userId });
@@ -48,7 +67,7 @@ async function runGroupSpawnJob(
       "@/lib/whatsapp/group-spawner"
     );
     const result = await withTimeout(
-      spawnAgentGroupsForMaster(supabase, userId, masterPhoneDigits),
+      spawnAgentGroupsForMaster(supabase, userId, masterPhoneDigits, targets),
       SPAWN_JOB_TIMEOUT_MS,
       "group-spawn"
     );

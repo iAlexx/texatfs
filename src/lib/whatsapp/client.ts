@@ -58,6 +58,11 @@ export interface WhatsAppSendResult {
   raw: unknown;
 }
 
+export interface WhatsAppUploadResult {
+  publicUrl: string;
+  raw: unknown;
+}
+
 interface SendMessageOptions {
   quotedMessageId?: string;
 }
@@ -144,6 +149,120 @@ async function sendWhatsAppMessageOnce(
   return { messageId: msgId, raw: body };
 }
 
+async function uploadMediaOnce(
+  bytes: Buffer,
+  mimeType: string
+): Promise<WhatsAppUploadResult> {
+  const token = getToken();
+  const url = `${getBaseUrl()}/api/upload`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": mimeType,
+      },
+      body: bytes as any,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    throw new WhatsAppError(
+      `WhatsApp upload unreachable: ${err instanceof Error ? err.message : String(err)}`,
+      "network"
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let body: unknown = null;
+  try {
+    body = await res.clone().json();
+  } catch {
+    body = await res.text().catch(() => "");
+  }
+
+  if (!res.ok) {
+    const errMsg = extractErrorMessage(body) ?? `HTTP ${res.status}`;
+    throw new WhatsAppError(`WhatsApp upload failed: ${errMsg}`, "upstream", res.status);
+  }
+
+  const publicUrl = extractPublicUrl(body);
+  if (!publicUrl) {
+    throw new WhatsAppError("WhatsApp upload succeeded but no publicUrl returned", "upstream");
+  }
+
+  return { publicUrl, raw: body };
+}
+
+async function sendWhatsAppImageUrlOnce(
+  chatId: string,
+  imageUrl: string,
+  caption?: string
+): Promise<WhatsAppSendResult> {
+  const token = getToken();
+  const url = `${getBaseUrl()}/api/send-message`;
+
+  const payload: Record<string, unknown> = {
+    to: chatId,
+    chatId,
+    imageUrl,
+  };
+  if (caption?.trim()) {
+    payload.text = caption.trim();
+    payload.message = caption.trim();
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    throw new WhatsAppError(
+      `WhatsApp gateway unreachable: ${err instanceof Error ? err.message : String(err)}`,
+      "network"
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let body: unknown = null;
+  try {
+    body = await res.clone().json();
+  } catch {
+    body = await res.text().catch(() => "");
+  }
+
+  if (!res.ok) {
+    const errMsg = extractErrorMessage(body) ?? `HTTP ${res.status}`;
+    if (res.status === 401 || res.status === 403) {
+      throw new WhatsAppError(`WhatsApp auth failed: ${errMsg}`, "auth", res.status);
+    }
+    if (res.status === 429) {
+      throw new WhatsAppError(`WhatsApp rate limit: ${errMsg}`, "rate_limit", res.status);
+    }
+    throw new WhatsAppError(`WhatsApp gateway error: ${errMsg}`, "upstream", res.status);
+  }
+
+  return { messageId: extractMessageId(body), raw: body };
+}
+
 /**
  * Send a text message to a WhatsApp chat (private or group).
  * Retries once on transient network/5xx errors only.
@@ -157,6 +276,45 @@ export async function sendWhatsAppMessage(
     maxAttempts: MAX_SEND_ATTEMPTS,
     baseDelayMs: 1500,
     label: "whatsapp-send",
+    shouldRetry: (err) => {
+      if (err instanceof WhatsAppError) {
+        if (err.code === "rate_limit" || err.code === "auth") return false;
+        if (err.code === "network") return true;
+        if (err.code === "upstream" && err.status && err.status >= 500) return true;
+      }
+      return false;
+    },
+  });
+}
+
+export async function uploadPngToWasender(
+  imageBytes: Buffer
+): Promise<WhatsAppUploadResult> {
+  return retryAsync(() => uploadMediaOnce(imageBytes, "image/png"), {
+    maxAttempts: MAX_SEND_ATTEMPTS,
+    baseDelayMs: 1500,
+    label: "whatsapp-upload",
+    shouldRetry: (err) => {
+      if (err instanceof WhatsAppError) {
+        if (err.code === "rate_limit" || err.code === "auth") return false;
+        if (err.code === "network") return true;
+        if (err.code === "upstream" && err.status && err.status >= 500) return true;
+      }
+      return false;
+    },
+  });
+}
+
+export async function sendWhatsAppImage(
+  chatId: string,
+  imageBytes: Buffer,
+  caption?: string
+): Promise<WhatsAppSendResult> {
+  const uploaded = await uploadPngToWasender(imageBytes);
+  return retryAsync(() => sendWhatsAppImageUrlOnce(chatId, uploaded.publicUrl, caption), {
+    maxAttempts: MAX_SEND_ATTEMPTS,
+    baseDelayMs: 1500,
+    label: "whatsapp-send-image",
     shouldRetry: (err) => {
       if (err instanceof WhatsAppError) {
         if (err.code === "rate_limit" || err.code === "auth") return false;
@@ -204,5 +362,18 @@ function extractErrorMessage(body: unknown): string | null {
   const b = body as Record<string, unknown>;
   if (typeof b.message === "string") return b.message;
   if (typeof b.error === "string") return b.error;
+  return null;
+}
+
+function extractPublicUrl(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  if (typeof b.publicUrl === "string" && b.publicUrl.trim()) {
+    return b.publicUrl.trim();
+  }
+  const data = b.data as Record<string, unknown> | undefined;
+  if (data && typeof data.publicUrl === "string" && data.publicUrl.trim()) {
+    return data.publicUrl.trim();
+  }
   return null;
 }

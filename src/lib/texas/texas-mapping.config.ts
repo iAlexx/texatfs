@@ -104,6 +104,8 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
     subAgentRecord: {
       affiliateId: ["affiliateId", "agentId", "id"],
       totalDeposit: [
+        // Tree-grid layout fallback
+        "left",
         "totalDeposit",
         "depositsTotal",
         "depositTotal",
@@ -115,6 +117,8 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         "chargeIn",
       ],
       totalWithdraw: [
+        // Tree-grid layout fallback
+        "right",
         "totalWithdraw",
         "withdrawTotal",
         "withdrawalsTotal",

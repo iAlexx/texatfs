@@ -12,13 +12,17 @@ export async function GET(
   request: Request,
   context: { params: { id: string } }
 ) {
-  const token = new URL(request.url).searchParams.get("token");
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token");
   if (!verifyRenderToken(token)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const supabase = getSupabaseServiceClient();
-  const data = await loadReportRenderData(supabase, context.params.id);
+  const mode = url.searchParams.get("mode");
+  const data = await loadReportRenderData(supabase, context.params.id, {
+    mode: mode === "monthly" ? "monthly" : "daily",
+  });
 
   if (!data) {
     return NextResponse.json({ error: "Ledger not found" }, { status: 404 });

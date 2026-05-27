@@ -101,9 +101,11 @@ async function launchReportBrowser(): Promise<Browser> {
 
 async function captureReportPage(
   page: Page,
-  ledgerId: string
+  ledgerId: string,
+  options?: { mode?: "daily" | "monthly" }
 ): Promise<Buffer> {
-  const url = `${resolveReportBaseUrl()}/api/render/report/${ledgerId}?token=${encodeURIComponent(getRenderToken())}`;
+  const modeParam = options?.mode ? `&mode=${encodeURIComponent(options.mode)}` : "";
+  const url = `${resolveReportBaseUrl()}/api/render/report/${ledgerId}?token=${encodeURIComponent(getRenderToken())}${modeParam}`;
 
   await page.goto(url, {
     waitUntil: "networkidle0",
@@ -132,14 +134,15 @@ async function captureReportPage(
  * Serialized with Texas login lock to avoid concurrent Chromium on Railway.
  */
 export async function captureDailyReportImage(
-  ledgerId: string
+  ledgerId: string,
+  options?: { mode?: "daily" | "monthly" }
 ): Promise<Buffer> {
   return withTexasBrowserLoginLock(async () => {
     const browser = await launchReportBrowser();
     try {
       const page = await browser.newPage();
       await page.setViewport(VIEWPORT);
-      return await captureReportPage(page, ledgerId);
+      return await captureReportPage(page, ledgerId, options);
     } finally {
       await browser.close().catch(() => undefined);
     }

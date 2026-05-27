@@ -13,6 +13,7 @@ import { createLogger } from "@/lib/observability/logger";
 import type { TexasSyncUserContext } from "@/lib/texas/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { scheduleGroupSpawnJob } from "@/lib/whatsapp/group-spawn-job";
 
 export interface DailyReportOrchestratorResult {
   sync: Awaited<ReturnType<TexasSyncService["syncUser"]>>;
@@ -197,6 +198,12 @@ export class DailyReportOrchestrator {
       return { attempted: 0, persisted: 0, created: 0, updated: 0, failed: [] };
     }
 
+    const createdTargets: Array<{
+      affiliateId: string;
+      displayName: string;
+      username: string | null;
+    }> = [];
+
     const affiliateIds = childSnapshots.map((c) => c.affiliateId);
 
     const { data: existingUsers, error } = await this.supabase
@@ -237,6 +244,12 @@ export class DailyReportOrchestrator {
             child.username
           );
           created += 1;
+
+          createdTargets.push({
+            affiliateId: child.affiliateId,
+            displayName: child.username?.trim() || `agent-${child.affiliateId}`,
+            username: child.username ?? null,
+          });
         }
 
         const snapshotInsert = await this.repository.insertSnapshot(
@@ -283,6 +296,29 @@ export class DailyReportOrchestrator {
       failedCount: failed.length,
       failedAffiliateIds: failed,
     });
+
+    if (createdTargets.length) {
+      const { data: masterRow } = await this.supabase
+        .from("users")
+        .select("whatsapp_phone")
+        .eq("id", masterUserId)
+        .maybeSingle();
+
+      const masterPhoneDigits = masterRow?.whatsapp_phone ?? null;
+      if (masterPhoneDigits) {
+        scheduleGroupSpawnJob(
+          this.supabase,
+          masterUserId,
+          masterPhoneDigits,
+          createdTargets
+        );
+      } else {
+        log.info("WhatsApp group auto-create skipped (missing whatsapp_phone)", {
+          masterUserId,
+          createdCount: createdTargets.length,
+        });
+      }
+    }
 
     return { attempted: childSnapshots.length, persisted, created, updated, failed };
   }
