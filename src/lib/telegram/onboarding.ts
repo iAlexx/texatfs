@@ -66,6 +66,8 @@ function mapRegistrationError(err: unknown): string {
         return botAr.licenseInvalidNew;
       case "RENEWAL_LICENSE_INVALID":
         return botAr.renewalLicenseInvalid;
+      case "RENEWAL_LICENSE_ALREADY_ON_ACCOUNT":
+        return botAr.renewalLicenseAlreadyOnAccount;
       case "TELEGRAM_ALREADY_LINKED_OTHER":
         return botAr.accountLinkedOtherTelegram;
       case "ACCOUNT_NOT_FOUND":
@@ -332,7 +334,14 @@ export async function handleOnboardingMessage(
 
     try {
       if (licenseAction.kind === "relink_active") {
-        if (step === "license" && subscriptionActive) {
+        if (
+          step === "license" &&
+          subscriptionActive &&
+          account?.license_key_id &&
+          licenseKey === String(account.license_key_id).toUpperCase()
+        ) {
+          await sendTelegramMessage(chatId, botAr.relinkNoLicenseNeeded);
+        } else if (step === "license" && subscriptionActive) {
           await sendTelegramMessage(chatId, botAr.relinkNoLicenseNeeded);
         }
         const result = await registration.relinkTelegramToExistingAccount({

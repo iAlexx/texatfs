@@ -26,6 +26,7 @@ export interface CompleteRegistrationResult {
 export type RegistrationErrorCode =
   | "LICENSE_KEY_INVALID_OR_USED"
   | "RENEWAL_LICENSE_INVALID"
+  | "RENEWAL_LICENSE_ALREADY_ON_ACCOUNT"
   | "TELEGRAM_ALREADY_REGISTERED"
   | "TELEGRAM_ALREADY_LINKED_OTHER"
   | "ACCOUNT_NOT_FOUND"
@@ -110,6 +111,20 @@ export class RegistrationService {
     });
   }
 
+  /** Persist verified Texas portal credentials (required for mini-app / sub-agents API). */
+  private encryptTexasCredentials(
+    normalizedLogin: string,
+    password: string
+  ): {
+    texas_email_encrypted: string;
+    texas_password_encrypted: string;
+  } {
+    return {
+      texas_email_encrypted: this.vault.encrypt(normalizedLogin),
+      texas_password_encrypted: this.vault.encrypt(password),
+    };
+  }
+
   /**
    * Re-attach Telegram to an existing account (after logout).
    * Active subscription: no license required.
@@ -163,6 +178,15 @@ export class RegistrationService {
 
     if (!subscriptionActive) {
       const renewalKey = input.renewalLicenseKey?.trim().toUpperCase() ?? "";
+      const existingLicense = String(existing.license_key_id ?? "").toUpperCase();
+
+      if (renewalKey && existingLicense && renewalKey === existingLicense) {
+        console.info("[auth/relink] user re-entered original license on expired account", {
+          userId: existing.id,
+        });
+        throw new RegistrationError("RENEWAL_LICENSE_ALREADY_ON_ACCOUNT");
+      }
+
       if (!renewalKey) {
         console.info("[auth/relink] denied: subscription expired, no renewal key", {
           userId: existing.id,
@@ -198,16 +222,28 @@ export class RegistrationService {
       });
     }
 
+    const texasCreds = this.encryptTexasCredentials(
+      normalizedLogin,
+      input.texasPassword
+    );
+
     const { error: updErr } = await this.supabase
       .from("users")
       .update({
         telegram_id: input.telegramId,
         display_name: input.displayName,
         texas_username: normalizedLogin,
+        ...texasCreds,
+        is_active: true,
       })
       .eq("id", existing.id);
 
     if (updErr) throw updErr;
+
+    console.info("[auth/relink] Texas credentials re-saved for mini-app", {
+      userId: existing.id,
+      texasUsername: normalizedLogin,
+    });
 
     await this.supabase
       .from("telegram_onboarding_sessions")
@@ -288,8 +324,10 @@ export class RegistrationService {
         throw new Error("Failed to compute subscription end date");
       }
 
-      const loginEnc = this.vault.encrypt(normalizedLogin);
-      const passEnc = this.vault.encrypt(texasPassword);
+      const texasCreds = this.encryptTexasCredentials(
+        normalizedLogin,
+        texasPassword
+      );
 
       const { data: user, error: insertError } = await this.supabase
         .from("users")
@@ -299,8 +337,7 @@ export class RegistrationService {
           parent_id: null,
           display_name: input.displayName,
           texas_username: normalizedLogin,
-          texas_email_encrypted: loginEnc,
-          texas_password_encrypted: passEnc,
+          ...texasCreds,
           registered_via: "telegram_bot",
           is_active: true,
           license_key_id: licenseKey,
