@@ -1,13 +1,27 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { RegistrationService } from "@/lib/services/RegistrationService";
+import { normalizeTexasLogin } from "@/lib/auth/texas-login";
+import {
+  parseOnboardingModeChoice,
+  resolvePostPasswordAction,
+  resolveLicenseStepAction,
+  type OnboardingMode,
+} from "@/lib/auth/onboarding-auth-flow";
+import {
+  RegistrationService,
+  RegistrationError,
+} from "@/lib/services/RegistrationService";
 import { getCredentialVault } from "@/lib/security/CredentialVault";
-import { normalizeTexasUsername } from "@/lib/texas/texas-api-config";
 import { sendTelegramMessage } from "@/lib/telegram/bot-api";
 import type { TelegramMessage } from "@/lib/telegram/bot-api";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
 import { botAr, miniAppHint } from "@/lib/i18n/bot-ar";
 
-type OnboardingStep = "login" | "password" | "license";
+type OnboardingStep =
+  | "choose_mode"
+  | "login"
+  | "password"
+  | "license"
+  | "renewal_license";
 
 const TEXAS_LOGIN_RE = /^[^\s]{3,128}$/;
 
@@ -22,9 +36,57 @@ function appUrl(): string | undefined {
 }
 
 function normalizeStep(raw: string): OnboardingStep | null {
+  if (raw === "choose_mode") return "choose_mode";
   if (raw === "login" || raw === "email") return "login";
-  if (raw === "password" || raw === "license") return raw;
+  if (raw === "password") return "password";
+  if (raw === "license") return "license";
+  if (raw === "renewal_license") return "renewal_license";
   return null;
+}
+
+async function finishAuthSuccess(
+  chatId: number,
+  result: { subscriptionEndDate: string; relinked?: boolean }
+): Promise<void> {
+  const end = new Date(result.subscriptionEndDate).toLocaleDateString("ar-SY", {
+    timeZone: process.env.LEDGER_TIMEZONE ?? "Asia/Damascus",
+  });
+
+  const text = result.relinked
+    ? botAr.relinkSuccess(end) + miniAppHint(appUrl())
+    : botAr.registrationComplete(end) + miniAppHint(appUrl());
+
+  await sendTelegramMessage(chatId, text);
+}
+
+function mapRegistrationError(err: unknown): string {
+  if (err instanceof RegistrationError) {
+    switch (err.code) {
+      case "LICENSE_KEY_INVALID_OR_USED":
+        return botAr.licenseInvalidNew;
+      case "RENEWAL_LICENSE_INVALID":
+        return botAr.renewalLicenseInvalid;
+      case "TELEGRAM_ALREADY_LINKED_OTHER":
+        return botAr.accountLinkedOtherTelegram;
+      case "ACCOUNT_NOT_FOUND":
+        return botAr.accountNotFoundUseNew;
+      case "ACCOUNT_ALREADY_EXISTS":
+        return botAr.accountExistsUseLogin;
+      case "SUBSCRIPTION_EXPIRED_NEED_RENEWAL":
+        return botAr.subscriptionExpiredRenewal;
+      case "TELEGRAM_ALREADY_REGISTERED":
+        return botAr.telegramAlreadyRegistered;
+      default:
+        return botAr.registrationFailed(err.message);
+    }
+  }
+
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("LICENSE_KEY_INVALID")) return botAr.licenseInvalidNew;
+  if (msg.includes("Texas sign-in failed")) {
+    return botAr.texasLoginFailed("");
+  }
+  return botAr.registrationFailed(msg);
 }
 
 export async function handleOnboardingMessage(
@@ -36,6 +98,7 @@ export async function handleOnboardingMessage(
   const text = (message.text ?? "").trim();
   const registration = new RegistrationService(supabase);
   const subscription = new SubscriptionService(supabase);
+  const vault = getCredentialVault();
 
   if (text === "/start") {
     const existing = await registration.findUserByTelegramId(telegramId);
@@ -47,7 +110,7 @@ export async function handleOnboardingMessage(
           botAr.welcomeBackActive(existing.display_name ?? "ماستر", appUrl())
         );
       } else {
-        await sendTelegramMessage(chatId, botAr.subscriptionExpired);
+        await sendTelegramMessage(chatId, botAr.subscriptionExpiredRenewal);
       }
       return;
     }
@@ -57,7 +120,8 @@ export async function handleOnboardingMessage(
       .upsert(
         {
           telegram_id: telegramId,
-          step: "email",
+          step: "choose_mode",
+          onboarding_mode: null,
           texas_email_encrypted: null,
           texas_password_encrypted: null,
         },
@@ -73,7 +137,7 @@ export async function handleOnboardingMessage(
       return;
     }
 
-    await sendTelegramMessage(chatId, botAr.welcomeNew);
+    await sendTelegramMessage(chatId, botAr.chooseMode);
     return;
   }
 
@@ -84,10 +148,6 @@ export async function handleOnboardingMessage(
     .maybeSingle();
 
   if (sessionFetchError) {
-    console.error("[onboarding] session fetch failed", {
-      telegramId,
-      error: sessionFetchError.message,
-    });
     await sendTelegramMessage(chatId, botAr.sessionFetchError);
     return;
   }
@@ -97,37 +157,47 @@ export async function handleOnboardingMessage(
     return;
   }
 
-  const vault = getCredentialVault();
   const step = normalizeStep(session.step as string);
-
   if (!step) {
     await sendTelegramMessage(chatId, botAr.sessionInvalid);
     return;
   }
 
+  if (step === "choose_mode") {
+    const mode = parseOnboardingModeChoice(text);
+    if (!mode) {
+      await sendTelegramMessage(chatId, botAr.chooseModeInvalid);
+      return;
+    }
+
+    await supabase
+      .from("telegram_onboarding_sessions")
+      .update({ step: "email", onboarding_mode: mode })
+      .eq("telegram_id", telegramId);
+
+    await sendTelegramMessage(
+      chatId,
+      mode === "existing" ? botAr.stepLoginExisting : botAr.stepLoginNew
+    );
+    return;
+  }
+
+  const mode = (session.onboarding_mode as OnboardingMode | null) ?? "new";
+
   if (step === "login") {
-    const texasLogin = normalizeTexasUsername(text);
+    const texasLogin = normalizeTexasLogin(text);
     if (!TEXAS_LOGIN_RE.test(texasLogin)) {
       await sendTelegramMessage(chatId, botAr.loginInvalid);
       return;
     }
 
-    const { error: loginSaveError } = await supabase
+    await supabase
       .from("telegram_onboarding_sessions")
       .update({
         step: "password",
         texas_email_encrypted: vault.encrypt(texasLogin),
       })
       .eq("telegram_id", telegramId);
-
-    if (loginSaveError) {
-      console.error("[onboarding] login save failed", {
-        telegramId,
-        error: loginSaveError.message,
-      });
-      await sendTelegramMessage(chatId, botAr.loginSaveError);
-      return;
-    }
 
     await sendTelegramMessage(chatId, botAr.stepPassword);
     return;
@@ -139,37 +209,96 @@ export async function handleOnboardingMessage(
       return;
     }
 
-    const { error: passwordSaveError } = await supabase
+    const { data: fresh } = await supabase
+      .from("telegram_onboarding_sessions")
+      .select("texas_email_encrypted, onboarding_mode")
+      .eq("telegram_id", telegramId)
+      .single();
+
+    if (!fresh?.texas_email_encrypted) {
+      await sendTelegramMessage(chatId, botAr.sessionExpired);
+      return;
+    }
+
+    const texasLogin = vault.decrypt(fresh.texas_email_encrypted).trim();
+    const sessionMode = (fresh.onboarding_mode as OnboardingMode | null) ?? mode;
+
+    await supabase
       .from("telegram_onboarding_sessions")
       .update({
-        step: "license",
         texas_password_encrypted: vault.encrypt(text),
       })
       .eq("telegram_id", telegramId);
 
-    if (passwordSaveError) {
-      console.error("[onboarding] password save failed", {
-        telegramId,
-        error: passwordSaveError.message,
-      });
-      await sendTelegramMessage(chatId, botAr.passwordSaveError);
+    const account = await registration.findUserByTexasLogin(texasLogin);
+    const subscriptionActive = account?.id
+      ? await subscription.isActive(account.id as string)
+      : false;
+
+    const action = resolvePostPasswordAction({
+      mode: sessionMode,
+      accountExists: Boolean(account?.id),
+      accountTelegramId: account?.telegram_id != null
+        ? Number(account.telegram_id)
+        : null,
+      currentTelegramId: telegramId,
+      subscriptionActive,
+    });
+
+    if (action.kind === "deny_other_telegram") {
+      await sendTelegramMessage(chatId, botAr.accountLinkedOtherTelegram);
       return;
     }
 
+    if (action.kind === "deny_use_existing") {
+      await sendTelegramMessage(chatId, botAr.accountNotFoundUseNew);
+      return;
+    }
+
+    if (action.kind === "relink_active") {
+      await sendTelegramMessage(chatId, botAr.validating);
+      try {
+        const result = await registration.relinkTelegramToExistingAccount({
+          telegramId,
+          displayName: displayName(message),
+          texasLogin,
+          texasPassword: text,
+        });
+        await finishAuthSuccess(chatId, result);
+      } catch (e) {
+        await sendTelegramMessage(chatId, mapRegistrationError(e));
+      }
+      return;
+    }
+
+    if (action.kind === "relink_expired") {
+      await supabase
+        .from("telegram_onboarding_sessions")
+        .update({ step: "renewal_license" })
+        .eq("telegram_id", telegramId);
+      await sendTelegramMessage(chatId, botAr.stepRenewalLicense);
+      return;
+    }
+
+    await supabase
+      .from("telegram_onboarding_sessions")
+      .update({ step: "license" })
+      .eq("telegram_id", telegramId);
     await sendTelegramMessage(chatId, botAr.stepLicense);
     return;
   }
 
-  if (step === "license") {
+  if (step === "renewal_license" || step === "license") {
     const licenseKey = text.toUpperCase();
-    const { data: freshSession, error: sessionError } = await supabase
+    const { data: freshSession } = await supabase
       .from("telegram_onboarding_sessions")
-      .select("texas_email_encrypted, texas_password_encrypted")
+      .select(
+        "texas_email_encrypted, texas_password_encrypted, onboarding_mode"
+      )
       .eq("telegram_id", telegramId)
       .single();
 
     if (
-      sessionError ||
       !freshSession?.texas_email_encrypted ||
       !freshSession?.texas_password_encrypted
     ) {
@@ -181,71 +310,73 @@ export async function handleOnboardingMessage(
     const texasPassword = vault
       .decrypt(freshSession.texas_password_encrypted)
       .trim();
+    const sessionMode =
+      (freshSession.onboarding_mode as OnboardingMode | null) ?? "new";
+
+    const account = await registration.findUserByTexasLogin(texasLogin);
+    const subscriptionActive = account?.id
+      ? await subscription.isActive(account.id as string)
+      : false;
+
+    const licenseAction = resolveLicenseStepAction({
+      mode: sessionMode,
+      accountExists: Boolean(account?.id),
+      accountTelegramId: account?.telegram_id != null
+        ? Number(account.telegram_id)
+        : null,
+      currentTelegramId: telegramId,
+      subscriptionActive,
+    });
 
     await sendTelegramMessage(chatId, botAr.validating);
 
     try {
-      const relinked = await registration.relinkTelegramToExistingAccount({
-        telegramId,
-        displayName: displayName(message),
-        texasLogin,
-        texasPassword,
-        licenseKey,
-      });
+      if (licenseAction.kind === "relink_active") {
+        if (step === "license" && subscriptionActive) {
+          await sendTelegramMessage(chatId, botAr.relinkNoLicenseNeeded);
+        }
+        const result = await registration.relinkTelegramToExistingAccount({
+          telegramId,
+          displayName: displayName(message),
+          texasLogin,
+          texasPassword,
+        });
+        await finishAuthSuccess(chatId, result);
+        return;
+      }
 
-      const result =
-        relinked ??
-        (await registration.completeRegistration({
+      if (licenseAction.kind === "relink_with_renewal") {
+        const result = await registration.relinkTelegramToExistingAccount({
+          telegramId,
+          displayName: displayName(message),
+          texasLogin,
+          texasPassword,
+          renewalLicenseKey: licenseKey,
+        });
+        await finishAuthSuccess(chatId, result);
+        return;
+      }
+
+      if (licenseAction.kind === "register_new") {
+        const result = await registration.completeRegistration({
           telegramId,
           displayName: displayName(message),
           texasLogin,
           texasPassword,
           licenseKey,
-        }));
+        });
+        await finishAuthSuccess(chatId, result);
+        return;
+      }
 
-      const end = new Date(result.subscriptionEndDate).toLocaleDateString(
-        "ar-SY",
-        { timeZone: process.env.LEDGER_TIMEZONE ?? "Asia/Damascus" }
-      );
-
-      await sendTelegramMessage(
-        chatId,
-        botAr.registrationComplete(end) + miniAppHint(appUrl())
-      );
+      await sendTelegramMessage(chatId, botAr.sessionInvalid);
     } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      const msg = err.message || "فشل التسجيل";
-      console.error("[onboarding] registration failed", {
+      console.error("[onboarding] auth failed", {
         telegramId,
-        error: msg,
+        step,
+        error: e instanceof Error ? e.message : String(e),
       });
-
-      if (msg.includes("LICENSE_KEY_INVALID")) {
-        await sendTelegramMessage(chatId, botAr.licenseInvalid);
-        return;
-      }
-      if (msg.includes("TELEGRAM_ALREADY_REGISTERED")) {
-        await sendTelegramMessage(chatId, botAr.telegramAlreadyRegistered);
-        return;
-      }
-      if (msg.includes("Texas sign-in failed")) {
-        let detail = "";
-        if (msg.includes("Invalid username or password")) {
-          detail = "\n\nتكساس: اسم مستخدم أو كلمة مرور غير صحيحة.";
-        } else if (msg.includes("HTTP 403")) {
-          detail = "\n\nمحظور من تكساس/Cloudflare (403).";
-        } else if (msg.includes("HTTP 401")) {
-          detail = "\n\nرفض الجلسة (401).";
-        }
-        await sendTelegramMessage(chatId, botAr.texasLoginFailed(detail));
-        await supabase
-          .from("telegram_onboarding_sessions")
-          .delete()
-          .eq("telegram_id", telegramId);
-        return;
-      }
-
-      await sendTelegramMessage(chatId, botAr.registrationFailed(msg));
+      await sendTelegramMessage(chatId, mapRegistrationError(e));
     }
   }
 }

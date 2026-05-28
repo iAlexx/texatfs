@@ -41,6 +41,13 @@ export async function POST(request: Request) {
 
     if (updErr) throw updErr;
 
+    if (before?.telegram_id != null) {
+      await supabase
+        .from("telegram_onboarding_sessions")
+        .delete()
+        .eq("telegram_id", before.telegram_id);
+    }
+
     log.info("telegram session detached", {
       userId,
       hadTelegramId: before?.telegram_id != null,

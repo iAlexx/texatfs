@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeTexasLogin } from "@/lib/auth/texas-login";
 import { getCredentialVault } from "@/lib/security/CredentialVault";
 import { TexasSessionService } from "@/lib/services/TexasSessionService";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
@@ -10,7 +11,6 @@ import {
 export interface CompleteRegistrationInput {
   telegramId: number;
   displayName: string;
-  /** Texas dashboard username or email — stored as-is (case-sensitive). */
   texasLogin: string;
   texasPassword: string;
   licenseKey: string;
@@ -20,11 +20,30 @@ export interface CompleteRegistrationResult {
   userId: string;
   subscriptionEndDate: string;
   licenseKey: string;
+  relinked?: boolean;
+}
+
+export type RegistrationErrorCode =
+  | "LICENSE_KEY_INVALID_OR_USED"
+  | "RENEWAL_LICENSE_INVALID"
+  | "TELEGRAM_ALREADY_REGISTERED"
+  | "TELEGRAM_ALREADY_LINKED_OTHER"
+  | "ACCOUNT_NOT_FOUND"
+  | "ACCOUNT_ALREADY_EXISTS"
+  | "SUBSCRIPTION_EXPIRED_NEED_RENEWAL";
+
+export class RegistrationError extends Error {
+  constructor(
+    readonly code: RegistrationErrorCode,
+    message?: string
+  ) {
+    super(message ?? code);
+    this.name = "RegistrationError";
+  }
 }
 
 /**
  * Multi-tenant SaaS registration: each Master uses their own Texas credentials.
- * Never uses TEXAS_SYNC_* env vars — only the credentials passed from onboarding.
  */
 export class RegistrationService {
   private readonly vault = getCredentialVault();
@@ -33,66 +52,30 @@ export class RegistrationService {
 
   constructor(private readonly supabase: SupabaseClient) {}
 
-  /**
-   * Re-attach Telegram after logout (telegram_id cleared). Verifies Texas creds;
-   * license must match the account's existing key or subscription must still be active.
-   */
-  async relinkTelegramToExistingAccount(input: {
-    telegramId: number;
-    displayName: string;
-    texasLogin: string;
-    texasPassword: string;
-    licenseKey: string;
-  }): Promise<CompleteRegistrationResult | null> {
-    const texasLogin = input.texasLogin.trim();
-    const licenseKey = input.licenseKey.trim().toUpperCase();
+  async findUserByTexasLogin(texasLogin: string) {
+    const normalized = normalizeTexasLogin(texasLogin);
 
-    const { data: existing, error } = await this.supabase
+    const { data, error } = await this.supabase
       .from("users")
       .select(
-        "id, telegram_id, license_key_id, subscription_end_date, texas_username"
+        "id, telegram_id, role, display_name, subscription_end_date, license_key_id, texas_username, is_active"
       )
-      .eq("texas_username", texasLogin)
+      .eq("texas_username", normalized)
       .maybeSingle();
 
     if (error) throw error;
-    if (!existing?.id) return null;
-    if (existing.telegram_id != null) {
-      throw new Error("TELEGRAM_ALREADY_REGISTERED");
-    }
+    if (data) return data;
 
-    await this.verifyTexasCredentials(texasLogin, input.texasPassword);
-
-    const licenseMatches =
-      String(existing.license_key_id ?? "").toUpperCase() === licenseKey;
-    const subscriptionActive = await this.subscription.isActive(
-      existing.id as string
-    );
-
-    if (!licenseMatches && !subscriptionActive) {
-      throw new Error("LICENSE_KEY_INVALID_OR_USED");
-    }
-
-    const { error: updErr } = await this.supabase
+    const { data: ilikeRow, error: ilikeErr } = await this.supabase
       .from("users")
-      .update({
-        telegram_id: input.telegramId,
-        display_name: input.displayName,
-      })
-      .eq("id", existing.id);
+      .select(
+        "id, telegram_id, role, display_name, subscription_end_date, license_key_id, texas_username, is_active"
+      )
+      .ilike("texas_username", normalized)
+      .maybeSingle();
 
-    if (updErr) throw updErr;
-
-    await this.supabase
-      .from("telegram_onboarding_sessions")
-      .delete()
-      .eq("telegram_id", input.telegramId);
-
-    return {
-      userId: existing.id as string,
-      subscriptionEndDate: String(existing.subscription_end_date ?? ""),
-      licenseKey: String(existing.license_key_id ?? licenseKey),
-    };
+    if (ilikeErr) throw ilikeErr;
+    return ilikeRow;
   }
 
   async findUserByTelegramId(telegramId: number) {
@@ -120,10 +103,6 @@ export class RegistrationService {
     return Boolean(data);
   }
 
-  /**
-   * Validates Texas agent account using the user's own credentials only.
-   * POST /User/signIn (result.type === 0) + POST /Agent/getAgentAllWallets.
-   */
   async verifyTexasCredentials(login: string, password: string): Promise<void> {
     await this.texasSession.verifyAgentAccount({
       username: login.trim(),
@@ -131,34 +110,163 @@ export class RegistrationService {
     });
   }
 
+  /**
+   * Re-attach Telegram to an existing account (after logout).
+   * Active subscription: no license required.
+   * Expired: requires valid unused renewal license.
+   */
+  async relinkTelegramToExistingAccount(input: {
+    telegramId: number;
+    displayName: string;
+    texasLogin: string;
+    texasPassword: string;
+    renewalLicenseKey?: string | null;
+  }): Promise<CompleteRegistrationResult> {
+    const normalizedLogin = normalizeTexasLogin(input.texasLogin);
+    const existing = await this.findUserByTexasLogin(normalizedLogin);
+
+    if (!existing?.id) {
+      console.info("[auth/relink] denied: account not found", {
+        texasLogin: normalizedLogin,
+      });
+      throw new RegistrationError("ACCOUNT_NOT_FOUND");
+    }
+
+    if (
+      existing.telegram_id != null &&
+      Number(existing.telegram_id) !== input.telegramId
+    ) {
+      console.warn("[auth/relink] denied: linked to other telegram", {
+        userId: existing.id,
+        existingTelegramId: existing.telegram_id,
+        attemptedTelegramId: input.telegramId,
+      });
+      throw new RegistrationError("TELEGRAM_ALREADY_LINKED_OTHER");
+    }
+
+    try {
+      await this.verifyTexasCredentials(input.texasLogin, input.texasPassword);
+    } catch (e) {
+      console.warn("[auth/relink] denied: Texas credentials invalid", {
+        userId: existing.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    }
+
+    const subscriptionActive = await this.subscription.isActive(
+      existing.id as string
+    );
+
+    let subscriptionEndDate = String(existing.subscription_end_date ?? "");
+    let licenseKey = String(existing.license_key_id ?? "");
+
+    if (!subscriptionActive) {
+      const renewalKey = input.renewalLicenseKey?.trim().toUpperCase() ?? "";
+      if (!renewalKey) {
+        console.info("[auth/relink] denied: subscription expired, no renewal key", {
+          userId: existing.id,
+        });
+        throw new RegistrationError("SUBSCRIPTION_EXPIRED_NEED_RENEWAL");
+      }
+
+      if (!(await this.licenseKeyAvailable(renewalKey))) {
+        console.warn("[auth/relink] denied: invalid renewal license", {
+          userId: existing.id,
+        });
+        throw new RegistrationError("RENEWAL_LICENSE_INVALID");
+      }
+
+      const { data: endDate, error: redeemError } = await this.supabase.rpc(
+        "redeem_license_key",
+        { p_key: renewalKey, p_user_id: existing.id }
+      );
+
+      if (redeemError) {
+        console.warn("[auth/relink] renewal redeem failed", {
+          userId: existing.id,
+          error: redeemError.message,
+        });
+        throw new RegistrationError("RENEWAL_LICENSE_INVALID");
+      }
+
+      subscriptionEndDate = String(endDate);
+      licenseKey = renewalKey;
+      console.info("[auth/relink] renewal license redeemed", {
+        userId: existing.id,
+        subscriptionEndDate,
+      });
+    }
+
+    const { error: updErr } = await this.supabase
+      .from("users")
+      .update({
+        telegram_id: input.telegramId,
+        display_name: input.displayName,
+        texas_username: normalizedLogin,
+      })
+      .eq("id", existing.id);
+
+    if (updErr) throw updErr;
+
+    await this.supabase
+      .from("telegram_onboarding_sessions")
+      .delete()
+      .eq("telegram_id", input.telegramId);
+
+    console.info("[auth/relink] success", {
+      userId: existing.id,
+      telegramId: input.telegramId,
+      subscriptionActive,
+    });
+
+    return {
+      userId: existing.id as string,
+      subscriptionEndDate,
+      licenseKey,
+      relinked: true,
+    };
+  }
+
+  /** New master account — fails if Texas login already registered. */
   async completeRegistration(
     input: CompleteRegistrationInput
   ): Promise<CompleteRegistrationResult> {
     const licenseKey = input.licenseKey.trim().toUpperCase();
-    const texasLogin = input.texasLogin.trim();
+    const normalizedLogin = normalizeTexasLogin(input.texasLogin);
     const texasPassword = input.texasPassword;
 
+    const existing = await this.findUserByTexasLogin(normalizedLogin);
+    if (existing?.id) {
+      console.warn("[auth/register] denied: account already exists", {
+        userId: existing.id,
+        texasLogin: normalizedLogin,
+      });
+      throw new RegistrationError(
+        "ACCOUNT_ALREADY_EXISTS",
+        "Account exists — use existing login flow"
+      );
+    }
+
     const trace = (step: string, extra?: Record<string, unknown>) => {
-      console.info("[registration] step", { step, telegramId: input.telegramId, ...extra });
+      console.info("[registration] step", {
+        step,
+        telegramId: input.telegramId,
+        ...extra,
+      });
     };
 
     try {
-      // 1) Texas credentials must work (user-specific — not env defaults)
       trace("verifyTexasCredentials.start");
-      await this.verifyTexasCredentials(texasLogin, texasPassword);
+      await this.verifyTexasCredentials(input.texasLogin, texasPassword);
       trace("verifyTexasCredentials.done");
 
-      // 2) License key must be valid and unused
       trace("licenseKeyAvailable.start", { licenseKey });
       const available = await this.licenseKeyAvailable(licenseKey);
-      trace("licenseKeyAvailable.done", { available });
       if (!available) {
-        throw new Error("LICENSE_KEY_INVALID_OR_USED");
+        throw new RegistrationError("LICENSE_KEY_INVALID_OR_USED");
       }
 
-      // users_licensed_master_chk requires subscription_end_date + license_key_id at INSERT
-      // for role=master + registered_via=telegram_bot (not only after redeem_license_key).
-      trace("licenseKey.resolve.start", { licenseKey });
       const { data: licenseRow, error: licenseRowError } = await this.supabase
         .from("license_keys")
         .select("duration_months")
@@ -167,11 +275,7 @@ export class RegistrationService {
         .single();
 
       if (licenseRowError || !licenseRow) {
-        trace("licenseKey.resolve.error", {
-          message: licenseRowError?.message,
-          code: licenseRowError?.code,
-        });
-        throw new Error("LICENSE_KEY_INVALID_OR_USED");
+        throw new RegistrationError("LICENSE_KEY_INVALID_OR_USED");
       }
 
       const { data: subscriptionEndDate, error: subEndError } =
@@ -180,21 +284,11 @@ export class RegistrationService {
         });
 
       if (subEndError || !subscriptionEndDate) {
-        trace("subscription_end_from_duration.error", {
-          message: subEndError?.message,
-          code: subEndError?.code,
-        });
         if (subEndError) throwSupabaseError(subEndError);
         throw new Error("Failed to compute subscription end date");
       }
-      trace("licenseKey.resolve.done", {
-        durationMonths: licenseRow.duration_months,
-        subscriptionEndDate,
-      });
 
-      // 3) Persist encrypted per-tenant credentials + license fields (satisfies CHECK)
-      trace("users.insert.start");
-      const loginEnc = this.vault.encrypt(texasLogin);
+      const loginEnc = this.vault.encrypt(normalizedLogin);
       const passEnc = this.vault.encrypt(texasPassword);
 
       const { data: user, error: insertError } = await this.supabase
@@ -204,7 +298,7 @@ export class RegistrationService {
           role: "master",
           parent_id: null,
           display_name: input.displayName,
-          texas_username: texasLogin,
+          texas_username: normalizedLogin,
           texas_email_encrypted: loginEnc,
           texas_password_encrypted: passEnc,
           registered_via: "telegram_bot",
@@ -216,50 +310,24 @@ export class RegistrationService {
         .single();
 
       if (insertError) {
-        trace("users.insert.error", {
-          code: insertError.code,
-          message: insertError.message,
-          details: insertError.details,
-          hint: insertError.hint,
-        });
         if (insertError.code === "23505") {
-          throw new Error("TELEGRAM_ALREADY_REGISTERED");
-        }
-        if (insertError.code === "23514") {
-          throw new Error(
-            `Database constraint ${insertError.message} — ensure license_key_id, subscription_end_date, and Texas credentials are set for telegram_bot masters.`
-          );
+          throw new RegistrationError("TELEGRAM_ALREADY_REGISTERED");
         }
         throwSupabaseError(insertError);
       }
-      trace("users.insert.done", { userId: user.id });
 
-      // 4) Redeem license → sets subscription_end_date from key duration
-      trace("redeem_license_key.start");
       const { data: endDate, error: redeemError } = await this.supabase.rpc(
         "redeem_license_key",
         { p_key: licenseKey, p_user_id: user.id }
       );
 
       if (redeemError) {
-        trace("redeem_license_key.error", {
-          code: redeemError.code,
-          message: redeemError.message,
-        });
         await this.supabase.from("users").delete().eq("id", user.id);
-        if (
-          redeemError.message?.includes("LICENSE_KEY_INVALID") ||
-          redeemError.code === "P0001"
-        ) {
-          throw new Error("LICENSE_KEY_INVALID_OR_USED");
-        }
-        throwSupabaseError(redeemError);
+        throw new RegistrationError("LICENSE_KEY_INVALID_OR_USED");
       }
-      trace("redeem_license_key.done", { endDate });
 
       const ledgerDate = new Date().toISOString().slice(0, 10);
-      trace("daily_ledgers.upsert.start");
-      const { error: ledgerError } = await this.supabase.from("daily_ledgers").upsert(
+      await this.supabase.from("daily_ledgers").upsert(
         {
           user_id: user.id,
           ledger_date: ledgerDate,
@@ -269,48 +337,29 @@ export class RegistrationService {
         },
         { onConflict: "user_id,ledger_date" }
       );
-      if (ledgerError) {
-        trace("daily_ledgers.upsert.error", { message: ledgerError.message });
-        throwSupabaseError(ledgerError);
-      }
-      trace("daily_ledgers.upsert.done");
 
-      trace("onboarding_session.delete.start");
-      const { error: sessionDeleteError } = await this.supabase
+      await this.supabase
         .from("telegram_onboarding_sessions")
         .delete()
         .eq("telegram_id", input.telegramId);
-      if (sessionDeleteError) {
-        trace("onboarding_session.delete.error", {
-          message: sessionDeleteError.message,
-        });
-        throwSupabaseError(sessionDeleteError);
-      }
-      trace("completeRegistration.done");
 
       return {
         userId: user.id,
         subscriptionEndDate: String(endDate),
         licenseKey,
+        relinked: false,
       };
     } catch (error) {
+      if (error instanceof RegistrationError) throw error;
       const err =
         error instanceof Error
           ? error
           : formatSupabaseError(
               error as { message?: string; code?: string; details?: string }
             );
-      const cause =
-        err.cause instanceof Error
-          ? err.cause.message
-          : err.cause != null
-            ? String(err.cause)
-            : undefined;
       console.error("[registration] step failed", {
         telegramId: input.telegramId,
         message: err.message,
-        cause,
-        stack: err.stack?.split("\n").slice(0, 8).join("\n"),
       });
       throw err;
     }
@@ -320,7 +369,6 @@ export class RegistrationService {
     return this.subscription.isActive(userId);
   }
 
-  /** Load this tenant's Texas credentials for sync jobs (never global env). */
   async loadTexasCredentials(userId: string): Promise<{
     username: string;
     password: string;
