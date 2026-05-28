@@ -19,9 +19,12 @@ import { useLedgerSession, todayIsoDate } from "@/hooks/use-ledger-api";
 import {
   useWhatsAppOnboardingStatus,
   useRegisterWhatsAppPhone,
+  type RegisterPhoneResult,
 } from "@/hooks/use-whatsapp-onboarding-api";
 import { useLogout } from "@/hooks/use-auth-api";
+import { useRepairTexasCredentials } from "@/hooks/use-texas-repair-api";
 import { COUNTRY_DIAL_CODES } from "@/lib/whatsapp/country-codes";
+import { WHATSAPP_USER_INIT_INSTRUCTION_AR } from "@/lib/whatsapp/onboarding-copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CircularProgress } from "@/components/ui/CircularProgress";
@@ -174,6 +177,9 @@ export function ProfilePage() {
         </Button>
       </section>
 
+      {/* ── Texas credentials repair (after logout/relogin) ───────────────── */}
+      <TexasCredentialsRepair telegramUserId={telegramUserId} />
+
       {/* ── WhatsApp Tracking System ──────────────────────────────────────── */}
       <WhatsAppTrackingInfo telegramUserId={telegramUserId} />
 
@@ -243,6 +249,94 @@ function onboardingBadge(status: string | undefined) {
   );
 }
 
+function TexasCredentialsRepair({
+  telegramUserId,
+}: {
+  telegramUserId: number | null | undefined;
+}) {
+  const statusQuery = useWhatsAppOnboardingStatus(telegramUserId);
+  const session = useLedgerSession(todayIsoDate());
+  const repair = useRepairTexasCredentials();
+  const [login, setLogin] = useState("");
+  const [password, setPassword] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const missingStored =
+    statusQuery.isSuccess && statusQuery.data?.hasTexasCredentials === false;
+  const ledgerBlocked =
+    Boolean(session.data?.user) &&
+    typeof session.error === "string" &&
+    session.error.includes("بيانات دخول تكساس");
+  const needsRepair = missingStored || ledgerBlocked;
+
+  if (!needsRepair && !open) {
+    return (
+      <section className="mt-4 glass-inner p-4">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full border-steel-border text-steel-400 text-[11px]"
+          onClick={() => setOpen(true)}
+        >
+          إعادة ربط حساب تكساس
+        </Button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5">
+      <p className="mb-2 text-sm font-semibold text-amber-400">
+        إعادة ربط حساب تكساس
+      </p>
+      <p className="mb-3 text-[11px] text-steel-400 leading-relaxed">
+        لوحة المحاسبة تحتاج بيانات دخول تكساس مخزّنة. أدخل نفس اسم المستخدم وكلمة
+        المرور من لوحة تكساس (لا يلزم مفتاح ترخيص جديد إذا كان اشتراكك فعّالاً).
+      </p>
+      <Input
+        value={login}
+        onChange={(e) => setLogin(e.target.value)}
+        placeholder="اسم المستخدم / البريد"
+        className="mb-2 border-steel-border bg-obsidian/60 text-sm"
+        autoComplete="username"
+      />
+      <Input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="كلمة مرور تكساس"
+        className="mb-3 border-steel-border bg-obsidian/60 text-sm"
+        autoComplete="current-password"
+      />
+      <Button
+        variant="gold"
+        className="w-full"
+        disabled={repair.isPending || !login.trim() || password.length < 4}
+        onClick={() => {
+          repair.mutate(
+            { texasLogin: login.trim(), texasPassword: password },
+            {
+              onSuccess: (data) => {
+                toast.success(data.message ?? "تم ربط حساب تكساس");
+                setOpen(false);
+                session.refresh();
+              },
+              onError: (e) => toast.error(e.message),
+            }
+          );
+        }}
+      >
+        {repair.isPending ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          "حفظ بيانات تكساس"
+        )}
+      </Button>
+    </section>
+  );
+}
+
 function WhatsAppTrackingInfo({
   telegramUserId,
 }: {
@@ -253,8 +347,15 @@ function WhatsAppTrackingInfo({
   const [countryCode, setCountryCode] = useState("963");
   const [localPhone, setLocalPhone] = useState("");
   const [changePhoneOpen, setChangePhoneOpen] = useState(false);
+  const [lastRegister, setLastRegister] = useState<RegisterPhoneResult | null>(
+    null
+  );
 
   const onboarding = statusQuery.data?.onboardingStatus ?? "PENDING_REGISTRATION";
+  const botConfig = statusQuery.data ?? lastRegister;
+  const activationUrl = botConfig?.whatsappActivationUrl;
+  const instructionText =
+    botConfig?.instructionText ?? WHATSAPP_USER_INIT_INSTRUCTION_AR;
   const showForm =
     onboarding === "PENDING_REGISTRATION" ||
     onboarding === "PENDING_EMOJI" ||
@@ -286,7 +387,10 @@ function WhatsAppTrackingInfo({
       <div className="space-y-4 px-5 py-4">
         <div className="rounded-xl bg-obsidian/40 px-4 py-3 ring-1 ring-white/[0.04] text-[11px] text-steel-400 leading-relaxed space-y-2">
           <p className="font-semibold text-steel-300 mb-1">كيف يعمل النظام:</p>
-          <p>📱 سجّل رقم واتسابك، ثم أرسل <strong className="text-amber-400">😎</strong> في المحادثة الخاصة مع بوت واتساب.</p>
+          <p>
+            📱 سجّل رقمك، ثم <strong className="text-amber-400">أنت</strong> ترسل أول
+            رسالة إلى البوت (😎 أو «تفعيل») — البوت لا يرسل رسالة أولى لتجنب الحظر.
+          </p>
           <p>
             ✅ في مجموعة كل وكيل: <strong className="text-emerald-400">✅90000</strong>{" "}
             (واصل منك) — رُد <strong className="text-emerald-400">1</strong> للتأكيد أو{" "}
@@ -326,13 +430,32 @@ function WhatsAppTrackingInfo({
         )}
 
         {onboarding === "PENDING_EMOJI" && (
-          <div className="rounded-xl bg-amber-500/10 px-4 py-3 ring-1 ring-amber-500/25 text-[11px] text-amber-200/90 leading-relaxed">
-            <p className="font-semibold text-amber-400 mb-1">📩 تحقق من واتساب الآن</p>
-            <p>
-              أرسلنا لك رسالة خاصة على واتساب. احفظ رقم البوت في جهات الاتصال، ثم رُد
-              على الرسالة بإرسال <strong className="text-amber-400">😎</strong> فقط
-              لتفعيل النظام وإنشاء مجموعات الوكلاء تلقائياً.
-            </p>
+          <div className="rounded-xl bg-amber-500/10 px-4 py-3 ring-1 ring-amber-500/25 text-[11px] text-amber-200/90 leading-relaxed space-y-2">
+            <p className="font-semibold text-amber-400">📩 أكمل التفعيل من واتساب</p>
+            <p className="whitespace-pre-line">{instructionText}</p>
+            {botConfig?.botWhatsappNumber && (
+              <p dir="ltr" className="font-mono text-steel-400">
+                رقم البوت: +{botConfig.botWhatsappNumber}
+              </p>
+            )}
+            {!botConfig?.botNumberConfigured && (
+              <p className="text-rose-400/90">
+                تحذير: رقم البوت غير مضبوط في الخادم (WHATSAPP_BOT_NUMBER).
+              </p>
+            )}
+            {activationUrl ? (
+              <Button
+                type="button"
+                variant="gold"
+                size="sm"
+                className="mt-2 w-full"
+                asChild
+              >
+                <a href={activationUrl} target="_blank" rel="noopener noreferrer">
+                  فتح واتساب للتفعيل
+                </a>
+              </Button>
+            ) : null}
           </div>
         )}
 
@@ -379,13 +502,10 @@ function WhatsAppTrackingInfo({
                 register.mutate(
                   { phone: localPhone.trim(), countryCode },
                   {
-                    onSuccess: () => {
+                    onSuccess: (data) => {
+                      setLastRegister(data);
                       setChangePhoneOpen(false);
-                      toast.success(
-                        changePhoneOpen && onboarding === "VERIFIED_COMPLETED"
-                          ? "تم تحديث رقم الواتساب بنجاح"
-                          : "تم إرسال رسالة التفعيل إلى واتساب"
-                      );
+                      toast.success("تم حفظ رقمك. افتح واتساب وأرسل 😎 إلى البوت.");
                     },
                     onError: (e) => {
                       toast.error(e.message);

@@ -8,12 +8,21 @@ export interface WhatsAppOnboardingStatus {
   onboardingStatus: OnboardingStatus;
   whatsappPhone: string | null;
   groupCount: number;
+  hasTexasCredentials?: boolean;
+  botWhatsappNumber?: string | null;
+  whatsappActivationUrl?: string | null;
+  instructionText?: string;
+  botNumberConfigured?: boolean;
 }
 
 export interface RegisterPhoneResult {
   success: boolean;
   phone: string;
   onboardingStatus: OnboardingStatus;
+  botWhatsappNumber?: string | null;
+  whatsappActivationUrl?: string | null;
+  instructionText?: string;
+  botNumberConfigured?: boolean;
 }
 
 async function fetchOnboardingStatus(

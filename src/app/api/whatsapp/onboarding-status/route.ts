@@ -12,6 +12,8 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { listAgentGroupsForUser } from "@/lib/whatsapp/agent-groups";
 import { getOnboardingStatusForUserId } from "@/lib/whatsapp/onboarding-users";
 import type { OnboardingStatus } from "@/lib/whatsapp/onboarding-users";
+import { resolveUserCredentials } from "@/lib/scraper/resolve-user-credentials";
+import { getWhatsAppBotConfigForClient } from "@/lib/whatsapp/bot-config";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -30,16 +32,21 @@ export async function POST(request: Request): Promise<Response> {
         onboardingStatus: "PENDING_REGISTRATION" as OnboardingStatus,
         whatsappPhone: null,
         groupCount: 0,
+        hasTexasCredentials: false,
+        ...getWhatsAppBotConfigForClient(),
       });
     }
 
     const groups = await listAgentGroupsForUser(supabase, userId);
+    const creds = await resolveUserCredentials(supabase, userId);
 
     return NextResponse.json({
       onboardingStatus: (user.onboarding_status ??
         "PENDING_REGISTRATION") as OnboardingStatus,
       whatsappPhone: user.whatsapp_phone,
       groupCount: groups.length,
+      hasTexasCredentials: creds.hasCredentials,
+      ...getWhatsAppBotConfigForClient(),
     });
   } catch (e) {
     if (e instanceof LedgerAuthError) {

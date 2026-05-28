@@ -1,13 +1,16 @@
 /**
- * Private-chat onboarding: strict 😎 handshake → verified → safe group spawn.
- *
- * All DB writes complete before WhatsApp replies or Texas/Puppeteer work.
- * Group spawning runs in an isolated background job (see group-spawn-job.ts).
+ * Private-chat onboarding: user must message the bot first (anti-spam).
+ * Accepts 😎 / تفعيل / تم / start → VERIFIED_COMPLETED → group spawn.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createLogger } from "@/lib/observability/logger";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import { jidToPhoneDigits } from "@/lib/whatsapp/phone";
+import {
+  isWhatsAppActivationMessage,
+  WHATSAPP_ACTIVATION_HINT_AR,
+  WHATSAPP_VERIFIED_REPLY_AR,
+} from "@/lib/whatsapp/activation-message";
 import {
   getUserByWhatsAppPhone,
   setOnboardingStatus,
@@ -16,20 +19,6 @@ import { scheduleGroupSpawnJob } from "@/lib/whatsapp/group-spawn-job";
 import type { WhatsAppPrivateMessage } from "@/lib/whatsapp/webhook-types";
 
 const log = createLogger("whatsapp/onboarding");
-
-const VERIFY_EMOJI = "\u{1F60E}";
-
-const REMINDER_DM =
-  "⚠️ عذراً يا غالي، يرجى إرسال  ( 😎 ) فقط لتفعيل النظام وبدء إنشاء المجموعات تلقائياً.";
-
-const VERIFIED_DM =
-  "✅ تم التحقق بنجاح تام! جاري الآن تهيئة وإنشاء مجموعات التتبع الخاصة بوكلائك أوتوماتيكياً بأمان وبشكل تدريجي...";
-
-function containsVerifyEmoji(text: string): boolean {
-  if (!text) return false;
-  if (text.trim() === VERIFY_EMOJI) return true;
-  return text.includes(VERIFY_EMOJI);
-}
 
 function sendDmInBackground(chatId: string, text: string, label: string): void {
   void sendWhatsAppMessage(chatId, text).catch((e) => {
@@ -49,7 +38,6 @@ export async function handleWhatsAppOnboardingPrivate(
   msg: WhatsAppPrivateMessage
 ): Promise<boolean> {
   try {
-    // WASenderAPI provides cleanedSenderPn directly; fall back to JID parsing
     const phoneDigits = msg.senderPhone ?? jidToPhoneDigits(msg.chatId);
     if (!phoneDigits) {
       log.warn("could not extract phone digits", {
@@ -63,21 +51,15 @@ export async function handleWhatsAppOnboardingPrivate(
       phone: phoneDigits.slice(-4),
       text: msg.text.slice(0, 20),
       messageId: msg.messageId,
-      chatIdSuffix: msg.chatId.split("@")[1] ?? "unknown",
-      usedCleanedPn: !!msg.senderPhone,
     });
 
     const user = await getUserByWhatsAppPhone(supabase, phoneDigits);
     if (!user) {
-      log.info("no user found for phone", { phone: phoneDigits.slice(-4) });
+      log.info("no user found for phone — ignored", {
+        phone: phoneDigits.slice(-4),
+      });
       return false;
     }
-
-    log.info("user found", {
-      userId: user.id,
-      onboardingStatus: user.onboarding_status,
-      hasPhone: !!user.whatsapp_phone,
-    });
 
     if (user.onboarding_status !== "PENDING_EMOJI") {
       log.info("user not in PENDING_EMOJI state, ignoring", {
@@ -87,29 +69,29 @@ export async function handleWhatsAppOnboardingPrivate(
       return false;
     }
 
-    if (!containsVerifyEmoji(msg.text)) {
-      log.info("message does not contain 😎, sending reminder", {
+    if (!isWhatsAppActivationMessage(msg.text)) {
+      log.info("activation text not matched, sending hint", {
         userId: user.id,
         text: msg.text.slice(0, 30),
       });
-      sendDmInBackground(msg.chatId, REMINDER_DM, "reminder reply");
+      sendDmInBackground(msg.chatId, WHATSAPP_ACTIVATION_HINT_AR, "activation-hint");
       return true;
     }
 
-    log.info("😎 emoji verified, updating status", { userId: user.id });
+    log.info("WhatsApp activation verified", { userId: user.id });
 
     await setOnboardingStatus(supabase, user.id, "VERIFIED_COMPLETED");
 
-    log.info("onboarding status set to VERIFIED_COMPLETED", { userId: user.id });
-
-    sendDmInBackground(msg.chatId, VERIFIED_DM, "verification reply");
+    sendDmInBackground(msg.chatId, WHATSAPP_VERIFIED_REPLY_AR, "verification-reply");
 
     if (!user.whatsapp_phone) {
       log.error("user missing whatsapp_phone after match", { userId: user.id });
       return true;
     }
 
-    log.info("scheduling group spawn", { userId: user.id });
+    log.info("scheduling group spawn after user-initiated verification", {
+      userId: user.id,
+    });
     scheduleGroupSpawnJob(supabase, user.id, user.whatsapp_phone);
 
     return true;

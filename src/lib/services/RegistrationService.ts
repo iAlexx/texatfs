@@ -7,6 +7,7 @@ import {
   formatSupabaseError,
   throwSupabaseError,
 } from "@/lib/utils/supabase-error";
+import { resolveUserCredentials } from "@/lib/scraper/resolve-user-credentials";
 
 export interface CompleteRegistrationInput {
   telegramId: number;
@@ -49,9 +50,11 @@ export class RegistrationError extends Error {
 export class RegistrationService {
   private readonly vault = getCredentialVault();
   private readonly texasSession = new TexasSessionService();
-  private readonly subscription = new SubscriptionService();
+  private readonly subscription: SubscriptionService;
 
-  constructor(private readonly supabase: SupabaseClient) {}
+  constructor(private readonly supabase: SupabaseClient) {
+    this.subscription = new SubscriptionService(supabase);
+  }
 
   async findUserByTexasLogin(texasLogin: string) {
     const normalized = normalizeTexasLogin(texasLogin);
@@ -245,6 +248,8 @@ export class RegistrationService {
       texasUsername: normalizedLogin,
     });
 
+    await this.verifyStoredTexasCredentials(existing.id as string);
+
     await this.supabase
       .from("telegram_onboarding_sessions")
       .delete()
@@ -404,6 +409,61 @@ export class RegistrationService {
 
   async isSubscriptionActive(userId: string): Promise<boolean> {
     return this.subscription.isActive(userId);
+  }
+
+  /** Verify encrypted credentials are readable after relink/repair. */
+  async verifyStoredTexasCredentials(userId: string): Promise<void> {
+    const creds = await resolveUserCredentials(this.supabase, userId);
+    if (!creds.hasCredentials) {
+      console.error("[auth/relink] credential repair verification failed", {
+        userId,
+      });
+      throw new Error("CREDENTIAL_REPAIR_FAILED");
+    }
+    console.info("[auth/relink] credential repair verified", {
+      userId,
+      texasUsername: creds.texas_username,
+    });
+  }
+
+  /**
+   * Repair missing Texas credentials for a logged-in user (no new license).
+   */
+  async repairTexasCredentialsForUser(
+    userId: string,
+    texasLogin: string,
+    texasPassword: string
+  ): Promise<void> {
+    const active = await this.subscription.isActive(userId);
+    if (!active) {
+      throw new RegistrationError("SUBSCRIPTION_EXPIRED_NEED_RENEWAL");
+    }
+
+    await this.verifyTexasCredentials(texasLogin, texasPassword);
+
+    const normalizedLogin = normalizeTexasLogin(texasLogin);
+    const texasCreds = this.encryptTexasCredentials(
+      normalizedLogin,
+      texasPassword
+    );
+
+    const { error } = await this.supabase
+      .from("users")
+      .update({
+        texas_username: normalizedLogin,
+        ...texasCreds,
+        is_active: true,
+      })
+      .eq("id", userId);
+
+    if (error) throw error;
+
+    console.info("[auth/relink] Texas credentials re-saved for mini-app", {
+      userId,
+      texasUsername: normalizedLogin,
+    });
+
+    await this.verifyStoredTexasCredentials(userId);
   }
 
   async loadTexasCredentials(userId: string): Promise<{
