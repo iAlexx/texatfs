@@ -17,8 +17,10 @@ import {
 import type { UserScopeContext } from "@/lib/security/user-context";
 import {
   auditDirectChildVisibility,
+  filterOutViewerSelfChildren,
   mergeDirectChildrenWithTexas,
   type DirectChildDbRow,
+  type ViewerIdentity,
 } from "@/lib/texas/sub-agents-direct-merge";
 import {
   deactivateTexasChildrenRemovedFromPortal,
@@ -28,7 +30,10 @@ import {
 import { collectTexasChildrenForDbLink } from "@/lib/texas/texas-portal-hierarchy";
 import { resolveViewerTexasAffiliateId } from "@/lib/texas/resolve-viewer-affiliate";
 import { normalizeAffiliateId } from "@/lib/texas/sub-agents-direct-merge";
-import { scheduleGroupSpawnJob } from "@/lib/whatsapp/group-spawn-job";
+import {
+  probeWhatsAppMigrations,
+  scheduleMissingGroupsForParent,
+} from "@/lib/whatsapp/schedule-missing-groups";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -241,42 +246,42 @@ export async function POST(request: Request) {
     );
     linkResult.repaired = repaired;
 
-    // 3.5) Auto-create WhatsApp groups for newly linked direct agents
-    if (linkResult.createdItems.length) {
-      const { data: parentRow } = await supabase
-        .from("users")
-        .select("whatsapp_phone")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const masterPhoneDigits = parentRow?.whatsapp_phone ?? null;
-      if (masterPhoneDigits) {
-        scheduleGroupSpawnJob(
-          supabase,
-          user.id,
-          masterPhoneDigits,
-          linkResult.createdItems.map((it) => ({
-            affiliateId: it.affiliateId,
-            displayName: it.displayName,
-            username: it.username,
-          }))
-        );
-      } else {
-        console.info(
-          "[sub-agents] WhatsApp group auto-create skipped (missing whatsapp_phone)",
-          { viewerId: user.id, createdCount: linkResult.createdItems.length }
-        );
-      }
-    }
-
     const deactivated = await deactivateTexasChildrenRemovedFromPortal(
       supabase,
       user.id,
       texasAffiliateIdsInPortal
     );
 
-    // 4) Visibility: DB direct children only
-    const dbChildren = await loadDirectChildren(supabase, user.id);
+    // 4) Visibility: DB direct children only (exclude viewer's own row)
+    const dbChildrenRaw = await loadDirectChildren(supabase, user.id);
+
+    const viewerIdentity: ViewerIdentity = {
+      userId: user.id,
+      texasAffiliateId: viewerAffiliateId ?? creds.texas_affiliate_id ?? null,
+      texasUsername:
+        creds.texas_username ?? creds.username ?? user.texas_username ?? null,
+      displayName: user.display_name ?? null,
+      email: creds.texas_username ?? creds.username ?? user.texas_username ?? null,
+    };
+
+    const dbChildren = filterOutViewerSelfChildren(dbChildrenRaw, viewerIdentity);
+    const excludedViewerSelf = dbChildrenRaw.length - dbChildren.length;
+
+    const { data: parentRow } = await supabase
+      .from("users")
+      .select("whatsapp_phone")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const whatsappSchedule = await scheduleMissingGroupsForParent(
+      supabase,
+      user.id,
+      parentRow?.whatsapp_phone ?? null,
+      dbChildren,
+      "sub-agents"
+    );
+
+    const migrationProbe = await probeWhatsAppMigrations(supabase);
 
     // 5) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
     const { agents: mergedAgents, stats, diagnostics } = mergeDirectChildrenWithTexas(
@@ -297,6 +302,17 @@ export async function POST(request: Request) {
       fetched_at: texasPayload.fetched_at,
       agents: enrichedAgents,
       stats,
+      whatsapp_groups: {
+        dbDirectChildren: whatsappSchedule.dbDirectChildren,
+        activeGroupMappings: whatsappSchedule.activeGroupMappings,
+        missingGroupTargets: whatsappSchedule.missingGroupTargets,
+        scheduledGroupSpawn: whatsappSchedule.scheduled
+          ? whatsappSchedule.scheduledCount
+          : 0,
+        skipReason: whatsappSchedule.skipReason,
+        envOk: whatsappSchedule.env.ok,
+        migrationsOk: migrationProbe.ok,
+      },
     };
 
     console.info("[sub-agents] visibility merge", {
@@ -312,6 +328,16 @@ export async function POST(request: Request) {
       linkableForDb: linkableRefs.length,
       deactivatedFromPortal: deactivated,
       linkResult,
+      excludedViewerSelf,
+      whatsappDbDirectChildren: whatsappSchedule.dbDirectChildren,
+      whatsappActiveGroupMappings: whatsappSchedule.activeGroupMappings,
+      whatsappMissingGroupTargets: whatsappSchedule.missingGroupTargets,
+      scheduledGroupSpawn: whatsappSchedule.scheduled
+        ? whatsappSchedule.scheduledCount
+        : 0,
+      whatsappSkipReason: whatsappSchedule.skipReason,
+      whatsappEnvOk: whatsappSchedule.env.ok,
+      whatsappMigrationsOk: migrationProbe.ok,
       ...diagnostics,
       directChildrenReturned: payload.agents.length,
       renderedEnriched: payload.agents.filter((a) => a.has_live_texas_data).length,

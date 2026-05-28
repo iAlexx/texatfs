@@ -67,6 +67,21 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
 
   log.info("agent ledger dispatch start", { ledgerDate, totalGroups });
 
+  if (totalGroups === 0) {
+    log.warn(
+      "no WhatsApp groups to dispatch: zero active bot groups (⚜️ prefix). Run group backfill or open Sub-Agents so missing groups are scheduled.",
+      { ledgerDate, totalGroups }
+    );
+    return {
+      ledgerDate,
+      totalGroups: 0,
+      attempted: 0,
+      sent: 0,
+      skippedDedup: 0,
+      failed: 0,
+    };
+  }
+
   for (let i = 0; i < groupRows.length; i++) {
     const g = groupRows[i]!;
 

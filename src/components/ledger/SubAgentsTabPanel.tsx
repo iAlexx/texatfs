@@ -247,9 +247,6 @@ function AgentRow({
           <p className="truncate text-[12px] font-bold text-foreground">
             {agent.username}
           </p>
-          {agent.email !== agent.username && (
-            <p className="truncate text-[9px] text-steel-600">{agent.email}</p>
-          )}
           {!hasLiveData ? (
             <span className="mt-0.5 inline-block rounded bg-steel-800/80 px-1.5 py-px text-[8px] text-steel-400">
               {ar.noLiveTexasData}

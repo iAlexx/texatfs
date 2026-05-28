@@ -52,6 +52,16 @@ export interface TexasSubAgentsPayload {
     combined_balance: number;
     highest_burn_agent: { affiliateId: string; label: string; al_harq: number } | null;
   };
+  /** Server diagnostics for WhatsApp group auto-create (not used by UI). */
+  whatsapp_groups?: {
+    dbDirectChildren: number;
+    activeGroupMappings: number;
+    missingGroupTargets: number;
+    scheduledGroupSpawn: number;
+    skipReason: string | null;
+    envOk: boolean;
+    migrationsOk: boolean;
+  };
 }
 
 /** Live fetch result — portal direct children are separate from stats-only rows */

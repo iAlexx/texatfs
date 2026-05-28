@@ -2,8 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   auditDirectChildVisibility,
+  filterOutViewerSelfChildren,
+  isDirectChildViewerSelf,
   mergeDirectChildrenWithTexas,
   type DirectChildDbRow,
+  type ViewerIdentity,
 } from "@/lib/texas/sub-agents-direct-merge";
 import type { TexasSubAgentsPayload } from "@/lib/texas/texas-live-sub-agents";
 
@@ -48,6 +51,65 @@ function emptyTexasPayload(agents: ReturnType<typeof texasAgent>[]): TexasSubAge
     },
   };
 }
+
+describe("filterOutViewerSelfChildren", () => {
+  const viewer: ViewerIdentity = {
+    userId: "master-1",
+    texasAffiliateId: "aff-master",
+    texasUsername: "master@test",
+    displayName: "Master Name",
+    email: "master@test",
+  };
+
+  it("drops row matching viewer user id", () => {
+    const self: DirectChildDbRow = {
+      id: "master-1",
+      texas_affiliate_id: "aff-other",
+      display_name: "Ghost",
+      texas_username: "ghost@test",
+      role: "agent",
+      is_active: true,
+    };
+    assert.equal(isDirectChildViewerSelf(self, viewer), true);
+    assert.equal(filterOutViewerSelfChildren([self], viewer).length, 0);
+  });
+
+  it("drops row matching viewer texas affiliate id", () => {
+    const self: DirectChildDbRow = {
+      id: "dup-user",
+      texas_affiliate_id: "aff-master",
+      display_name: "Dup",
+      texas_username: "dup@test",
+      role: "agent",
+      is_active: true,
+    };
+    assert.equal(filterOutViewerSelfChildren([self], viewer).length, 0);
+  });
+
+  it("drops row matching viewer texas username", () => {
+    const self: DirectChildDbRow = {
+      id: "dup-user-2",
+      texas_affiliate_id: "aff-x",
+      display_name: null,
+      texas_username: "master@test",
+      role: "agent",
+      is_active: true,
+    };
+    assert.equal(filterOutViewerSelfChildren([self], viewer).length, 0);
+  });
+
+  it("keeps unrelated direct children", () => {
+    const child: DirectChildDbRow = {
+      id: "child-1",
+      texas_affiliate_id: "aff-child",
+      display_name: "Child",
+      texas_username: "child@test",
+      role: "agent",
+      is_active: true,
+    };
+    assert.equal(filterOutViewerSelfChildren([child], viewer).length, 1);
+  });
+});
 
 describe("mergeDirectChildrenWithTexas — A -> B -> C, D stub", () => {
   const viewerA = "user-a";

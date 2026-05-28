@@ -66,6 +66,48 @@ function normalizeLogin(value: string | null | undefined): string {
   return value.trim().toLowerCase();
 }
 
+export interface ViewerIdentity {
+  userId: string;
+  texasAffiliateId: string | null;
+  texasUsername: string | null;
+  displayName: string | null;
+  email?: string | null;
+}
+
+/** True when a DB direct-child row is the viewer's own account (must not appear in Sub-Agents). */
+export function isDirectChildViewerSelf(
+  child: DirectChildDbRow,
+  viewer: ViewerIdentity
+): boolean {
+  if (child.id === viewer.userId) return true;
+
+  const childAid = normalizeAffiliateId(child.texas_affiliate_id);
+  const viewerAid = normalizeAffiliateId(viewer.texasAffiliateId);
+  if (childAid && viewerAid && childAid === viewerAid) return true;
+
+  const viewerLogins = new Set(
+    [
+      normalizeLogin(viewer.texasUsername),
+      normalizeLogin(viewer.displayName),
+      normalizeLogin(viewer.email),
+    ].filter(Boolean)
+  );
+
+  const childLogins = [
+    normalizeLogin(child.texas_username),
+    normalizeLogin(child.display_name),
+  ].filter(Boolean);
+
+  return childLogins.some((login) => viewerLogins.has(login));
+}
+
+export function filterOutViewerSelfChildren(
+  dbChildren: DirectChildDbRow[],
+  viewer: ViewerIdentity
+): DirectChildDbRow[] {
+  return dbChildren.filter((child) => !isDirectChildViewerSelf(child, viewer));
+}
+
 /**
  * Match DB child to Texas enrichment by affiliateId, then by texas_username/email.
  */
@@ -177,9 +219,12 @@ export function mergeDirectChildrenWithTexas(
 
     if (texasRow && matchedAid) {
       matchedTexasIds.add(matchedAid);
+      const displayLabel = resolveChildLabel(dbChild);
       agents.push({
         ...texasRow,
         user_id: dbChild.id,
+        username: displayLabel,
+        email: texasRow.email,
         has_live_texas_data: true,
       });
     } else {

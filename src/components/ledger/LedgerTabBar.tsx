@@ -10,13 +10,16 @@ export function LedgerTabBar({
   active,
   onChange,
   showAgentsTab,
+  hideAccountTab = false,
 }: {
   active: LedgerTabId;
   onChange: (tab: LedgerTabId) => void;
   showAgentsTab: boolean;
+  /** Hide "حسابي" when master workflow focuses on sub-agents (account still reachable via agent drill-down / history). */
+  hideAccountTab?: boolean;
 }) {
   const tabs: { id: LedgerTabId; label: string }[] = [
-    { id: "account", label: ar.tabMyAccount },
+    ...(!hideAccountTab ? [{ id: "account" as const, label: ar.tabMyAccount }] : []),
     ...(showAgentsTab
       ? [{ id: "agents" as const, label: ar.tabSubAgents }]
       : []),
