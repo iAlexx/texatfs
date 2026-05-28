@@ -185,13 +185,23 @@ export async function handleOnboardingMessage(
     await sendTelegramMessage(chatId, botAr.validating);
 
     try {
-      const result = await registration.completeRegistration({
+      const relinked = await registration.relinkTelegramToExistingAccount({
         telegramId,
         displayName: displayName(message),
         texasLogin,
         texasPassword,
         licenseKey,
       });
+
+      const result =
+        relinked ??
+        (await registration.completeRegistration({
+          telegramId,
+          displayName: displayName(message),
+          texasLogin,
+          texasPassword,
+          licenseKey,
+        }));
 
       const end = new Date(result.subscriptionEndDate).toLocaleDateString(
         "ar-SY",

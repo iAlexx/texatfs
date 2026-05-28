@@ -88,6 +88,22 @@ export async function loadReportRenderData(
     baqiQadimFixedCarry: prevCarry,
   });
 
+  const monthKey = ledgerDate.slice(0, 7);
+  const { data: commissionRow } = await supabase
+    .from("monthly_agent_commissions")
+    .select(
+      "month_key, burn_amount, percent, commission_amount, final_before_commission, final_after_commission, status"
+    )
+    .eq("agent_user_id", userId)
+    .eq("month_key", monthKey)
+    .maybeSingle();
+
+  const displayAlNihai =
+    commissionRow?.status === "completed" &&
+    commissionRow.final_after_commission != null
+      ? Number(commissionRow.final_after_commission)
+      : mtdView.alNihaiMtd;
+
   return {
     ledger: {
       id: ledger.id,
@@ -100,7 +116,7 @@ export async function loadReportRenderData(
       wasel_menho: mtdView.waselMenhoMtd,
       wasel_eleih: mtdView.waselEleihMtd,
       baqi_qadim: mtdView.baqiQadimMtd,
-      al_nihai: mtdView.alNihaiMtd,
+      al_nihai: displayAlNihai,
       discrepancy_flag: mtdView.discrepancyFlag,
     },
     user: {
@@ -108,5 +124,27 @@ export async function loadReportRenderData(
       texas_username: user.texas_username,
       role: user.role,
     },
+    monthly_commission: commissionRow
+      ? {
+          month_key: String(commissionRow.month_key),
+          burn_amount: Number(commissionRow.burn_amount),
+          percent:
+            commissionRow.percent != null
+              ? Number(commissionRow.percent)
+              : null,
+          commission_amount:
+            commissionRow.commission_amount != null
+              ? Number(commissionRow.commission_amount)
+              : null,
+          final_before_commission: Number(
+            commissionRow.final_before_commission
+          ),
+          final_after_commission:
+            commissionRow.final_after_commission != null
+              ? Number(commissionRow.final_after_commission)
+              : null,
+          status: String(commissionRow.status),
+        }
+      : undefined,
   };
 }

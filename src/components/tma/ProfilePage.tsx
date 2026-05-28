@@ -5,6 +5,7 @@ import {
   Gift,
   KeyRound,
   Loader2,
+  LogOut,
   MessageCircle,
   Shield,
   User,
@@ -19,6 +20,8 @@ import {
   useWhatsAppOnboardingStatus,
   useRegisterWhatsAppPhone,
 } from "@/hooks/use-whatsapp-onboarding-api";
+import { useLogout } from "@/hooks/use-auth-api";
+import { COUNTRY_DIAL_CODES } from "@/lib/whatsapp/country-codes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CircularProgress } from "@/components/ui/CircularProgress";
@@ -173,21 +176,49 @@ export function ProfilePage() {
 
       {/* ── WhatsApp Tracking System ──────────────────────────────────────── */}
       <WhatsAppTrackingInfo telegramUserId={telegramUserId} />
+
+      <LogoutSection />
     </div>
+  );
+}
+
+function LogoutSection() {
+  const logout = useLogout();
+
+  return (
+    <section className="mt-4 glass-inner p-5">
+      <Button
+        variant="outline"
+        className="w-full gap-2 border-steel-border text-steel-300"
+        disabled={logout.isPending}
+        onClick={() => {
+          logout.mutate(undefined, {
+            onSuccess: () => {
+              toast.success(
+                "تم تسجيل الخروج. الاشتراك والبيانات محفوظة — سجّل الدخول من البوت للعودة."
+              );
+            },
+            onError: (e) => toast.error(e.message),
+          });
+        }}
+      >
+        {logout.isPending ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <LogOut className="h-4 w-4" />
+        )}
+        تسجيل الخروج
+      </Button>
+    </section>
   );
 }
 
 /* ── WhatsAppTrackingInfo ──────────────────────────────────────────────────── */
 
-const COUNTRY_CODES = [
-  { code: "963", label: "🇸🇾 +963" },
-  { code: "961", label: "🇱🇧 +961" },
-  { code: "962", label: "🇯🇴 +962" },
-  { code: "964", label: "🇮🇶 +964" },
-  { code: "966", label: "🇸🇦 +966" },
-  { code: "971", label: "🇦🇪 +971" },
-  { code: "90", label: "🇹🇷 +90" },
-];
+const COUNTRY_OPTIONS = COUNTRY_DIAL_CODES.map((c) => ({
+  code: c.code,
+  label: `+${c.code} ${c.labelAr}`,
+}));
 
 function onboardingBadge(status: string | undefined) {
   if (status === "VERIFIED_COMPLETED") {
@@ -221,10 +252,13 @@ function WhatsAppTrackingInfo({
   const register = useRegisterWhatsAppPhone();
   const [countryCode, setCountryCode] = useState("963");
   const [localPhone, setLocalPhone] = useState("");
+  const [changePhoneOpen, setChangePhoneOpen] = useState(false);
 
   const onboarding = statusQuery.data?.onboardingStatus ?? "PENDING_REGISTRATION";
   const showForm =
-    onboarding === "PENDING_REGISTRATION" || onboarding === "PENDING_EMOJI";
+    onboarding === "PENDING_REGISTRATION" ||
+    onboarding === "PENDING_EMOJI" ||
+    changePhoneOpen;
 
   return (
     <motion.section
@@ -265,7 +299,7 @@ function WhatsAppTrackingInfo({
           </p>
         </div>
 
-        {onboarding === "VERIFIED_COMPLETED" && (
+        {onboarding === "VERIFIED_COMPLETED" && !changePhoneOpen && (
           <div className="rounded-xl bg-emerald-500/10 px-4 py-3 ring-1 ring-emerald-500/25 text-[11px] text-emerald-300/90 space-y-1">
             <p className="font-semibold text-emerald-400">✅ الحساب مفعّل بالكامل</p>
             {statusQuery.data?.whatsappPhone && (
@@ -279,6 +313,15 @@ function WhatsAppTrackingInfo({
                 {statusQuery.data?.groupCount ?? 0}
               </strong>
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 w-full border-emerald-500/30 text-emerald-300"
+              onClick={() => setChangePhoneOpen(true)}
+            >
+              تغيير رقم الواتساب
+            </Button>
           </div>
         )}
 
@@ -305,7 +348,7 @@ function WhatsAppTrackingInfo({
                 disabled={register.isPending || onboarding === "PENDING_EMOJI"}
                 className="h-11 min-w-[7rem] rounded-xl border border-steel-border bg-obsidian/60 px-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-emerald-500/40"
               >
-                {COUNTRY_CODES.map((c) => (
+                {COUNTRY_OPTIONS.map((c) => (
                   <option key={c.code} value={c.code}>
                     {c.label}
                   </option>
@@ -337,7 +380,12 @@ function WhatsAppTrackingInfo({
                   { phone: localPhone.trim(), countryCode },
                   {
                     onSuccess: () => {
-                      toast.success("تم إرسال رسالة التفعيل إلى واتساب");
+                      setChangePhoneOpen(false);
+                      toast.success(
+                        changePhoneOpen && onboarding === "VERIFIED_COMPLETED"
+                          ? "تم تحديث رقم الواتساب بنجاح"
+                          : "تم إرسال رسالة التفعيل إلى واتساب"
+                      );
                     },
                     onError: (e) => {
                       toast.error(e.message);

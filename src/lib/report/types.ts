@@ -18,4 +18,13 @@ export interface ReportRenderData {
     texas_username: string | null;
     role: string;
   };
+  monthly_commission?: {
+    month_key: string;
+    burn_amount: number;
+    percent: number | null;
+    commission_amount: number | null;
+    final_before_commission: number;
+    final_after_commission: number | null;
+    status: string;
+  };
 }

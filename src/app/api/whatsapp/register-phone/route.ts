@@ -9,8 +9,7 @@ import { parseRegisterPhoneBody } from "@/lib/validation/onboarding";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import {
-  normalizePhoneDigits,
-  isValidPhoneDigits,
+  normalizeWhatsAppPhone,
   phoneToWhatsAppJid,
 } from "@/lib/whatsapp/phone";
 import { setUserWhatsAppPhone } from "@/lib/whatsapp/onboarding-users";
@@ -46,23 +45,19 @@ export async function POST(request: Request) {
 
     const { userId } = await resolveLedgerUserIdOnly(parsed.data);
 
-    const rawPhone = parsed.data.phone;
-    const cc = normalizePhoneDigits(String(parsed.data.countryCode ?? "963"));
-    let digits = normalizePhoneDigits(rawPhone);
+    const normalized = normalizeWhatsAppPhone(
+      String(parsed.data.countryCode ?? "963"),
+      parsed.data.phone
+    );
 
-    if (digits.startsWith("0")) {
-      digits = digits.replace(/^0+/, "");
-    }
-    if (!digits.startsWith(cc) && digits.length <= 10) {
-      digits = cc + digits;
-    }
-
-    if (!isValidPhoneDigits(digits)) {
+    if (!normalized.valid) {
       return NextResponse.json(
         { error: "رقم الهاتف غير صالح. تأكد من إدخال الرقم مع رمز الدولة." },
         { status: 400 }
       );
     }
+
+    const digits = normalized.digits;
 
     const supabase = getSupabaseServiceClient();
 

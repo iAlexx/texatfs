@@ -236,6 +236,23 @@ export function renderReportHtml(data: ReportRenderData): string {
         ${gridCell(ar.waselEleih, formatMoney(ledger.wasel_eleih))}
         ${gridCell(ar.baqiQadim, formatMoney(ledger.baqi_qadim))}
       </section>
+      ${
+        data.monthly_commission
+          ? `<section class="grid" style="margin-top:16px">
+        <div class="cell" style="grid-column:1/-1"><span class="cell-label">نسبة حرق الشهر</span><span class="cell-value">${escapeHtml(
+          data.monthly_commission.percent != null
+            ? `${data.monthly_commission.percent}%`
+            : "—"
+        )}</span></div>
+        <div class="cell"><span class="cell-label">حرق اللوحة</span><span class="cell-value">${escapeHtml(formatMoney(data.monthly_commission.burn_amount))}</span></div>
+        <div class="cell"><span class="cell-label">قيمة النسبة</span><span class="cell-value">${escapeHtml(
+          data.monthly_commission.commission_amount != null
+            ? formatMoney(data.monthly_commission.commission_amount)
+            : "—"
+        )}</span></div>
+      </section>`
+          : ""
+      }
       <footer class="footer">${escapeHtml(ar.dailySummary)} · TEXAS FUNDS calculate</footer>
     </div>
   </article>

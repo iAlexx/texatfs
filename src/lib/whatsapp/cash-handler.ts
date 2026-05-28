@@ -116,6 +116,15 @@ export async function handleWhatsAppCashEvent(
       if (handled) return true;
     }
 
+    const { handleWhatsAppCommissionReply } = await import(
+      "@/lib/whatsapp/commission-handler"
+    );
+    const commissionHandled = await handleWhatsAppCommissionReply(
+      supabase,
+      msg
+    );
+    if (commissionHandled) return true;
+
     // Phase 1: trigger (✅/🛑 + amount)
     const trigger = parseTrigger(msg.text);
     if (trigger) {

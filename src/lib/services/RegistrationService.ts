@@ -33,6 +33,68 @@ export class RegistrationService {
 
   constructor(private readonly supabase: SupabaseClient) {}
 
+  /**
+   * Re-attach Telegram after logout (telegram_id cleared). Verifies Texas creds;
+   * license must match the account's existing key or subscription must still be active.
+   */
+  async relinkTelegramToExistingAccount(input: {
+    telegramId: number;
+    displayName: string;
+    texasLogin: string;
+    texasPassword: string;
+    licenseKey: string;
+  }): Promise<CompleteRegistrationResult | null> {
+    const texasLogin = input.texasLogin.trim();
+    const licenseKey = input.licenseKey.trim().toUpperCase();
+
+    const { data: existing, error } = await this.supabase
+      .from("users")
+      .select(
+        "id, telegram_id, license_key_id, subscription_end_date, texas_username"
+      )
+      .eq("texas_username", texasLogin)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!existing?.id) return null;
+    if (existing.telegram_id != null) {
+      throw new Error("TELEGRAM_ALREADY_REGISTERED");
+    }
+
+    await this.verifyTexasCredentials(texasLogin, input.texasPassword);
+
+    const licenseMatches =
+      String(existing.license_key_id ?? "").toUpperCase() === licenseKey;
+    const subscriptionActive = await this.subscription.isActive(
+      existing.id as string
+    );
+
+    if (!licenseMatches && !subscriptionActive) {
+      throw new Error("LICENSE_KEY_INVALID_OR_USED");
+    }
+
+    const { error: updErr } = await this.supabase
+      .from("users")
+      .update({
+        telegram_id: input.telegramId,
+        display_name: input.displayName,
+      })
+      .eq("id", existing.id);
+
+    if (updErr) throw updErr;
+
+    await this.supabase
+      .from("telegram_onboarding_sessions")
+      .delete()
+      .eq("telegram_id", input.telegramId);
+
+    return {
+      userId: existing.id as string,
+      subscriptionEndDate: String(existing.subscription_end_date ?? ""),
+      licenseKey: String(existing.license_key_id ?? licenseKey),
+    };
+  }
+
   async findUserByTelegramId(telegramId: number) {
     const { data, error } = await this.supabase
       .from("users")
