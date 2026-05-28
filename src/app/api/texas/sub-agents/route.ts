@@ -34,6 +34,13 @@ import {
   probeWhatsAppMigrations,
   scheduleMissingGroupsForParent,
 } from "@/lib/whatsapp/schedule-missing-groups";
+import {
+  maskTexasUsername,
+  messageForSubAgentsEmptyReason,
+  resolveSubAgentsEmptyReason,
+  type SubAgentsDiagnostics,
+} from "@/lib/texas/sub-agents-empty-reason";
+import { resolveUserCredentials } from "@/lib/scraper/resolve-user-credentials";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -253,7 +260,7 @@ export async function POST(request: Request) {
     );
 
     // 4) Visibility: DB direct children only (exclude viewer's own row)
-    const dbChildrenRaw = await loadDirectChildren(supabase, user.id);
+    let dbChildrenRaw = await loadDirectChildren(supabase, user.id);
 
     const viewerIdentity: ViewerIdentity = {
       userId: user.id,
@@ -261,11 +268,20 @@ export async function POST(request: Request) {
       texasUsername:
         creds.texas_username ?? creds.username ?? user.texas_username ?? null,
       displayName: user.display_name ?? null,
-      email: creds.texas_username ?? creds.username ?? user.texas_username ?? null,
     };
 
-    const dbChildren = filterOutViewerSelfChildren(dbChildrenRaw, viewerIdentity);
-    const excludedViewerSelf = dbChildrenRaw.length - dbChildren.length;
+    let dbChildren = filterOutViewerSelfChildren(dbChildrenRaw, viewerIdentity);
+    let excludedViewerSelf = dbChildrenRaw.length - dbChildren.length;
+
+    if (dbChildrenRaw.length > 0 && dbChildren.length === 0) {
+      console.warn("[sub-agents] self-filter removed all rows — using raw list", {
+        viewerId: user.id,
+        dbDirectChildrenRaw: dbChildrenRaw.length,
+        excludedViewerSelf,
+      });
+      dbChildren = dbChildrenRaw;
+      excludedViewerSelf = 0;
+    }
 
     const { data: parentRow } = await supabase
       .from("users")
@@ -284,10 +300,8 @@ export async function POST(request: Request) {
     const migrationProbe = await probeWhatsAppMigrations(supabase);
 
     // 5) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
-    const { agents: mergedAgents, stats, diagnostics } = mergeDirectChildrenWithTexas(
-      dbChildren,
-      texasPayload
-    );
+    const { agents: mergedAgents, stats, diagnostics: mergeDiagnostics } =
+      mergeDirectChildrenWithTexas(dbChildren, texasPayload);
 
     const audit = auditDirectChildVisibility(user.id, dbChildren, texasPayload);
 
@@ -297,23 +311,45 @@ export async function POST(request: Request) {
     const dbData = await loadDbEnrichment(supabase, user.id, affiliateIds, ledgerDate);
     const enrichedAgents = enrichAgents(mergedAgents, dbData);
 
-    const payload: TexasSubAgentsPayload = {
-      ledger_date: ledgerDate,
-      fetched_at: texasPayload.fetched_at,
-      agents: enrichedAgents,
-      stats,
-      whatsapp_groups: {
-        dbDirectChildren: whatsappSchedule.dbDirectChildren,
-        activeGroupMappings: whatsappSchedule.activeGroupMappings,
-        missingGroupTargets: whatsappSchedule.missingGroupTargets,
-        scheduledGroupSpawn: whatsappSchedule.scheduled
-          ? whatsappSchedule.scheduledCount
-          : 0,
-        skipReason: whatsappSchedule.skipReason,
-        envOk: whatsappSchedule.env.ok,
-        migrationsOk: migrationProbe.ok,
-      },
+    const credCheck = await resolveUserCredentials(supabase, user.id);
+
+    const routeDiagnostics: SubAgentsDiagnostics = {
+      viewerId: user.id,
+      hasTexasCredentials: credCheck.hasCredentials,
+      texasUsernameMasked: maskTexasUsername(
+        creds.texas_username ?? creds.username
+      ),
+      viewerTexasAffiliateId: viewerAffiliateId ?? creds.texas_affiliate_id ?? null,
+      texasRowsTotal: texasPayload.agents.length,
+      texasChildrenInPortal: texasLive.allChildrenRecords.length,
+      linkableForDb: linkableRefs.length,
+      linkResult: linkResult as unknown as Record<string, unknown>,
+      dbDirectChildrenRaw: dbChildrenRaw.length,
+      excludedViewerSelf,
+      afterSelfFilter: dbChildren.length,
+      directChildrenReturned: enrichedAgents.length,
+      matchedEnriched: mergeDiagnostics.matchedEnriched,
+      stubCount: mergeDiagnostics.stubCount,
+      droppedTexasRows: mergeDiagnostics.droppedTexasRows,
+      emptyReason: null,
     };
+
+    const emptyReason = resolveSubAgentsEmptyReason({
+      texasRowsTotal: routeDiagnostics.texasRowsTotal,
+      texasChildrenInPortal: routeDiagnostics.texasChildrenInPortal,
+      linkableForDb: routeDiagnostics.linkableForDb,
+      linkCreated: linkResult.created,
+      linkSkipped: linkResult.skipped,
+      dbDirectChildrenRaw: routeDiagnostics.dbDirectChildrenRaw,
+      excludedViewerSelf: routeDiagnostics.excludedViewerSelf,
+      afterSelfFilter: routeDiagnostics.afterSelfFilter,
+      directChildrenReturned: routeDiagnostics.directChildrenReturned,
+      matchedEnriched: routeDiagnostics.matchedEnriched,
+      stubCount: routeDiagnostics.stubCount,
+      droppedTexasRows: routeDiagnostics.droppedTexasRows,
+    });
+
+    routeDiagnostics.emptyReason = emptyReason;
 
     console.info("[sub-agents] visibility merge", {
       viewerId: user.id,
@@ -328,7 +364,14 @@ export async function POST(request: Request) {
       linkableForDb: linkableRefs.length,
       deactivatedFromPortal: deactivated,
       linkResult,
+      dbDirectChildrenRaw: dbChildrenRaw.length,
       excludedViewerSelf,
+      afterSelfFilter: dbChildren.length,
+      directChildrenReturned: enrichedAgents.length,
+      matchedEnriched: routeDiagnostics.matchedEnriched,
+      stubCount: routeDiagnostics.stubCount,
+      droppedTexasRows: routeDiagnostics.droppedTexasRows,
+      emptyReason,
       whatsappDbDirectChildren: whatsappSchedule.dbDirectChildren,
       whatsappActiveGroupMappings: whatsappSchedule.activeGroupMappings,
       whatsappMissingGroupTargets: whatsappSchedule.missingGroupTargets,
@@ -338,16 +381,48 @@ export async function POST(request: Request) {
       whatsappSkipReason: whatsappSchedule.skipReason,
       whatsappEnvOk: whatsappSchedule.env.ok,
       whatsappMigrationsOk: migrationProbe.ok,
-      ...diagnostics,
-      directChildrenReturned: payload.agents.length,
-      renderedEnriched: payload.agents.filter((a) => a.has_live_texas_data).length,
-      renderedStubs: payload.agents.filter((a) => !a.has_live_texas_data).length,
     });
 
     console.info("[sub-agents] per-child audit", {
       viewerId: user.id,
       rows: audit,
     });
+
+    if (emptyReason) {
+      const message = messageForSubAgentsEmptyReason(emptyReason);
+      console.warn("[sub-agents] empty list blocked — returning diagnostic error", {
+        viewerId: user.id,
+        emptyReason,
+        diagnostics: routeDiagnostics,
+      });
+      return texasJsonResponse(
+        {
+          error: message,
+          empty_reason: emptyReason,
+          diagnostics: routeDiagnostics,
+        },
+        422
+      );
+    }
+
+    const payload: TexasSubAgentsPayload = {
+      ledger_date: ledgerDate,
+      fetched_at: texasPayload.fetched_at,
+      agents: enrichedAgents,
+      stats,
+      diagnostics: routeDiagnostics,
+      whatsapp_groups: {
+        dbDirectChildren: whatsappSchedule.dbDirectChildren,
+        activeGroupMappings: whatsappSchedule.activeGroupMappings,
+        missingGroupTargets: whatsappSchedule.missingGroupTargets,
+        scheduledGroupSpawn: whatsappSchedule.scheduled
+          ? whatsappSchedule.scheduledCount
+          : 0,
+        skipReason: whatsappSchedule.skipReason,
+        envOk: whatsappSchedule.env.ok,
+        migrationsOk: migrationProbe.ok,
+      },
+    };
 
     const scoped = stampCacheScope(payload, {
       resolvedUserId: user.id,

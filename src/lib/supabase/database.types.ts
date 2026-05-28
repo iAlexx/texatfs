@@ -49,4 +49,14 @@ export interface LedgerSessionResponse {
   network?: import("@/lib/hierarchy/types").NetworkPayload;
   viewing_user_id?: string;
   sync_meta?: LedgerSyncMeta;
+  view_mode?: "daily" | "monthly";
+  monthly_commission?: {
+    month_key: string;
+    burn_amount: number;
+    percent: number | null;
+    commission_amount: number | null;
+    final_before_commission: number;
+    final_after_commission: number | null;
+    status: string;
+  };
 }

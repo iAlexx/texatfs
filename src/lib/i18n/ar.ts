@@ -118,6 +118,11 @@ export const ar = {
   ledgerHistoryHint: "اختر تاريخاً من الشريط أعلاه لعرض تقرير ذلك اليوم",
   syncingTexas: "جاري مزامنة بيانات تكساس لهذا الحساب…",
   noTexasCredentials: "لا توجد بيانات دخول تكساس لهذا الحساب",
+  ledgerViewDaily: "اليومي",
+  ledgerViewMonthly: "الشهري",
+  ledgerMonthlyCumulative: "تراكمي الشهر",
+  finalBeforeCommission: "النهائي قبل النسبة",
+  finalAfterCommission: "النهائي بعد النسبة",
 } as const;
 
 export type ArKey = keyof typeof ar;

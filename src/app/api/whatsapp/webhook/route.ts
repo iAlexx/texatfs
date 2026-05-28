@@ -85,6 +85,18 @@ async function processWebhookPayload(
     }
 
     try {
+      const { handleWhatsAppOptOutPrivate } = await import(
+        "@/lib/whatsapp/opt-out"
+      );
+      const optOutHandled = await handleWhatsAppOptOutPrivate(
+        supabase,
+        privateMsg
+      );
+      if (optOutHandled) {
+        log.info("opt-out handled", { requestId });
+        return;
+      }
+
       const handled = await handleWhatsAppOnboardingPrivate(supabase, privateMsg);
       log.info("onboarding result", { requestId, handled });
       if (handled) return;

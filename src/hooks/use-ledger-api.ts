@@ -62,7 +62,7 @@ export function useLedgerSession(
       viewUserId ?? "self",
       options?.forceSync ?? false,
       options?.syncNetwork ?? false,
-      options?.viewMode ?? "monthly",
+      options?.viewMode ?? "daily",
     ],
     enabled: isReady && canAuthenticate && !!ledgerDate,
     queryFn: async () => {
@@ -76,7 +76,7 @@ export function useLedgerSession(
           agent_id: viewUserId ?? undefined,
           forceSync: options?.forceSync === true,
           syncNetwork: options?.syncNetwork === true,
-          viewMode: options?.viewMode ?? "monthly",
+          viewMode: options?.viewMode ?? "daily",
         }),
       });
 
@@ -152,7 +152,7 @@ export function useLedgerSession(
               viewUserId ?? "self",
               options?.forceSync ?? false,
               options?.syncNetwork ?? false,
-              options?.viewMode ?? "monthly",
+              options?.viewMode ?? "daily",
             ],
             (prev) =>
               prev
@@ -164,7 +164,7 @@ export function useLedgerSession(
       .subscribe();
 
     const pollMs = Number(process.env.NEXT_PUBLIC_LEDGER_POLL_MS ?? 15000);
-    const viewMode = options?.viewMode ?? "monthly";
+    const viewMode = options?.viewMode ?? "daily";
     const pollId = setInterval(() => {
       if (ledgerStatus === "open") {
         void queryClient.invalidateQueries({

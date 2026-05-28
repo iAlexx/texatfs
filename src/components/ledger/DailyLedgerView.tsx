@@ -27,6 +27,9 @@ import { cn } from "@/lib/utils/cn";
 
 export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
+  const [ledgerViewMode, setLedgerViewMode] = useState<"daily" | "monthly">(
+    "daily"
+  );
   const [viewTexasAffiliateId, setViewTexasAffiliateId] = useState<
     string | null
   >(null);
@@ -39,7 +42,9 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const session = useLedgerSession(
     selectedDate,
     null,
-    viewingTexasAgent ? undefined : { forceSync: false }
+    viewingTexasAgent
+      ? { viewMode: "daily" }
+      : { forceSync: false, viewMode: ledgerViewMode }
   );
   const showAgentsTab = session.data?.user
     ? canManageNetwork(session.data.user.role)
@@ -348,10 +353,40 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
               exit={{ opacity: 0, x: -8 }}
               transition={{ type: "spring", stiffness: 200, damping: 24 }}
             >
+              {!viewingSubAgent && (
+                <div className="mb-4 flex rounded-xl border border-white/[0.08] bg-obsidian/50 p-1">
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex-1 rounded-lg py-2 text-xs font-semibold transition-colors",
+                      ledgerViewMode === "daily"
+                        ? "bg-gold/20 text-gold"
+                        : "text-steel-500"
+                    )}
+                    onClick={() => setLedgerViewMode("daily")}
+                  >
+                    {ar.ledgerViewDaily}
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex-1 rounded-lg py-2 text-xs font-semibold transition-colors",
+                      ledgerViewMode === "monthly"
+                        ? "bg-gold/20 text-gold"
+                        : "text-steel-500"
+                    )}
+                    onClick={() => setLedgerViewMode("monthly")}
+                  >
+                    {ar.ledgerViewMonthly}
+                  </button>
+                </div>
+              )}
               <ExecutiveLedgerReport
                 ledger={ledger}
                 targetUserId={viewingSubAgent ? undefined : user?.id}
                 disableShare={viewingSubAgent}
+                viewMode={viewingSubAgent ? "daily" : ledgerViewMode}
+                monthlyCommission={session.data?.monthly_commission}
               />
             </motion.div>
           )}

@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createLogger } from "@/lib/observability/logger";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
+import { resolveGroupSpawnDelayMs } from "@/lib/whatsapp/rate-limiter";
 import {
   createWhatsAppGroup,
   getWhatsAppGroupInviteLink,
@@ -17,7 +18,7 @@ import type { TexasChildRecord } from "@/lib/texas/types";
 
 const log = createLogger("whatsapp/group-spawner");
 
-export const GROUP_SPAWN_DELAY_MS = 15_000;
+export const GROUP_SPAWN_DELAY_MS = 15_000; // fallback; prefer resolveGroupSpawnDelayMs()
 export const BOT_GROUP_PREFIX = "⚜️ ";
 const PENDING_GROUP_ID_PREFIX = "pending:";
 
@@ -167,7 +168,7 @@ export async function spawnAgentGroupsForMaster(
         affiliateId,
         label: resolveAgentLabel(child),
       });
-      if (i < children.length - 1) await sleep(GROUP_SPAWN_DELAY_MS);
+      if (i < children.length - 1) await sleep(resolveGroupSpawnDelayMs());
       continue;
     }
 
@@ -197,7 +198,7 @@ export async function spawnAgentGroupsForMaster(
           affiliateId,
           group_id: existing.group_id,
         });
-        if (i < children.length - 1) await sleep(GROUP_SPAWN_DELAY_MS);
+        if (i < children.length - 1) await sleep(resolveGroupSpawnDelayMs());
         continue;
       }
 
@@ -237,7 +238,7 @@ export async function spawnAgentGroupsForMaster(
           groupJid: existing.group_id,
         });
 
-        if (i < children.length - 1) await sleep(GROUP_SPAWN_DELAY_MS);
+        if (i < children.length - 1) await sleep(resolveGroupSpawnDelayMs());
         continue;
       }
 
@@ -265,7 +266,7 @@ export async function spawnAgentGroupsForMaster(
             error: placeholderErr.message,
           });
           stats.skipped += 1;
-          if (i < children.length - 1) await sleep(GROUP_SPAWN_DELAY_MS);
+          if (i < children.length - 1) await sleep(resolveGroupSpawnDelayMs());
           continue;
         }
       }
@@ -364,7 +365,7 @@ export async function spawnAgentGroupsForMaster(
     }
 
     if (i < children.length - 1) {
-      await sleep(GROUP_SPAWN_DELAY_MS);
+      await sleep(resolveGroupSpawnDelayMs());
     }
   }
 

@@ -92,6 +92,15 @@ export async function withAuthenticatedTexasClient(
     if (e instanceof LedgerAuthError) {
       return texasJsonResponse({ error: e.message }, e.status);
     }
+    if (e instanceof Error && e.message.includes("بيانات دخول تكساس")) {
+      return texasJsonResponse(
+        {
+          error: e.message,
+          empty_reason: "MISSING_CREDENTIALS",
+        },
+        401
+      );
+    }
     if (e instanceof TexasLiveApiError) {
       return texasJsonResponse({ error: e.message }, e.status);
     }
@@ -100,7 +109,20 @@ export async function withAuthenticatedTexasClient(
       return texasJsonResponse({ error: "تعارض في نطاق بيانات المستخدم" }, 500);
     }
     const message = safeErrorMessage(e);
-    console.error("[withAuthenticatedTexasClient]", message);
-    return texasJsonResponse({ error: message }, 500);
+    const isTexasAuth =
+      message.includes("Texas sign-in failed") ||
+      message.includes("sign-in failed");
+    console.error("[withAuthenticatedTexasClient]", message, {
+      texasAuthFailed: isTexasAuth,
+    });
+    return texasJsonResponse(
+      {
+        error: isTexasAuth
+          ? "تعذر تسجيل الدخول إلى لوحة تكساس. افتح «حسابي» وأعد ربط حساب تكساس."
+          : message,
+        empty_reason: isTexasAuth ? "TEXAS_AUTH_FAILED" : undefined,
+      },
+      isTexasAuth ? 401 : 500
+    );
   }
 }

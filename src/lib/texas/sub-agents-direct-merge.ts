@@ -85,20 +85,11 @@ export function isDirectChildViewerSelf(
   const viewerAid = normalizeAffiliateId(viewer.texasAffiliateId);
   if (childAid && viewerAid && childAid === viewerAid) return true;
 
-  const viewerLogins = new Set(
-    [
-      normalizeLogin(viewer.texasUsername),
-      normalizeLogin(viewer.displayName),
-      normalizeLogin(viewer.email),
-    ].filter(Boolean)
-  );
+  const viewerLogin = normalizeLogin(viewer.texasUsername);
+  const childLogin = normalizeLogin(child.texas_username);
+  if (viewerLogin && childLogin && viewerLogin === childLogin) return true;
 
-  const childLogins = [
-    normalizeLogin(child.texas_username),
-    normalizeLogin(child.display_name),
-  ].filter(Boolean);
-
-  return childLogins.some((login) => viewerLogins.has(login));
+  return false;
 }
 
 export function filterOutViewerSelfChildren(

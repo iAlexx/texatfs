@@ -10,7 +10,7 @@ import { ReconciliationBadge } from "@/components/ledger/ReconciliationBadge";
 import { Button } from "@/components/ui/button";
 import { ar } from "@/lib/i18n/ar";
 import { resolvePerformanceSummary } from "@/lib/i18n/performance";
-import { formatLedgerDate } from "@/lib/utils/format";
+import { formatLedgerDate, formatMoney } from "@/lib/utils/format";
 import type { DailyLedger } from "@/lib/supabase/database.types";
 import { useExportReport } from "@/hooks/use-tma-api";
 
@@ -18,11 +18,23 @@ export function ExecutiveLedgerReport({
   ledger,
   targetUserId,
   disableShare = false,
+  viewMode = "daily",
+  monthlyCommission,
 }: {
   ledger: DailyLedger;
   targetUserId?: string;
   /** Texas live sub-agent view has no Supabase user for PDF share */
   disableShare?: boolean;
+  viewMode?: "daily" | "monthly";
+  monthlyCommission?: {
+    month_key: string;
+    burn_amount: number;
+    percent: number | null;
+    commission_amount: number | null;
+    final_before_commission: number;
+    final_after_commission: number | null;
+    status: string;
+  };
 }) {
   const shareReport = useExportReport();
   const userId = targetUserId ?? ledger.user_id;
@@ -48,6 +60,16 @@ export function ExecutiveLedgerReport({
 
   return (
     <>
+      {viewMode === "monthly" && (
+        <motion.p
+          className="mb-3 rounded-xl border border-gold/25 bg-gold/5 px-3 py-2 text-center text-[11px] text-gold/90"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          {ar.ledgerMonthlyCumulative}
+        </motion.p>
+      )}
+
       <LuxuryBalanceCard
         value={ledger.al_nihai}
         dateLabel={formatLedgerDate(ledger.ledger_date)}
@@ -64,6 +86,35 @@ export function ExecutiveLedgerReport({
       <ReconciliationBadge ledger={ledger} />
       <LedgerFlowChart ledger={ledger} />
       <BankStatementGrid ledger={ledger} />
+
+      {viewMode === "monthly" && monthlyCommission && (
+        <motion.section
+          className="mt-4 rounded-2xl border border-gold/20 bg-obsidian/40 p-4 text-[11px] text-steel-300"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <p className="mb-2 font-semibold text-gold">{ar.ledgerViewMonthly}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <span className="text-steel-500">{ar.finalBeforeCommission}</span>
+              <p className="font-mono text-sm">{formatMoney(monthlyCommission.final_before_commission)}</p>
+            </div>
+            <div>
+              <span className="text-steel-500">{ar.finalAfterCommission}</span>
+              <p className="font-mono text-sm">
+                {monthlyCommission.final_after_commission != null
+                  ? formatMoney(monthlyCommission.final_after_commission)
+                  : "—"}
+              </p>
+            </div>
+          </div>
+          {monthlyCommission.percent != null && (
+            <p className="mt-2 text-steel-500">
+              نسبة حرق الشهر: {monthlyCommission.percent}%
+            </p>
+          )}
+        </motion.section>
+      )}
 
       {!disableShare ? (
         <motion.div className="mt-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>

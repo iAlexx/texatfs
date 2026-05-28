@@ -158,6 +158,46 @@ export async function buildLedgerSession(
     options?.viewMode ?? "daily"
   );
 
+  let monthly_commission: LedgerSessionResponse["monthly_commission"];
+  if (options?.viewMode === "monthly" && ledger) {
+    const monthKey = ledger.ledger_date.slice(0, 7);
+    const { data: commissionRow } = await supabase
+      .from("monthly_agent_commissions")
+      .select(
+        "month_key, burn_amount, percent, commission_amount, final_before_commission, final_after_commission, status"
+      )
+      .eq("agent_user_id", viewUserId)
+      .eq("month_key", monthKey)
+      .maybeSingle();
+
+    if (commissionRow) {
+      monthly_commission = {
+        month_key: String(commissionRow.month_key),
+        burn_amount: Number(commissionRow.burn_amount),
+        percent:
+          commissionRow.percent != null ? Number(commissionRow.percent) : null,
+        commission_amount:
+          commissionRow.commission_amount != null
+            ? Number(commissionRow.commission_amount)
+            : null,
+        final_before_commission: Number(commissionRow.final_before_commission),
+        final_after_commission:
+          commissionRow.final_after_commission != null
+            ? Number(commissionRow.final_after_commission)
+            : null,
+        status: String(commissionRow.status),
+      };
+
+      if (
+        commissionRow.status === "completed" &&
+        commissionRow.final_after_commission != null &&
+        ledger
+      ) {
+        ledger.al_nihai = Number(commissionRow.final_after_commission);
+      }
+    }
+  }
+
   let network;
   let hierarchy;
 
@@ -193,6 +233,8 @@ export async function buildLedgerSession(
     hierarchy,
     network,
     viewing_user_id: viewUserId,
+    view_mode: options?.viewMode ?? "daily",
+    monthly_commission,
     sync_meta: {
       target_user_id: viewUserId,
       synced: syncResult.synced,

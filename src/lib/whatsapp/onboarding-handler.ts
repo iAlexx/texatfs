@@ -16,6 +16,8 @@ import {
   setOnboardingStatus,
 } from "@/lib/whatsapp/onboarding-users";
 import { scheduleGroupSpawnJob } from "@/lib/whatsapp/group-spawn-job";
+import { setWhatsAppOptOut } from "@/lib/whatsapp/opt-out";
+import { recordWhatsAppInboundReply } from "@/lib/whatsapp/rate-limiter";
 import type { WhatsAppPrivateMessage } from "@/lib/whatsapp/webhook-types";
 
 const log = createLogger("whatsapp/onboarding");
@@ -53,6 +55,8 @@ export async function handleWhatsAppOnboardingPrivate(
       messageId: msg.messageId,
     });
 
+    recordWhatsAppInboundReply();
+
     const user = await getUserByWhatsAppPhone(supabase, phoneDigits);
     if (!user) {
       log.info("no user found for phone — ignored", {
@@ -80,6 +84,7 @@ export async function handleWhatsAppOnboardingPrivate(
 
     log.info("WhatsApp activation verified", { userId: user.id });
 
+    await setWhatsAppOptOut(supabase, user.id, false);
     await setOnboardingStatus(supabase, user.id, "VERIFIED_COMPLETED");
 
     sendDmInBackground(msg.chatId, WHATSAPP_VERIFIED_REPLY_AR, "verification-reply");

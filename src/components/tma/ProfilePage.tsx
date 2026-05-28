@@ -5,7 +5,6 @@ import {
   Gift,
   KeyRound,
   Loader2,
-  LogOut,
   MessageCircle,
   Shield,
   User,
@@ -21,7 +20,6 @@ import {
   useRegisterWhatsAppPhone,
   type RegisterPhoneResult,
 } from "@/hooks/use-whatsapp-onboarding-api";
-import { useLogout } from "@/hooks/use-auth-api";
 import { useRepairTexasCredentials } from "@/hooks/use-texas-repair-api";
 import { COUNTRY_DIAL_CODES } from "@/lib/whatsapp/country-codes";
 import { WHATSAPP_USER_INIT_INSTRUCTION_AR } from "@/lib/whatsapp/onboarding-copy";
@@ -177,45 +175,12 @@ export function ProfilePage() {
         </Button>
       </section>
 
-      {/* ── Texas credentials repair (after logout/relogin) ───────────────── */}
+      {/* ── Texas credentials repair ───────────────── */}
       <TexasCredentialsRepair telegramUserId={telegramUserId} />
 
       {/* ── WhatsApp Tracking System ──────────────────────────────────────── */}
       <WhatsAppTrackingInfo telegramUserId={telegramUserId} />
-
-      <LogoutSection />
     </div>
-  );
-}
-
-function LogoutSection() {
-  const logout = useLogout();
-
-  return (
-    <section className="mt-4 glass-inner p-5">
-      <Button
-        variant="outline"
-        className="w-full gap-2 border-steel-border text-steel-300"
-        disabled={logout.isPending}
-        onClick={() => {
-          logout.mutate(undefined, {
-            onSuccess: () => {
-              toast.success(
-                "تم تسجيل الخروج. الاشتراك والبيانات محفوظة — سجّل الدخول من البوت للعودة."
-              );
-            },
-            onError: (e) => toast.error(e.message),
-          });
-        }}
-      >
-        {logout.isPending ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <LogOut className="h-4 w-4" />
-        )}
-        تسجيل الخروج
-      </Button>
-    </section>
   );
 }
 
@@ -292,7 +257,7 @@ function TexasCredentialsRepair({
       </p>
       <p className="mb-3 text-[11px] text-steel-400 leading-relaxed">
         لوحة المحاسبة تحتاج بيانات دخول تكساس مخزّنة. أدخل نفس اسم المستخدم وكلمة
-        المرور من لوحة تكساس (لا يلزم مفتاح ترخيص جديد إذا كان اشتراكك فعّالاً).
+        المرور من لوحة تكساس.
       </p>
       <Input
         value={login}

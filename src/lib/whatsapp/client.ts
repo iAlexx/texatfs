@@ -7,6 +7,7 @@
  */
 import { createLogger } from "@/lib/observability/logger";
 import { retryAsync } from "@/lib/utils/async-retry";
+import { acquireWhatsAppSendSlot } from "@/lib/whatsapp/rate-limiter";
 
 const log = createLogger("whatsapp/client");
 
@@ -72,6 +73,7 @@ async function sendWhatsAppMessageOnce(
   text: string,
   options: SendMessageOptions = {}
 ): Promise<WhatsAppSendResult> {
+  await acquireWhatsAppSendSlot("send-message");
   const token = getToken();
   const url = `${getBaseUrl()}/api/send-message`;
 

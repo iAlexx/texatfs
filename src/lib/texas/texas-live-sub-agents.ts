@@ -62,6 +62,7 @@ export interface TexasSubAgentsPayload {
     envOk: boolean;
     migrationsOk: boolean;
   };
+  diagnostics?: import("@/lib/texas/sub-agents-empty-reason").SubAgentsDiagnostics;
 }
 
 /** Live fetch result — portal direct children are separate from stats-only rows */

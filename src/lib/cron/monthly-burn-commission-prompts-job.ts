@@ -111,9 +111,22 @@ export async function runMonthlyBurnCommissionPromptsJob(): Promise<{
       }
 
       const promptText =
-        `انتهى شهر *${monthLabel}*.\n` +
+        `مرحباً، انتهى شهر *${monthLabel}*.\n` +
         `الوكيل *${agentName}* طلع حرقه عندك: *${fmt(settlement.burnAmount)}*.\n` +
         `كم بدك تعطيه نسبة مئوية؟`;
+
+      const { assertWhatsAppMessagingAllowed } = await import(
+        "@/lib/whatsapp/opt-out"
+      );
+      const allowed = await assertWhatsAppMessagingAllowed(
+        supabase,
+        parentUserId,
+        "monthly-commission-prompt"
+      );
+      if (!allowed) {
+        skippedExisting += 1;
+        continue;
+      }
 
       await sendWhatsAppMessage(groupId, promptText);
 

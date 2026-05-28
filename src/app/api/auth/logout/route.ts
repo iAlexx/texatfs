@@ -16,6 +16,16 @@ const log = createLogger("auth/logout");
  * ledgers, or WhatsApp group mappings.
  */
 export async function POST(request: Request) {
+  if (process.env.ENABLE_AUTH_LOGOUT !== "true") {
+    return NextResponse.json(
+      {
+        error: "تسجيل الخروج غير متاح. حسابك يبقى مرتبطاً بتيليغرام.",
+        disabled: true,
+      },
+      { status: 410 }
+    );
+  }
+
   try {
     const body = (await request.json().catch(() => ({}))) as Record<
       string,
