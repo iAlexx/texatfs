@@ -4,8 +4,10 @@ import type {
   AppUser,
   DailyLedger,
   LedgerSessionResponse,
+  TexasPanelSnapshot,
   UserRole,
 } from "@/lib/supabase/database.types";
+import type { TexasDashboardGeneral } from "@/lib/texas/types";
 import { assertCanViewUser, canManageNetwork } from "@/lib/hierarchy/access";
 import {
   buildHierarchyPayload,
@@ -95,6 +97,53 @@ export async function loadLedgerForUser(
   ledger.discrepancy_flag = monthly.discrepancyFlag;
 
   return ledger;
+}
+
+async function loadTexasPanelSnapshot(
+  supabase: SupabaseClient,
+  userId: string,
+  ledgerDate: string,
+  ledger: DailyLedger | null
+): Promise<TexasPanelSnapshot | null> {
+  const { data: snap, error } = await supabase
+    .from("api_snapshots")
+    .select("total_deposit, total_withdraw, ngr, raw_statistics")
+    .eq("user_id", userId)
+    .eq("ledger_date", ledgerDate)
+    .order("captured_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !snap) return null;
+
+  const raw = (snap.raw_statistics ?? {}) as Record<string, unknown>;
+  const dg = raw.dashboardGeneral as TexasDashboardGeneral | undefined;
+
+  return {
+    daily_movement: ledger
+      ? {
+          tebat: ledger.tebat,
+          suhoubat: ledger.suhoubat,
+          al_farq: ledger.al_farq,
+          al_harq: ledger.al_harq,
+        }
+      : null,
+    transaction_cumulative: {
+      deposits: Number(snap.total_deposit),
+      withdrawals: Number(snap.total_withdraw),
+    },
+    dashboard_general: dg
+      ? {
+          deposits: dg.deposits,
+          withdrawal: dg.withdrawal,
+          ngr: dg.ngr,
+          commission: dg.commission,
+          agentId: dg.agentId,
+          parentId: dg.parentId,
+          username: dg.username,
+        }
+      : null,
+  };
 }
 
 export async function buildLedgerSession(
@@ -222,6 +271,13 @@ export async function buildLedgerSession(
     role === "master" &&
     (profile?.parent_id == null || (hierarchy?.sub_agents.length ?? 0) > 0);
 
+  const texas_panel = await loadTexasPanelSnapshot(
+    supabase,
+    viewUserId,
+    ledgerDate,
+    ledger
+  );
+
   return {
     user: {
       ...user,
@@ -235,6 +291,7 @@ export async function buildLedgerSession(
     viewing_user_id: viewUserId,
     view_mode: options?.viewMode ?? "daily",
     monthly_commission,
+    texas_panel,
     sync_meta: {
       target_user_id: viewUserId,
       synced: syncResult.synced,

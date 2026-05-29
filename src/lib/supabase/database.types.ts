@@ -41,6 +41,29 @@ export interface LedgerSyncMeta {
   network_synced?: number;
 }
 
+/** Texas panel reference (daily movement vs cumulative dashboard). */
+export interface TexasPanelSnapshot {
+  daily_movement: {
+    tebat: number;
+    suhoubat: number;
+    al_farq: number;
+    al_harq: number;
+  } | null;
+  transaction_cumulative: {
+    deposits: number;
+    withdrawals: number;
+  } | null;
+  dashboard_general: {
+    deposits: number;
+    withdrawal: number;
+    ngr: number;
+    commission?: number;
+    agentId?: string;
+    parentId?: string;
+    username?: string;
+  } | null;
+}
+
 export interface LedgerSessionResponse {
   user: AppUser;
   ledger: DailyLedger | null;
@@ -48,7 +71,6 @@ export interface LedgerSessionResponse {
   hierarchy?: import("@/lib/hierarchy/types").HierarchyPayload;
   network?: import("@/lib/hierarchy/types").NetworkPayload;
   viewing_user_id?: string;
-  sync_meta?: LedgerSyncMeta;
   view_mode?: "daily" | "monthly";
   monthly_commission?: {
     month_key: string;
@@ -59,4 +81,6 @@ export interface LedgerSessionResponse {
     final_after_commission: number | null;
     status: string;
   };
+  texas_panel?: TexasPanelSnapshot | null;
+  sync_meta?: LedgerSyncMeta;
 }

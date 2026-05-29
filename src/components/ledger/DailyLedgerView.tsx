@@ -376,6 +376,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
                 disableShare={viewingSubAgent}
                 viewMode={viewingSubAgent ? "daily" : ledgerViewMode}
                 monthlyCommission={session.data?.monthly_commission}
+                texasPanel={session.data?.texas_panel}
               />
             </motion.div>
           )}

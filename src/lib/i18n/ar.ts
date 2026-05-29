@@ -123,6 +123,16 @@ export const ar = {
   ledgerMonthlyCumulative: "تراكمي الشهر",
   finalBeforeCommission: "النهائي قبل النسبة",
   finalAfterCommission: "النهائي بعد النسبة",
+  texasPanelReference: "مرجع لوحة تكساس",
+  texasPanelDailyMovement: "حركة اليوم (دلتا المحاسبة)",
+  texasPanelTransactionCumulative: "معاملات Transaction (مجموع تراكمي)",
+  texasPanelTxnDeposits: "تعبئات — Transaction",
+  texasPanelTxnWithdrawals: "سحوبات — Transaction",
+  texasPanelGeneralReport: "تقرير General (لوحة تكساس)",
+  texasPanelGeneralDeposits: "تعبئات — General",
+  texasPanelGeneralWithdrawal: "سحوبات — General",
+  texasPanelDashboardNgr: "NGR — General (حرق اللوحة)",
+  texasPanelCommission: "عمولة — General",
 } as const;
 
 export type ArKey = keyof typeof ar;

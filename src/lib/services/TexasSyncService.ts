@@ -9,7 +9,11 @@ import type {
   NormalizedTexasSnapshot,
 } from "@/lib/texas/types";
 import { fetchAllSubAgentStatistics } from "@/lib/texas/fetch-sub-agent-statistics";
-import { fetchAgentTransfers } from "@/lib/texas/fetch-agent-transfers";
+import {
+  fetchAgentTransfers,
+  probeTransferServerFilters,
+} from "@/lib/texas/fetch-agent-transfers";
+import { fetchSubAgentGeneralReport } from "@/lib/texas/fetch-sub-agent-report";
 import {
   mapSubAgentStatistics,
   mapWalletBalance,
@@ -54,8 +58,9 @@ export interface TexasSyncResult {
  *
  * Data sources (fetched in parallel):
  *   1. getAgentAllWallets       → balance, currencyCode
- *   2. getSubAgentStatistics    → ngr, raw statistics, per-agent metadata
- *   3. getAgentsTransfers       → totalDeposit, totalWithdraw (authoritative)
+ *   2. getSubAgentStatistics    → wallet row metadata only (NOT deposits/withdrawals)
+ *   3. getAgentsTransfers       → totalDeposit, totalWithdraw (Transaction tab)
+ *   4. getSubAgentReport        → dashboard NGR / General panel (reference)
  *
  * The transfers endpoint returns actual transaction records with type "2" (deposit)
  * and "3" (withdraw). Summing these gives real totalDeposit/totalWithdraw that
@@ -83,7 +88,9 @@ export class TexasSyncService {
     const client = await session.getClient(context.credentials);
     const pageSize = options.pageSize ?? this.pageSize;
 
-    const [wallet, statistics, transfers] = await Promise.all([
+    const affiliateId = context.texasAffiliateId?.trim() ?? "";
+
+    const [wallet, statistics, transferFetch, generalReport] = await Promise.all([
       this.fetchAgentWallet(client),
       fetchAllSubAgentStatistics(client, {
         pageSize,
@@ -95,6 +102,12 @@ export class TexasSyncService {
         affiliateId: context.texasAffiliateId ?? null,
         role: context.role,
       }),
+      affiliateId || context.texasUsername
+        ? fetchSubAgentGeneralReport(client, {
+            affiliateId: affiliateId || undefined,
+            username: context.texasUsername ?? undefined,
+          })
+        : Promise.resolve(null),
     ]);
 
     const walletPart = mapWalletBalance(wallet);
@@ -112,20 +125,46 @@ export class TexasSyncService {
       statistics.response.result as unknown as Record<string, unknown>
     );
 
+    const transfers = transferFetch?.totals ?? null;
+
+    if (generalReport) {
+      snapshot.dashboardGeneral = generalReport;
+      snapshot.ngr = generalReport.ngr;
+    }
+
     if (transfers) {
       snapshot.totalDeposit = transfers.totalDeposit;
       snapshot.totalWithdraw = transfers.totalWithdraw;
-      log.info("totalDeposit/totalWithdraw set from getAgentsTransfers", {
+      snapshot.transactionTotals = transfers;
+      log.info("totalDeposit/totalWithdraw from getAgentsTransfers (Transaction)", {
         userId: context.userId,
         totalDeposit: transfers.totalDeposit,
         totalWithdraw: transfers.totalWithdraw,
         transactionCount: transfers.transactionCount,
       });
     } else {
-      log.warn("deposit/withdraw totals unavailable — using statistics row fallback", {
+      log.warn("deposit/withdraw unavailable from Transaction tab", {
         userId: context.userId,
-        totalDeposit: snapshot.totalDeposit,
-        totalWithdraw: snapshot.totalWithdraw,
+        generalDeposits: generalReport?.deposits,
+        generalWithdrawal: generalReport?.withdrawal,
+      });
+    }
+
+    snapshot.rawStatistics = {
+      ...snapshot.rawStatistics,
+      dashboardGeneral: generalReport ?? undefined,
+      transactionTotals: transfers ?? undefined,
+      transferFilterProbe: transferFetch?.filterProbe ?? undefined,
+      transferAttribution: transferFetch?.attribution ?? undefined,
+    };
+
+    if (generalReport) {
+      log.info("dashboard NGR from getSubAgentReport (General)", {
+        userId: context.userId,
+        ngr: generalReport.ngr,
+        deposits: generalReport.deposits,
+        withdrawal: generalReport.withdrawal,
+        agentId: generalReport.agentId,
       });
     }
 
@@ -135,7 +174,11 @@ export class TexasSyncService {
       totalWithdraw: snapshot.totalWithdraw,
       ngr: snapshot.ngr,
       balance: snapshot.balance,
-      source: transfers ? "getAgentsTransfers" : "unavailable",
+      source: transfers
+        ? "getAgentsTransfers"
+        : generalReport
+          ? "getSubAgentReport-only"
+          : "unavailable",
     });
 
     validateTexasSnapshotScope(snapshot, {
@@ -184,14 +227,20 @@ export class TexasSyncService {
       affiliateId: string | null;
       role: TexasSyncUserContext["role"];
     }
-  ): Promise<AgentTransfersTotals | null> {
+  ): Promise<{
+    totals: AgentTransfersTotals;
+    filterProbe?: Awaited<ReturnType<typeof probeTransferServerFilters>>;
+    attribution?: Awaited<
+      ReturnType<typeof import("@/lib/texas/fetch-agent-transfers").fetchAgentTransfers>
+    >["attribution"];
+  } | null> {
     try {
       if (options.role === "super_master") {
         const result = await fetchAgentTransfers(client, {
           pageSize: options.pageSize,
           paginate: true,
         });
-        return result.totals;
+        return { totals: result.totals, attribution: result.attribution };
       }
 
       if (!options.affiliateId?.trim()) {
@@ -201,21 +250,34 @@ export class TexasSyncService {
         return null;
       }
 
+      const affiliateId = options.affiliateId.trim();
+      const filterProbe = await probeTransferServerFilters(
+        client,
+        affiliateId,
+        Math.min(options.pageSize, 50)
+      );
+
       const result = await fetchAgentTransfers(client, {
         pageSize: options.pageSize,
-        affiliateId: options.affiliateId.trim(),
+        affiliateId,
         paginate: true,
       });
 
-      log.info("getAgentsTransfers scoped to own affiliate", {
-        affiliateId: options.affiliateId,
+      log.info("getAgentsTransfers scoped via client attribution", {
+        affiliateId,
         role: options.role,
         totalDeposit: result.totals.totalDeposit,
         totalWithdraw: result.totals.totalWithdraw,
         transactionCount: result.totals.transactionCount,
+        matchedDeposits: result.attribution?.matchedDeposits,
+        matchedWithdraws: result.attribution?.matchedWithdraws,
       });
 
-      return result.totals;
+      return {
+        totals: result.totals,
+        filterProbe,
+        attribution: result.attribution,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.warn("getAgentsTransfers failed, using statistics fallback totals", {
@@ -260,9 +322,7 @@ export class TexasSyncService {
       const childUsername =
         pickString(bag, ["userName", "username", "affiliateUsername", "email"]) ?? null;
       const currentWallet = pickNumeric(bag, ["currentWallet", "balance", "availableWallet"]);
-      const ngr = pickNumeric(bag, statsRecordMapping.ngr);
-      const totalDeposit = pickNumeric(bag, statsRecordMapping.totalDeposit);
-      const totalWithdraw = pickNumeric(bag, statsRecordMapping.totalWithdraw);
+      const ngr = 0;
 
       children.push({
         affiliateId: childAffiliateId,
@@ -270,8 +330,8 @@ export class TexasSyncService {
         snapshot: {
           balance: currentWallet,
           currencyCode: "NSP",
-          totalDeposit,
-          totalWithdraw,
+          totalDeposit: 0,
+          totalWithdraw: 0,
           ngr,
           rawWallets: {},
           rawStatistics: bag,
@@ -291,20 +351,36 @@ export class TexasSyncService {
 
     return Promise.all(
       children.map(async (child) => {
-        const transfers = await this.fetchChildTransfersSafe(
-          client,
-          child.affiliateId
-        );
-        if (!transfers) return child;
+        const [transfers, generalReport] = await Promise.all([
+          this.fetchChildTransfersSafe(client, child.affiliateId),
+          fetchSubAgentGeneralReport(client, {
+            affiliateId: child.affiliateId,
+            username: child.username ?? undefined,
+          }),
+        ]);
 
-        return {
-          ...child,
-          snapshot: {
-            ...child.snapshot,
+        let snapshot = { ...child.snapshot };
+        if (transfers) {
+          snapshot = {
+            ...snapshot,
             totalDeposit: transfers.totalDeposit,
             totalWithdraw: transfers.totalWithdraw,
-          },
-        };
+            transactionTotals: transfers,
+          };
+        }
+        if (generalReport) {
+          snapshot = {
+            ...snapshot,
+            ngr: generalReport.ngr,
+            dashboardGeneral: generalReport,
+            rawStatistics: {
+              ...snapshot.rawStatistics,
+              dashboardGeneral: generalReport,
+            },
+          };
+        }
+
+        return { ...child, snapshot };
       })
     );
   }

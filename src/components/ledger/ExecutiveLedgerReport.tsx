@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { ar } from "@/lib/i18n/ar";
 import { resolvePerformanceSummary } from "@/lib/i18n/performance";
 import { formatLedgerDate, formatMoney } from "@/lib/utils/format";
-import type { DailyLedger } from "@/lib/supabase/database.types";
+import type { DailyLedger, TexasPanelSnapshot } from "@/lib/supabase/database.types";
+import { TexasDashboardPanel } from "@/components/ledger/TexasDashboardPanel";
 import { useExportReport } from "@/hooks/use-tma-api";
 
 export function ExecutiveLedgerReport({
@@ -20,6 +21,7 @@ export function ExecutiveLedgerReport({
   disableShare = false,
   viewMode = "daily",
   monthlyCommission,
+  texasPanel,
 }: {
   ledger: DailyLedger;
   targetUserId?: string;
@@ -35,6 +37,7 @@ export function ExecutiveLedgerReport({
     final_after_commission: number | null;
     status: string;
   };
+  texasPanel?: TexasPanelSnapshot | null;
 }) {
   const shareReport = useExportReport();
   const userId = targetUserId ?? ledger.user_id;
@@ -86,6 +89,7 @@ export function ExecutiveLedgerReport({
       <ReconciliationBadge ledger={ledger} />
       <LedgerFlowChart ledger={ledger} />
       <BankStatementGrid ledger={ledger} />
+      <TexasDashboardPanel panel={texasPanel} />
 
       {viewMode === "monthly" && monthlyCommission && (
         <motion.section

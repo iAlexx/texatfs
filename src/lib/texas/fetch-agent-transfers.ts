@@ -8,6 +8,10 @@ import type {
   TexasSyncUserContext,
 } from "@/lib/texas/types";
 import { fetchAllTexasChildren } from "@/lib/texas/fetch-texas-children";
+import {
+  sumTransfersAttributedToAffiliate,
+  type TransferFilterProbeResult,
+} from "@/lib/texas/transfer-affiliate-attribution";
 import { createLogger } from "@/lib/observability/logger";
 
 const log = createLogger("texas/fetch-transfers");
@@ -96,11 +100,77 @@ let _transferDiagnosticsLogged = false;
 
 export interface FetchAgentTransfersOptions {
   pageSize?: number;
-  /** Scope to a single affiliate (Master/Player). Omit for Super Master. */
+  /** Scope to a single affiliate (Master/Player). Uses client-side fromId/toId attribution. */
   affiliateId?: string;
   /** Additional filters (e.g. date range) */
   extraFilter?: TexasFilterMap;
   paginate?: boolean;
+  /** Log server-side filter probe results (affiliateId vs agentId vs userId). */
+  probeServerFilters?: boolean;
+}
+
+function buildScopedFilter(
+  field: "affiliateId" | "agentId" | "userId",
+  value: string
+): TexasFilterMap {
+  return {
+    [field]: { action: "=", value, valueLabel: value },
+  };
+}
+
+/**
+ * One-time probe: which filter key Texas accepts when narrowing Transaction report.
+ * Does not change totals — attribution remains authoritative.
+ */
+export async function probeTransferServerFilters(
+  client: TexasHttpClient,
+  affiliateId: string,
+  pageSize = 50
+): Promise<TransferFilterProbeResult[]> {
+  const keys = ["affiliateId", "agentId", "userId"] as const;
+  const results: TransferFilterProbeResult[] = [];
+
+  for (const key of keys) {
+    const filter: TexasFilterMap = {
+      ...TRANSFER_TYPE_FILTER,
+      ...buildScopedFilter(key, affiliateId),
+    };
+    try {
+      const response = await client.post<AgentTransfersResponse>(
+        "/Statistics/getAgentsTransfers",
+        { start: 0, limit: pageSize, filter }
+      );
+      const records = coerceRecordsArray(response.data?.result?.records);
+      const attributed = sumTransfersAttributedToAffiliate(records, affiliateId);
+      results.push({
+        key,
+        recordCount: records.length,
+        totalDeposit: attributed.totalDeposit,
+        totalWithdraw: attributed.totalWithdraw,
+        filterPayload: filter,
+      });
+    } catch {
+      results.push({
+        key,
+        recordCount: 0,
+        totalDeposit: 0,
+        totalWithdraw: 0,
+        filterPayload: { ...TRANSFER_TYPE_FILTER, ...buildScopedFilter(key, affiliateId) },
+      });
+    }
+  }
+
+  log.info("transfer server filter probe", {
+    affiliateId,
+    results: results.map((r) => ({
+      key: r.key,
+      records: r.recordCount,
+      dep: r.totalDeposit,
+      wd: r.totalWithdraw,
+    })),
+  });
+
+  return results;
 }
 
 /**
@@ -117,26 +187,28 @@ export async function fetchAgentTransfers(
   totals: AgentTransfersTotals;
   records: AgentTransferRecord[];
   pagesFetched: number;
+  filterProbe?: TransferFilterProbeResult[];
+  attribution?: ReturnType<typeof sumTransfersAttributedToAffiliate>;
 }> {
   const limit = options.pageSize ?? DEFAULT_PAGE_SIZE;
+  const scopedAffiliateId = options.affiliateId?.trim() ?? "";
 
-  const affiliateFilter: TexasFilterMap = options.affiliateId
-    ? { affiliateId: { action: "=", value: options.affiliateId } }
-    : {};
-
-  if (options.affiliateId) {
-    log.info("filtering transfers by affiliateId", {
-      affiliateId: options.affiliateId,
-    });
-  } else {
-    log.info("fetching transfers unfiltered (super_master)");
+  if (scopedAffiliateId && options.probeServerFilters) {
+    await probeTransferServerFilters(client, scopedAffiliateId, Math.min(limit, 50));
   }
 
   const filter: TexasFilterMap = {
     ...TRANSFER_TYPE_FILTER,
-    ...affiliateFilter,
     ...options.extraFilter,
   };
+
+  if (scopedAffiliateId) {
+    log.info("fetching transfers for affiliate (type filter + client attribution)", {
+      affiliateId: scopedAffiliateId,
+    });
+  } else {
+    log.info("fetching transfers unfiltered (super_master)");
+  }
 
   const allRecords: AgentTransferRecord[] = [];
   let start = 0;
@@ -184,7 +256,26 @@ export async function fetchAgentTransfers(
     if (allRecords.length >= totalRecords) break;
   }
 
-  const totals = sumTransferRecords(allRecords);
+  let totals: AgentTransfersTotals;
+  let attribution: ReturnType<typeof sumTransfersAttributedToAffiliate> | undefined;
+
+  if (scopedAffiliateId) {
+    attribution = sumTransfersAttributedToAffiliate(allRecords, scopedAffiliateId);
+    totals = {
+      totalDeposit: attribution.totalDeposit,
+      totalWithdraw: attribution.totalWithdraw,
+      transactionCount:
+        attribution.matchedDeposits + attribution.matchedWithdraws,
+    };
+    log.info("transfers attributed to affiliate", {
+      affiliateId: scopedAffiliateId,
+      ...attribution,
+      pagesFetched,
+      allRecordsFetched: allRecords.length,
+    });
+  } else {
+    totals = sumTransferRecords(allRecords);
+  }
 
   log.info("transfers summary", {
     totalDeposit: totals.totalDeposit,
@@ -193,7 +284,12 @@ export async function fetchAgentTransfers(
     pagesFetched,
   });
 
-  return { totals, records: allRecords, pagesFetched };
+  return {
+    totals,
+    records: allRecords,
+    pagesFetched,
+    attribution,
+  };
 }
 
 /**

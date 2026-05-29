@@ -176,6 +176,22 @@ export type AgentTransfersResponse = TexasApiEnvelope<
   TexasPagedResult<AgentTransferRecord>
 >;
 
+/** Reports → General (getSubAgentReport) — cumulative dashboard panel. */
+export interface TexasDashboardGeneral {
+  deposits: number;
+  withdrawal: number;
+  ngr: number;
+  commission: number;
+  agentId?: string;
+  parentId?: string;
+  username?: string;
+  raw?: Record<string, unknown>;
+}
+
+export type SubAgentReportResponse = TexasApiEnvelope<
+  TexasPagedResult<Record<string, unknown>> | Record<string, unknown>
+>;
+
 export interface AgentTransfersTotals {
   totalDeposit: number;
   totalWithdraw: number;
@@ -186,10 +202,15 @@ export interface NormalizedTexasSnapshot {
   balance: number;
   totalDeposit: number;
   totalWithdraw: number;
+  /** Dashboard NGR from getSubAgentReport (reference only — ledger al_harq uses al_farq). */
   ngr: number;
   currencyCode: string;
   rawWallets: Record<string, unknown>;
   rawStatistics: Record<string, unknown>;
+  /** Reports → General cumulative panel (validation / UI). */
+  dashboardGeneral?: TexasDashboardGeneral | null;
+  /** Transaction-tab cumulative totals for this affiliate (getAgentsTransfers). */
+  transactionTotals?: AgentTransfersTotals | null;
 }
 
 export interface TexasCredentials {
