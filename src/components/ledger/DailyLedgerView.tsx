@@ -138,7 +138,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   return (
-    <div className={embedded ? "px-4 pb-4 pt-2" : "executive-bg min-h-screen px-4 pb-28 pt-6"}>
+    <div className={embedded ? "px-4 pb-4 pt-2" : "px-4 pb-6 pt-4"}>
       {children}
     </div>
   );

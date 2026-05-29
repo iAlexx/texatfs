@@ -52,7 +52,7 @@ export function ChannelGateOverlay() {
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/85 p-4 backdrop-blur-md">
       <motion.div
-        className="w-full max-w-sm rounded-3xl border border-violet-500/30 bg-gradient-to-b from-[#1a1028] to-obsidian p-6 shadow-[0_0_48px_rgba(139,92,246,0.2)]"
+        className="w-full max-w-sm rounded-3xl border border-violet-500/30 bg-gradient-to-b from-[#141824] to-[#0B0B0F] p-6 shadow-[0_0_48px_rgba(139,92,246,0.2)]"
         initial={{ y: 40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
       >
@@ -62,8 +62,7 @@ export function ChannelGateOverlay() {
         <div className="mt-5 flex flex-col gap-2">
           <Button
             type="button"
-            variant="gold"
-            className="w-full"
+            className="w-full fintech-btn-primary"
             onClick={() => window.open(CHANNEL_URL, "_blank")}
           >
             <ExternalLink className="h-4 w-4" />

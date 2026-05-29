@@ -1,5 +1,5 @@
-import { HeroPage } from "@/components/tma/HeroPage";
+import { PremiumHomePage } from "@/components/tma/PremiumHomePage";
 
 export default function HomeRoute() {
-  return <HeroPage />;
+  return <PremiumHomePage />;
 }

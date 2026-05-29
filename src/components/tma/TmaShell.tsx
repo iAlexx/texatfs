@@ -17,7 +17,7 @@ export function TmaShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <motion.div className="executive-bg min-h-screen pb-28">
+    <motion.div className="fintech-bg min-h-screen pb-28">
       <ChannelGateOverlay />
       <OnboardingGuide />
       <AnimatePresence mode="wait">

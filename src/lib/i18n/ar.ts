@@ -68,8 +68,75 @@ export const ar = {
   navHome: "الرئيسية",
   navAgents: "الوكلاء",
   navLedger: "الوكلاء",
+  navWhatsapp: "واتساب",
   navProfile: "الملف",
-  profileTitle: "الملف الشخصي",
+  homeHeroTitle: "لوحة التحكم المالية",
+  homeHeroSubtitle: "تابع وكلاءك وحساباتهم من مكان واحد",
+  homeWelcome: "أهلاً",
+  homeQuickActions: "اختصارات سريعة",
+  homeAgentsDesc: "شوف وكلاءك وتابعهم",
+  homeWhatsappDesc: "فعّل واتساب والمجموعات",
+  homeProfileDesc: "اشتراكك وإعداداتك",
+  homeRefreshDesc: "حدّث البيانات من تكساس",
+  homeStatusTitle: "حالة الحساب",
+  homeStatusSubscription: "الاشتراك",
+  homeStatusWhatsapp: "واتساب",
+  homeStatusSync: "المزامنة",
+  homeStatusChannel: "القناة",
+  homeStatusAgents: "الوكلاء",
+  homeChannelTitle: "القناة الرسمية",
+  homeChannelMember: "اشترك للتحديثات",
+  statusActive: "فعّال",
+  statusExpired: "منتهي",
+  statusVerified: "مفعّل ✅",
+  statusNotVerified: "غير مفعّل",
+  statusSynced: "متزامن",
+  statusPending: "قيد المزامنة",
+  profileTitle: "الملف",
+  profileSubtitle: "اشتراكك، تكساس، وإعدادات التطبيق",
+  profileDaysLeft: "متبقي",
+  profileSubscriptionUntil: "الاشتراك حتى",
+  profileWhatsappLink: "واتساب",
+  profileManageWhatsapp: "إدارة",
+  profileTexasRepair: "إعادة ربط حساب تكساس",
+  profileTexasRepairHint:
+    "لوحة المحاسبة تحتاج بيانات دخول تكساس. أدخل نفس اسم المستخدم وكلمة المرور.",
+  profileTexasRepairSave: "حفظ بيانات تكساس",
+  profileTexasRepairDone: "تم ربط حساب تكساس",
+  profileVersion: "إصدار التطبيق",
+  redeemSuccess: "تم تفعيل المفتاح بنجاح",
+  waPageTitle: "مركز واتساب",
+  waPageSubtitle: "فعّل رقمك وتابع مجموعات الوكلاء",
+  waActivationStatus: "حالة التفعيل",
+  waStatusActive: "مفعّل ✅",
+  waStatusPending: "بانتظار التفعيل",
+  waStatusInactive: "غير مفعّل",
+  waBotNumber: "رقم البوت",
+  waOpenWhatsapp: "افتح واتساب للتفعيل",
+  waInstructionsTitle: "طريقة التفعيل",
+  waInstructionsBody:
+    "احفظ الرقم، وافتح واتساب، وابعت كلمة تفعيل أو 😎 — لازم أول رسالة تكون منك.",
+  waVerifiedTitle: "واتساب مفعّل",
+  waChangeNumber: "تغيير رقم الواتساب",
+  waGroupsTitle: "مجموعات الوكلاء",
+  waGroupsTotal: "مجموعة نشطة",
+  waGroupsMissing: "ناقصة",
+  waRefreshGroups: "تحديث المجموعات",
+  waCreateMissingGroups: "إنشاء المجموعات الناقصة",
+  waGroupsRefreshStarted: "عم نحدّث المجموعات…",
+  waAntiBanNote:
+    "لازم أول رسالة تكون منك حتى يتفعل الرقم بأمان — البوت ما بيرسل أول رسالة.",
+  waRegisterTitle: "تسجيل رقم واتساب",
+  waPhoneLabel: "رقم واتساب (مع رمز الدولة)",
+  waRegisterSubmit: "تفعيل ومزامنة الحساب",
+  waRegisterSuccess: "تم حفظ رقمك. افتح واتساب وأرسل 😎 للبوت.",
+  waTechDetails: "تفاصيل تقنية",
+  waBotNotConfigured: "رقم البوت غير مضبوط في الخادم",
+  metricsSourceMtdSnapshot: "محدّث من تكساس",
+  metricsSourceMtdDaily: "تراكمي الشهر",
+  metricsSourceLiveTexas: "محدّث من تكساس",
+  metricsSourceEmpty: "قيد المزامنة",
+  profileTitleLegacy: "الملف الشخصي",
   redeemLicense: "تفعيل مفتاح",
   redeemHint: "حط المفتاح يلي وصلك من الإدارة",
   redeemSubmit: "فعّل",
@@ -167,3 +234,18 @@ export const ar = {
 } as const;
 
 export type ArKey = keyof typeof ar;
+
+export function metricsSourceLabel(source: string | undefined): string {
+  switch (source) {
+    case "mtd_snapshot":
+      return ar.metricsSourceMtdSnapshot;
+    case "mtd_daily_rows":
+      return ar.metricsSourceMtdDaily;
+    case "live_texas_fallback":
+      return ar.metricsSourceLiveTexas;
+    case "empty_no_data":
+      return ar.metricsSourceEmpty;
+    default:
+      return source ?? "—";
+  }
+}
