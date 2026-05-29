@@ -20,6 +20,7 @@ import {
   auditDirectChildVisibility,
   filterOutViewerSelfChildren,
   mergeDirectChildrenWithTexas,
+  computeSubAgentStats,
   type DirectChildDbRow,
   type ViewerIdentity,
 } from "@/lib/texas/sub-agents-direct-merge";
@@ -167,12 +168,22 @@ export async function POST(request: Request) {
       excludedViewerSelf = 0;
     }
 
-    if (body.forceRefresh && dbChildren.length > 0) {
+    if (dbChildren.length > 0) {
       const childIds = dbChildren.map((c) => c.id);
       try {
-        await refreshStaleSubtreeLedgers(supabase, childIds, ledgerDate);
+        const syncResult = await refreshStaleSubtreeLedgers(
+          supabase,
+          childIds,
+          ledgerDate
+        );
+        console.info("[sub-agents] child ledger refresh", {
+          viewerId: user.id,
+          ledgerDate,
+          forceRefresh: Boolean(body.forceRefresh),
+          ...syncResult,
+        });
       } catch (syncErr) {
-        console.warn("[sub-agents] child ledger refresh on forceRefresh failed", {
+        console.warn("[sub-agents] child ledger refresh failed", {
           viewerId: user.id,
           error:
             syncErr instanceof Error ? syncErr.message : String(syncErr),
@@ -200,7 +211,7 @@ export async function POST(request: Request) {
     const migrationProbe = await probeWhatsAppMigrations(supabase);
 
     // 5) Merge: iterate DB children, enrich or stub, drop non-direct Texas rows
-    const { agents: mergedAgents, stats, diagnostics: mergeDiagnostics } =
+    const { agents: mergedAgents, diagnostics: mergeDiagnostics } =
       mergeDirectChildrenWithTexas(dbChildren, texasPayload);
 
     const audit = auditDirectChildVisibility(user.id, dbChildren, texasPayload);
@@ -208,6 +219,10 @@ export async function POST(request: Request) {
     const {
       agents: enrichedAgents,
       agentRowsWithMtdMetrics,
+      rowsUsingMtdSnapshot,
+      rowsUsingDailyRowsFallback,
+      rowsUsingLiveTexasFallback,
+      rowsEmptyNoData,
       whatsappGroupStatusCount,
       commissionStatusCount,
     } = await enrichSubAgentsWithPerAgentData(
@@ -217,6 +232,8 @@ export async function POST(request: Request) {
       ledgerDate,
       { parentWhatsappVerified }
     );
+
+    const stats = computeSubAgentStats(enrichedAgents);
 
     const credCheck = await resolveUserCredentials(supabase, user.id);
 
@@ -263,6 +280,10 @@ export async function POST(request: Request) {
       ledgerDate,
       directChildrenReturned: enrichedAgents.length,
       agentRowsWithMtdMetrics,
+      rowsUsingMtdSnapshot,
+      rowsUsingDailyRowsFallback,
+      rowsUsingLiveTexasFallback,
+      rowsEmptyNoData,
       whatsappGroupStatusCount,
       commissionStatusCount,
       viewerAffiliateId,

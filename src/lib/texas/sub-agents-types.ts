@@ -1,5 +1,11 @@
 import type { MtdTexasStrategy } from "@/lib/accounting/mtd-ledger-metrics";
 
+export type SubAgentMetricsSource =
+  | "mtd_snapshot"
+  | "mtd_daily_rows"
+  | "live_texas_fallback"
+  | "empty_no_data";
+
 export interface SubAgentMtdMetrics {
   tebat_mtd: number;
   suhoubat_mtd: number;
@@ -10,6 +16,10 @@ export interface SubAgentMtdMetrics {
   baqi_qadim: number;
   al_nihai_mtd: number;
   texas_strategy: MtdTexasStrategy;
+  current_snapshot_found?: boolean;
+  baseline_snapshot_found?: boolean;
+  daily_rows_count?: number;
+  is_empty_fallback?: boolean;
 }
 
 export interface SubAgentWhatsAppStatus {

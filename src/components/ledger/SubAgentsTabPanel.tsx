@@ -334,6 +334,12 @@ function AgentRowBlock({
                   value={agent.mtd.texas_strategy}
                 />
               ) : null}
+              {agent.metrics_source ? (
+                <Detail
+                  label="metrics_source"
+                  value={agent.metrics_source}
+                />
+              ) : null}
               <Detail
                 label={ar.subAgentWhatsappGroup}
                 value={

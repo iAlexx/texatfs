@@ -1,74 +1,160 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyMtdToSubAgentRow,
+  liveMetricsHaveData,
+  liveMetricsToMtdShape,
+  resolveSubAgentRowMetrics,
   mtdMetricsToSubAgentShape,
 } from "@/lib/accounting/sub-agents-row-enrichment";
+import {
+  isMtdEmptyFallback,
+  type MtdLedgerMetricsResult,
+} from "@/lib/accounting/mtd-ledger-metrics";
 import type { TexasSubAgentRow } from "@/lib/texas/texas-live-sub-agents";
 
-function baseAgent(
-  userId: string,
-  affiliateId: string,
-  tebat: number
-): TexasSubAgentRow {
+function liveAgent(tebat: number, suhoubat = 0): TexasSubAgentRow {
+  const al_farq = tebat - suhoubat;
   return {
-    affiliateId,
-    user_id: userId,
-    username: `Agent ${affiliateId}`,
+    affiliateId: "aff-1",
+    user_id: "user-1",
+    username: "Agent One",
     email: "",
     texasRole: "agent",
     mainCurrency: "NSP",
     balance: 0,
     has_live_texas_data: true,
     metrics: {
-      tebat: 0,
-      suhoubat: 0,
-      al_farq: 0,
-      al_harq: 0,
+      tebat,
+      suhoubat,
+      al_farq,
+      al_harq: al_farq,
       wasel_menho: 0,
       wasel_eleih: 0,
       baqi_qadim: 0,
-      al_nihai: 0,
+      al_nihai: al_farq,
     },
   };
 }
 
+function emptyMtdResult(): MtdLedgerMetricsResult {
+  return {
+    tebatMtd: 0,
+    suhoubatMtd: 0,
+    waselMenhoMtd: 0,
+    waselEleihMtd: 0,
+    baqiQadimMtd: 0,
+    alFarqMtd: 0,
+    alHarqMtd: 0,
+    alNihaiMtd: 0,
+    discrepancyFlag: false,
+    texasStrategy: "sum_daily_ledger_rows",
+    currentSnapshotFound: false,
+    baselineSnapshotFound: false,
+    dailyRowsCount: 0,
+    isEmptyFallback: true,
+  };
+}
+
+function snapshotMtdResult(): MtdLedgerMetricsResult {
+  return {
+    tebatMtd: 3_000_000,
+    suhoubatMtd: 500_000,
+    waselMenhoMtd: 0,
+    waselEleihMtd: 0,
+    baqiQadimMtd: 0,
+    alFarqMtd: 2_500_000,
+    alHarqMtd: 2_500_000,
+    alNihaiMtd: 2_500_000,
+    discrepancyFlag: false,
+    texasStrategy: "transaction_snapshot_delta",
+    currentSnapshotFound: true,
+    baselineSnapshotFound: true,
+    dailyRowsCount: 0,
+    isEmptyFallback: false,
+  };
+}
+
 describe("sub-agents-row-enrichment", () => {
-  it("applyMtdToSubAgentRow uses child metrics not master defaults", () => {
-    const mtdA = mtdMetricsToSubAgentShape({
-      tebatMtd: 1_000_000,
-      suhoubatMtd: 200_000,
-      waselMenhoMtd: 10,
-      waselEleihMtd: 5,
-      baqiQadimMtd: 100,
-      alFarqMtd: 800_000,
-      alHarqMtd: 800_000,
-      alNihaiMtd: 795_000,
-      discrepancyFlag: false,
-      texasStrategy: "transaction_snapshot_delta",
-    });
-    const mtdB = mtdMetricsToSubAgentShape({
-      tebatMtd: 2_000_000,
+  it("live fallback: keeps non-zero Texas metrics when MTD is empty", () => {
+    const agent = liveAgent(2_500_000, 100_000);
+    const resolved = resolveSubAgentRowMetrics(agent, emptyMtdResult());
+
+    assert.equal(resolved.metrics_source, "live_texas_fallback");
+    assert.equal(resolved.metrics.tebat, 2_500_000);
+    assert.equal(resolved.metrics.suhoubat, 100_000);
+    assert.equal(resolved.metrics.al_farq, 2_400_000);
+    assert.notEqual(resolved.metrics.tebat, 0);
+  });
+
+  it("MTD snapshot: uses child snapshot metrics when available", () => {
+    const agent = liveAgent(999, 1);
+    const resolved = resolveSubAgentRowMetrics(agent, snapshotMtdResult());
+
+    assert.equal(resolved.metrics_source, "mtd_snapshot");
+    assert.equal(resolved.metrics.tebat, 3_000_000);
+    assert.equal(resolved.metrics.suhoubat, 500_000);
+    assert.equal(resolved.mtd.current_snapshot_found, true);
+  });
+
+  it("daily rows fallback: uses summed daily ledger rows", () => {
+    const agent = liveAgent(50_000);
+    const mtd: MtdLedgerMetricsResult = {
+      ...emptyMtdResult(),
+      tebatMtd: 800_000,
       suhoubatMtd: 50_000,
-      waselMenhoMtd: 0,
-      waselEleihMtd: 0,
-      baqiQadimMtd: 0,
-      alFarqMtd: 1_950_000,
-      alHarqMtd: 1_950_000,
-      alNihaiMtd: 1_950_000,
-      discrepancyFlag: false,
-      texasStrategy: "transaction_snapshot_delta",
-    });
+      alFarqMtd: 750_000,
+      alHarqMtd: 750_000,
+      alNihaiMtd: 750_000,
+      dailyRowsCount: 5,
+      isEmptyFallback: false,
+    };
 
-    const rowA = applyMtdToSubAgentRow(baseAgent("user-a", "aff-a", 1), mtdA);
-    const rowB = applyMtdToSubAgentRow(baseAgent("user-b", "aff-b", 2), mtdB);
+    const resolved = resolveSubAgentRowMetrics(agent, mtd);
+    assert.equal(resolved.metrics_source, "mtd_daily_rows");
+    assert.equal(resolved.metrics.tebat, 800_000);
+  });
 
-    assert.equal(rowA.user_id, "user-a");
-    assert.equal(rowB.user_id, "user-b");
-    assert.equal(rowA.metrics.tebat, 1_000_000);
-    assert.equal(rowB.metrics.tebat, 2_000_000);
-    assert.notEqual(rowA.metrics.tebat, rowB.metrics.tebat);
-    assert.equal(rowA.mtd?.tebat_mtd, 1_000_000);
-    assert.equal(rowB.mtd?.tebat_mtd, 2_000_000);
+  it("empty no-data: only when no live Texas and no MTD rows/snapshot", () => {
+    const agent: TexasSubAgentRow = {
+      ...liveAgent(0, 0),
+      has_live_texas_data: false,
+    };
+    const resolved = resolveSubAgentRowMetrics(agent, emptyMtdResult());
+
+    assert.equal(resolved.metrics_source, "empty_no_data");
+    assert.equal(resolved.metrics.tebat, 0);
+  });
+
+  it("liveMetricsHaveData detects non-zero Texas row", () => {
+    assert.equal(liveMetricsHaveData(liveAgent(1)), true);
+    assert.equal(liveMetricsHaveData(liveAgent(0, 0)), false);
+  });
+
+  it("isMtdEmptyFallback matches diagnostics contract", () => {
+    assert.equal(isMtdEmptyFallback(emptyMtdResult()), true);
+    assert.equal(isMtdEmptyFallback(snapshotMtdResult()), false);
+  });
+
+  it("two agents with different live metrics stay different after empty MTD", () => {
+    const a = liveAgent(1_000_000);
+    const b = liveAgent(2_000_000);
+    const ra = resolveSubAgentRowMetrics(a, emptyMtdResult());
+    const rb = resolveSubAgentRowMetrics(b, emptyMtdResult());
+    assert.notEqual(ra.metrics.tebat, rb.metrics.tebat);
+    assert.equal(ra.metrics_source, "live_texas_fallback");
+    assert.equal(rb.metrics_source, "live_texas_fallback");
+  });
+
+  it("mtdMetricsToSubAgentShape carries diagnostics", () => {
+    const shape = mtdMetricsToSubAgentShape(snapshotMtdResult());
+    assert.equal(shape.current_snapshot_found, true);
+    assert.equal(shape.tebat_mtd, 3_000_000);
+  });
+
+  it("liveMetricsToMtdShape mirrors live metrics", () => {
+    const agent = liveAgent(123, 45);
+    const mtd = liveMetricsToMtdShape(agent);
+    assert.equal(mtd.tebat_mtd, 123);
+    assert.equal(mtd.suhoubat_mtd, 45);
   });
 });

@@ -30,6 +30,7 @@ const log = createLogger("texas/live-sub-agents");
 
 import type {
   SubAgentCommissionStatus,
+  SubAgentMetricsSource,
   SubAgentMtdMetrics,
   SubAgentWhatsAppStatus,
 } from "@/lib/texas/sub-agents-types";
@@ -48,6 +49,8 @@ export interface TexasSubAgentRow {
   has_live_texas_data?: boolean;
   /** Month-to-date cumulative (per child user_id — not master). */
   mtd?: SubAgentMtdMetrics;
+  /** Where displayed metrics came from. */
+  metrics_source?: SubAgentMetricsSource;
   whatsapp?: SubAgentWhatsAppStatus;
   commission?: SubAgentCommissionStatus;
 }

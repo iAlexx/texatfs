@@ -32,6 +32,17 @@ export interface MtdLedgerMetrics {
   texasStrategy: MtdTexasStrategy;
 }
 
+export interface MtdLedgerMetricsDiagnostics {
+  currentSnapshotFound: boolean;
+  baselineSnapshotFound: boolean;
+  dailyRowsCount: number;
+  /** True when no snapshot and no daily ledger rows contributed tebat/suhoubat. */
+  isEmptyFallback: boolean;
+}
+
+export type MtdLedgerMetricsResult = MtdLedgerMetrics &
+  MtdLedgerMetricsDiagnostics;
+
 export function computeMtdFromTransactionSnapshots(
   current: Pick<NormalizedTexasSnapshot, "totalDeposit" | "totalWithdraw">,
   baselineBeforeMonth: Pick<
@@ -197,11 +208,19 @@ async function loadSnapshotForDate(
  * Wasel: sum confirmed WhatsApp transactions on ledgers in [monthStart, ledgerDate].
  * Baqi_qadim: al_nihai from last closed ledger strictly before month start.
  */
+export function isMtdEmptyFallback(mtd: MtdLedgerMetricsDiagnostics): boolean {
+  return (
+    !mtd.currentSnapshotFound &&
+    mtd.dailyRowsCount === 0 &&
+    mtd.isEmptyFallback
+  );
+}
+
 export async function computeMtdLedgerMetricsForUser(
   supabase: SupabaseClient,
   userId: string,
   ledgerDate: string
-): Promise<MtdLedgerMetrics> {
+): Promise<MtdLedgerMetricsResult> {
   const monthStart = resolveMonthStart(ledgerDate);
   const dayBeforeMonth = previousCalendarDay(monthStart);
 
@@ -234,6 +253,9 @@ export async function computeMtdLedgerMetricsForUser(
     dayBeforeMonth
   );
 
+  const currentSnapshotFound = Boolean(currentSnap);
+  const baselineSnapshotFound = Boolean(baselineSnap);
+
   if (currentSnap) {
     const { tebatMtd, suhoubatMtd } = computeMtdFromTransactionSnapshots(
       currentSnap,
@@ -248,6 +270,10 @@ export async function computeMtdLedgerMetricsForUser(
         baqiQadimMtd,
       }),
       texasStrategy: "transaction_snapshot_delta",
+      currentSnapshotFound,
+      baselineSnapshotFound,
+      dailyRowsCount: 0,
+      isEmptyFallback: false,
     };
   }
 
@@ -258,11 +284,15 @@ export async function computeMtdLedgerMetricsForUser(
     .gte("ledger_date", monthStart)
     .lte("ledger_date", ledgerDate);
 
+  const dailyRowsCount = mtdRows?.length ?? 0;
+
   const monthly = computeMonthlyCumulativeLedgerView({
     ledgerDate,
     rowsFromMonthStartInclusive: (mtdRows ?? []) as LedgerRowLike[],
     baqiQadimFixedCarry: baqiQadimMtd,
   });
+
+  const isEmptyFallback = dailyRowsCount === 0;
 
   return {
     tebatMtd: monthly.tebatMtd,
@@ -275,6 +305,10 @@ export async function computeMtdLedgerMetricsForUser(
     alNihaiMtd: monthly.alNihaiMtd,
     discrepancyFlag: monthly.discrepancyFlag,
     texasStrategy: "sum_daily_ledger_rows",
+    currentSnapshotFound: false,
+    baselineSnapshotFound,
+    dailyRowsCount,
+    isEmptyFallback,
   };
 }
 

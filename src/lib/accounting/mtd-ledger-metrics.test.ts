@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildMtdLedgerMetrics,
   computeMtdFromTransactionSnapshots,
+  isMtdEmptyFallback,
 } from "@/lib/accounting/mtd-ledger-metrics";
 
 describe("MTD cumulative from Transaction snapshots", () => {
@@ -40,5 +41,26 @@ describe("MTD cumulative from Transaction snapshots", () => {
     });
     assert.equal(mtd.alFarqMtd, 2_500_000);
     assert.equal(mtd.alHarqMtd, mtd.alFarqMtd);
+  });
+
+  it("isMtdEmptyFallback is true only without snapshot or daily rows", () => {
+    assert.equal(
+      isMtdEmptyFallback({
+        currentSnapshotFound: false,
+        baselineSnapshotFound: false,
+        dailyRowsCount: 0,
+        isEmptyFallback: true,
+      }),
+      true
+    );
+    assert.equal(
+      isMtdEmptyFallback({
+        currentSnapshotFound: true,
+        baselineSnapshotFound: true,
+        dailyRowsCount: 0,
+        isEmptyFallback: false,
+      }),
+      false
+    );
   });
 });
