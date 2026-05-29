@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ReportRenderData } from "@/lib/report/types";
-import { computeMonthlyCumulativeLedgerView } from "@/lib/accounting/monthly-ledger-view";
+import {
+  applyMtdMetricsToLedger,
+  computeMtdLedgerMetricsForUser,
+} from "@/lib/accounting/mtd-ledger-metrics";
+import { mapLedgerRow } from "@/lib/supabase/client";
+import type { DailyLedger } from "@/lib/supabase/database.types";
 
 export async function loadReportRenderData(
   supabase: SupabaseClient,
@@ -27,74 +32,27 @@ export async function loadReportRenderData(
   if (userError) throw userError;
   if (!user) return null;
 
-  const mode = options?.mode ?? "daily";
-  if (mode !== "monthly") {
-    return {
-      ledger: {
-        id: ledger.id,
-        ledger_date: ledger.ledger_date,
-        status: ledger.status,
-        tebat: Number(ledger.tebat),
-        suhoubat: Number(ledger.suhoubat),
-        al_farq: Number(ledger.al_farq),
-        al_harq: Number(ledger.al_harq),
-        wasel_menho: Number(ledger.wasel_menho),
-        wasel_eleih: Number(ledger.wasel_eleih),
-        baqi_qadim: Number(ledger.baqi_qadim),
-        al_nihai: Number(ledger.al_nihai),
-        discrepancy_flag: ledger.discrepancy_flag,
-      },
-      user: {
-        display_name: user.display_name,
-        texas_username: user.texas_username,
-        role: user.role,
-      },
-    };
+  const mode = options?.mode ?? "monthly";
+  const baseLedger = mapLedgerRow(ledger) as DailyLedger;
+
+  let displayLedger: DailyLedger = baseLedger;
+
+  if (mode !== "daily") {
+    const mtd = await computeMtdLedgerMetricsForUser(
+      supabase,
+      String(ledger.user_id),
+      String(ledger.ledger_date)
+    );
+    displayLedger = applyMtdMetricsToLedger(baseLedger, mtd);
   }
 
-  // Monthly cumulative view (MTD): sums from month start + fixed carry
-  // from previous month end (baqi_qadim).
-  const ledgerDate = String(ledger.ledger_date);
-  const monthStart = `${ledgerDate.slice(0, 7)}-01`;
-  const userId = String(ledger.user_id);
-
-  const { data: mtdRows } = await supabase
-    .from("daily_ledgers")
-    .select("tebat,suhoubat,wasel_menho,wasel_eleih")
-    .eq("user_id", userId)
-    .gte("ledger_date", monthStart)
-    .lte("ledger_date", ledgerDate);
-
-  const { data: prevClosed } = await supabase
-    .from("daily_ledgers")
-    .select("al_nihai")
-    .eq("user_id", userId)
-    .eq("status", "closed")
-    .lt("ledger_date", monthStart)
-    .order("ledger_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const prevCarry = Number(prevClosed?.al_nihai ?? 0);
-
-  const mtdView = computeMonthlyCumulativeLedgerView({
-    ledgerDate,
-    rowsFromMonthStartInclusive: (mtdRows ?? []) as Array<{
-      tebat: number | string | null;
-      suhoubat: number | string | null;
-      wasel_menho: number | string | null;
-      wasel_eleih: number | string | null;
-    }>,
-    baqiQadimFixedCarry: prevCarry,
-  });
-
-  const monthKey = ledgerDate.slice(0, 7);
+  const monthKey = String(ledger.ledger_date).slice(0, 7);
   const { data: commissionRow } = await supabase
     .from("monthly_agent_commissions")
     .select(
       "month_key, burn_amount, percent, commission_amount, final_before_commission, final_after_commission, status"
     )
-    .eq("agent_user_id", userId)
+    .eq("agent_user_id", ledger.user_id)
     .eq("month_key", monthKey)
     .maybeSingle();
 
@@ -102,22 +60,22 @@ export async function loadReportRenderData(
     commissionRow?.status === "completed" &&
     commissionRow.final_after_commission != null
       ? Number(commissionRow.final_after_commission)
-      : mtdView.alNihaiMtd;
+      : displayLedger.al_nihai;
 
   return {
     ledger: {
-      id: ledger.id,
-      ledger_date: ledger.ledger_date,
-      status: ledger.status,
-      tebat: mtdView.tebatMtd,
-      suhoubat: mtdView.suhoubatMtd,
-      al_farq: mtdView.alFarqMtd,
-      al_harq: mtdView.alHarqMtd,
-      wasel_menho: mtdView.waselMenhoMtd,
-      wasel_eleih: mtdView.waselEleihMtd,
-      baqi_qadim: mtdView.baqiQadimMtd,
+      id: displayLedger.id,
+      ledger_date: displayLedger.ledger_date,
+      status: displayLedger.status,
+      tebat: displayLedger.tebat,
+      suhoubat: displayLedger.suhoubat,
+      al_farq: displayLedger.al_farq,
+      al_harq: displayLedger.al_harq,
+      wasel_menho: displayLedger.wasel_menho,
+      wasel_eleih: displayLedger.wasel_eleih,
+      baqi_qadim: displayLedger.baqi_qadim,
       al_nihai: displayAlNihai,
-      discrepancy_flag: mtdView.discrepancyFlag,
+      discrepancy_flag: displayLedger.discrepancy_flag,
     },
     user: {
       display_name: user.display_name,

@@ -4,6 +4,7 @@ import {
   isLastDayOfMonthInLedgerTz,
   resolveLedgerDate,
   resolveReportScreenshotMode,
+  REPORT_MODE_MONTHLY_MTD,
 } from "@/lib/cron/ledger-date";
 
 describe("ledger-date", () => {
@@ -20,14 +21,8 @@ describe("ledger-date", () => {
     assert.equal(isLastDayOfMonthInLedgerTz(midMonth), false);
   });
 
-  it("uses monthly screenshot mode only on last calendar day", () => {
-    assert.equal(
-      resolveReportScreenshotMode(new Date("2026-05-31T12:00:00.000Z")),
-      "monthly"
-    );
-    assert.equal(
-      resolveReportScreenshotMode(new Date("2026-05-15T12:00:00.000Z")),
-      "daily"
-    );
+  it("WhatsApp daily report always uses monthly MTD mode", () => {
+    assert.equal(resolveReportScreenshotMode(), "monthly");
+    assert.equal(REPORT_MODE_MONTHLY_MTD, "monthly_mtd");
   });
 });

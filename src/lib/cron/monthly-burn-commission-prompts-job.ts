@@ -111,7 +111,7 @@ export async function runMonthlyBurnCommissionPromptsJob(): Promise<{
       }
 
       const promptText =
-        `مرحباً، انتهى شهر *${monthLabel}*.\n` +
+        `انتهى شهر *${monthLabel}*.\n` +
         `الوكيل *${agentName}* طلع حرقه عندك: *${fmt(settlement.burnAmount)}*.\n` +
         `كم بدك تعطيه نسبة مئوية؟`;
 

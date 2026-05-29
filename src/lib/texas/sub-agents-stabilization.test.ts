@@ -97,14 +97,13 @@ describe("logout disabled by default", () => {
   });
 });
 
-describe("ledger viewMode defaults to daily", () => {
-  it("use-ledger-api defaults viewMode to daily", () => {
+describe("ledger viewMode defaults to monthly MTD", () => {
+  it("use-ledger-api defaults viewMode to monthly", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(
       join(here, "..", "..", "hooks", "use-ledger-api.ts"),
       "utf8"
     );
-    assert.match(src, /viewMode \?\? "daily"/);
-    assert.doesNotMatch(src, /viewMode \?\? "monthly"/);
+    assert.match(src, /viewMode \?\? "monthly"/);
   });
 });

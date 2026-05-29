@@ -98,6 +98,20 @@ function isWithdrawType(record: AgentTransferRecord): boolean {
 let _transferTypeLogged = false;
 let _transferDiagnosticsLogged = false;
 
+export function buildTransferDateFilter(
+  fromDate: string,
+  toDate: string
+): TexasFilterMap {
+  return {
+    date: {
+      action: "=",
+      from: fromDate,
+      to: toDate,
+      value: toDate,
+    },
+  };
+}
+
 export interface FetchAgentTransfersOptions {
   pageSize?: number;
   /** Scope to a single affiliate (Master/Player). Uses client-side fromId/toId attribution. */

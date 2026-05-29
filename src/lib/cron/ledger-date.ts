@@ -31,7 +31,10 @@ export function isLastDayOfMonthInLedgerTz(now = new Date()): boolean {
 }
 
 export function resolveReportScreenshotMode(
-  now = new Date()
-): "daily" | "monthly" {
-  return isLastDayOfMonthInLedgerTz(now) ? "monthly" : "daily";
+  _now = new Date()
+): "monthly" {
+  return "monthly";
 }
+
+/** WhatsApp / report label for MTD mode. */
+export const REPORT_MODE_MONTHLY_MTD = "monthly_mtd" as const;

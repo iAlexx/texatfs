@@ -19,7 +19,7 @@ export function ExecutiveLedgerReport({
   ledger,
   targetUserId,
   disableShare = false,
-  viewMode = "daily",
+  viewMode = "monthly",
   monthlyCommission,
   texasPanel,
 }: {
@@ -63,13 +63,13 @@ export function ExecutiveLedgerReport({
 
   return (
     <>
-      {viewMode === "monthly" && (
+      {viewMode !== "daily" && (
         <motion.p
           className="mb-3 rounded-xl border border-gold/25 bg-gold/5 px-3 py-2 text-center text-[11px] text-gold/90"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
         >
-          {ar.ledgerMonthlyCumulative}
+          {ar.ledgerMtdBanner}
         </motion.p>
       )}
 

@@ -9,25 +9,44 @@ function mockSupabaseForOnboarding(user: WhatsAppOnboardingUser | null) {
 
   const supabase = {
     from(table: string) {
-      if (table !== "users") throw new Error(`unexpected ${table}`);
-      return {
-        select: () => ({
-          eq: (_col: string, val: string) => ({
-            maybeSingle: async () => {
-              if (user && user.whatsapp_phone === val) {
-                return { data: user, error: null };
-              }
-              return { data: null, error: null };
+      if (table === "users") {
+        return {
+          select: () => ({
+            eq: (col: string, val: string) => {
+              const chain = {
+                eq: (_col2: string, _val2: unknown) => ({
+                  maybeSingle: async () => ({ data: [], error: null }),
+                }),
+                maybeSingle: async () => {
+                  if (col === "whatsapp_phone" && user && user.whatsapp_phone === val) {
+                    return { data: user, error: null };
+                  }
+                  return { data: null, error: null };
+                },
+              };
+              return chain;
             },
           }),
-        }),
-        update: (payload: { onboarding_status?: string }) => {
-          if (payload.onboarding_status) {
-            statusUpdates.push(payload.onboarding_status);
-          }
-          return { eq: async () => ({ error: null }) };
-        },
-      };
+          update: (payload: { onboarding_status?: string; whatsapp_opt_out?: boolean }) => {
+            if (payload.onboarding_status) {
+              statusUpdates.push(payload.onboarding_status);
+            }
+            return { eq: async () => ({ error: null }) };
+          },
+        };
+      }
+      if (table === "whatsapp_agent_groups") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                ilike: () => Promise.resolve({ data: [], error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
     },
     statusUpdates,
   };
@@ -36,7 +55,7 @@ function mockSupabaseForOnboarding(user: WhatsAppOnboardingUser | null) {
 }
 
 describe("handleWhatsAppOnboardingPrivate", () => {
-  it("ignores phone with no matching user", async () => {
+  it("replies when activation message but no matching user", async () => {
     const supabase = mockSupabaseForOnboarding(null);
     const handled = await handleWhatsAppOnboardingPrivate(supabase, {
       eventType: "messages.received",
@@ -47,7 +66,7 @@ describe("handleWhatsAppOnboardingPrivate", () => {
       quotedMessageId: null,
       timestamp: Date.now(),
     });
-    assert.equal(handled, false);
+    assert.equal(handled, true);
     assert.equal(supabase.statusUpdates.length, 0);
   });
 
@@ -117,7 +136,7 @@ describe("handleWhatsAppOnboardingPrivate", () => {
     assert.equal(supabase.statusUpdates.length, 0);
   });
 
-  it("ignores already verified user", async () => {
+  it("re-activation on verified user schedules missing groups", async () => {
     const supabase = mockSupabaseForOnboarding({
       id: "u4",
       whatsapp_phone: "963944444444",
@@ -135,7 +154,7 @@ describe("handleWhatsAppOnboardingPrivate", () => {
       timestamp: Date.now(),
     });
 
-    assert.equal(handled, false);
+    assert.equal(handled, true);
     assert.equal(supabase.statusUpdates.length, 0);
   });
 });

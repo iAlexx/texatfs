@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils/cn";
 export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
   const [ledgerViewMode, setLedgerViewMode] = useState<"daily" | "monthly">(
-    "daily"
+    "monthly"
   );
   const [viewTexasAffiliateId, setViewTexasAffiliateId] = useState<
     string | null

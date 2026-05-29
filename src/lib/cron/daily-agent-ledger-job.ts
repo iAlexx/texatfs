@@ -1,7 +1,7 @@
 import { createLogger } from "@/lib/observability/logger";
 import { SupabaseAccountingRepository } from "@/lib/accounting/SupabaseAccountingRepository";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { resolveLedgerDate, resolveReportScreenshotMode, sleep } from "@/lib/cron/ledger-date";
+import { resolveLedgerDate, REPORT_MODE_MONTHLY_MTD, sleep } from "@/lib/cron/ledger-date";
 import { captureDailyReportImage } from "@/lib/report/report-screenshot";
 import { formatLedgerDate } from "@/lib/utils/format";
 import { sendWhatsAppImage } from "@/lib/whatsapp/client";
@@ -78,6 +78,8 @@ export async function refreshAgentLedgerViaMaster(
 
 export async function runDailyAgentLedgerDispatchJob(): Promise<{
   ledgerDate: string;
+  timezone: string;
+  reportMode: string;
   totalGroups: number;
   attempted: number;
   sent: number;
@@ -85,7 +87,8 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
   failed: number;
 }> {
   const ledgerDate = resolveLedgerDate();
-  const reportMode = resolveReportScreenshotMode();
+  const reportMode = REPORT_MODE_MONTHLY_MTD;
+  const timezone = process.env.LEDGER_TIMEZONE?.trim() || "Asia/Damascus";
   const supabase = getSupabaseServiceClient();
   const repository = new SupabaseAccountingRepository(supabase);
   const orchestrator = new DailyReportOrchestrator(repository, supabase);
@@ -105,7 +108,12 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
   let skippedDedup = 0;
   let failed = 0;
 
-  log.info("agent ledger dispatch start", { ledgerDate, totalGroups });
+  log.info("agent ledger dispatch start", {
+    ledgerDate,
+    reportMode,
+    timezone,
+    totalGroups,
+  });
 
   if (totalGroups === 0) {
     log.warn(
@@ -114,6 +122,8 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
     );
     return {
       ledgerDate,
+      timezone,
+      reportMode,
       totalGroups: 0,
       attempted: 0,
       sent: 0,
@@ -262,7 +272,7 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
 
     try {
       const image = await retryAsync(
-        () => captureDailyReportImage(ledgerRow.id, { mode: reportMode }),
+        () => captureDailyReportImage(ledgerRow.id, { mode: "monthly" }),
         {
           maxAttempts: 2,
           baseDelayMs: 1500,
@@ -270,10 +280,7 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
         }
       );
 
-      const caption =
-        reportMode === "monthly"
-          ? `📊 تقرير شهري · ${formatLedgerDate(ledgerDate)} · TEXAS FUNDS`
-          : `📊 ${formatLedgerDate(ledgerDate)} · TEXAS FUNDS`;
+      const caption = `📊 تقرير تراكمي من أول الشهر حتى ${formatLedgerDate(ledgerDate)} · TEXAS FUNDS`;
 
       const sendResult = await retryAsync(
         () => sendWhatsAppImage(groupId, image, caption),
@@ -328,6 +335,8 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
 
   return {
     ledgerDate,
+    timezone,
+    reportMode,
     totalGroups,
     attempted,
     sent,

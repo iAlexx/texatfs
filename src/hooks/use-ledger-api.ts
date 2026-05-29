@@ -62,7 +62,7 @@ export function useLedgerSession(
       viewUserId ?? "self",
       options?.forceSync ?? false,
       options?.syncNetwork ?? false,
-      options?.viewMode ?? "daily",
+      options?.viewMode ?? "monthly",
     ],
     enabled: isReady && canAuthenticate && !!ledgerDate,
     queryFn: async () => {
@@ -152,7 +152,7 @@ export function useLedgerSession(
               viewUserId ?? "self",
               options?.forceSync ?? false,
               options?.syncNetwork ?? false,
-              options?.viewMode ?? "daily",
+              options?.viewMode ?? "monthly",
             ],
             (prev) =>
               prev

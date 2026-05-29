@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeMonthlyCumulativeLedgerView } from "@/lib/accounting/monthly-ledger-view";
+import {
+  applyMtdMetricsToLedger,
+  computeMtdLedgerMetricsForUser,
+} from "@/lib/accounting/mtd-ledger-metrics";
 import { roundMoney } from "@/lib/accounting/formulas";
+import type { DailyLedger } from "@/lib/supabase/database.types";
 
 export function resolvePreviousMonthKey(ledgerDateIso: string): string {
   const y = Number(ledgerDateIso.slice(0, 4));
@@ -54,7 +58,7 @@ export interface MonthlyAgentSettlement {
 }
 
 /**
- * Monthly burn = |al_harq MTD| from daily ledger rows (Texas panel deltas).
+ * Monthly burn = |al_harq MTD| (Transaction snapshots + wasel MTD).
  * Final before commission = al_nihai MTD for the closed month.
  */
 export async function loadMonthlyAgentSettlement(
@@ -65,42 +69,78 @@ export async function loadMonthlyAgentSettlement(
   const monthStart = monthKeyToMonthStart(monthKey);
   const monthEnd = monthKeyToMonthEnd(monthKey);
 
-  const { data: mtdRows, error } = await supabase
+  const { data: ledgerRow } = await supabase
     .from("daily_ledgers")
-    .select("tebat,suhoubat,wasel_menho,wasel_eleih")
+    .select("id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at")
     .eq("user_id", agentUserId)
-    .gte("ledger_date", monthStart)
-    .lte("ledger_date", monthEnd);
-
-  if (error) throw error;
-  if (!mtdRows?.length) return null;
-
-  const { data: prevClosed } = await supabase
-    .from("daily_ledgers")
-    .select("al_nihai")
-    .eq("user_id", agentUserId)
-    .eq("status", "closed")
-    .lt("ledger_date", monthStart)
-    .order("ledger_date", { ascending: false })
-    .limit(1)
+    .eq("ledger_date", monthEnd)
     .maybeSingle();
 
-  const mtd = computeMonthlyCumulativeLedgerView({
-    ledgerDate: monthEnd,
-    rowsFromMonthStartInclusive: mtdRows,
-    baqiQadimFixedCarry: Number(prevClosed?.al_nihai ?? 0),
-  });
+  if (!ledgerRow) {
+    const { data: anyRow } = await supabase
+      .from("daily_ledgers")
+      .select("id, user_id, ledger_date, status, tebat, suhoubat, al_farq, al_harq, wasel_menho, wasel_eleih, baqi_qadim, al_nihai, discrepancy_flag, updated_at")
+      .eq("user_id", agentUserId)
+      .gte("ledger_date", monthStart)
+      .lte("ledger_date", monthEnd)
+      .order("ledger_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!anyRow) return null;
+    const base = mapLedgerFromRow(anyRow);
+    const mtd = await computeMtdLedgerMetricsForUser(
+      supabase,
+      agentUserId,
+      base.ledger_date
+    );
+    const ledger = applyMtdMetricsToLedger(base, mtd);
+    return settlementFromLedger(monthKey, monthEnd, ledger);
+  }
 
-  const burnAmount = roundMoney(Math.abs(mtd.alHarqMtd));
+  const base = mapLedgerFromRow(ledgerRow);
+  const mtd = await computeMtdLedgerMetricsForUser(
+    supabase,
+    agentUserId,
+    base.ledger_date
+  );
+  const ledger = applyMtdMetricsToLedger(base, mtd);
+  return settlementFromLedger(monthKey, monthEnd, ledger);
+}
+
+function mapLedgerFromRow(row: Record<string, unknown>): DailyLedger {
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    ledger_date: String(row.ledger_date),
+    status: row.status as DailyLedger["status"],
+    tebat: Number(row.tebat),
+    suhoubat: Number(row.suhoubat),
+    al_farq: Number(row.al_farq),
+    al_harq: Number(row.al_harq),
+    wasel_menho: Number(row.wasel_menho),
+    wasel_eleih: Number(row.wasel_eleih),
+    baqi_qadim: Number(row.baqi_qadim),
+    al_nihai: Number(row.al_nihai),
+    discrepancy_flag: Boolean(row.discrepancy_flag),
+    updated_at: String(row.updated_at),
+  };
+}
+
+function settlementFromLedger(
+  monthKey: string,
+  monthEndDate: string,
+  ledger: DailyLedger
+): MonthlyAgentSettlement {
+  const burnAmount = roundMoney(Math.abs(ledger.al_harq));
 
   return {
     monthKey,
-    monthEndDate: monthEnd,
+    monthEndDate,
     burnAmount,
-    finalBeforeCommission: mtd.alNihaiMtd,
-    tebatMtd: mtd.tebatMtd,
-    suhoubatMtd: mtd.suhoubatMtd,
-    alHarqMtd: mtd.alHarqMtd,
-    alNihaiMtd: mtd.alNihaiMtd,
+    finalBeforeCommission: ledger.al_nihai,
+    tebatMtd: ledger.tebat,
+    suhoubatMtd: ledger.suhoubat,
+    alHarqMtd: ledger.al_harq,
+    alNihaiMtd: ledger.al_nihai,
   };
 }

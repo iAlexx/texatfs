@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       body.target_user_id ?? body.agent_id ?? body.viewUserId;
     const supabase = getSupabaseServiceClient();
     const viewMode: "daily" | "monthly" =
-      body.viewMode === "monthly" ? "monthly" : "daily";
+      body.viewMode === "daily" ? "daily" : "monthly";
 
     const sessionOptions = {
       forceSync: body.forceSync === true,
