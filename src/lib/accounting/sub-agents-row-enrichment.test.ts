@@ -115,6 +115,58 @@ describe("sub-agents-row-enrichment", () => {
     assert.equal(resolved.mtd.current_snapshot_found, true);
   });
 
+  it("regression: zero MTD snapshot with live 2.5M/11.1M uses live_texas_fallback", () => {
+    const agent = liveAgent(2_500_000, 11_100_000);
+    const mtd: MtdLedgerMetricsResult = {
+      ...emptyMtdResult(),
+      currentSnapshotFound: true,
+      baselineSnapshotFound: true,
+      texasStrategy: "transaction_snapshot_delta",
+      isEmptyFallback: false,
+    };
+    const resolved = resolveSubAgentRowMetrics(agent, mtd);
+    assert.equal(resolved.metrics_source, "live_texas_fallback");
+    assert.equal(resolved.metrics.tebat, 2_500_000);
+    assert.equal(resolved.metrics.suhoubat, 11_100_000);
+    assert.equal(resolved.metrics.al_farq, -8_600_000);
+    assert.equal(resolved.metrics.al_harq, -8_600_000);
+  });
+
+  it("valid MTD snapshot with matching live uses mtd_snapshot", () => {
+    const agent = liveAgent(2_500_000, 11_100_000);
+    const mtd: MtdLedgerMetricsResult = {
+      ...emptyMtdResult(),
+      tebatMtd: 2_500_000,
+      suhoubatMtd: 11_100_000,
+      alFarqMtd: -8_600_000,
+      alHarqMtd: -8_600_000,
+      alNihaiMtd: -8_600_000,
+      currentSnapshotFound: true,
+      baselineSnapshotFound: true,
+      texasStrategy: "transaction_snapshot_delta",
+      isEmptyFallback: false,
+    };
+    const resolved = resolveSubAgentRowMetrics(agent, mtd);
+    assert.equal(resolved.metrics_source, "mtd_snapshot");
+    assert.equal(resolved.metrics.al_farq, -8_600_000);
+  });
+
+  it("all empty: only then zero with empty_no_data", () => {
+    const agent: TexasSubAgentRow = {
+      ...liveAgent(0, 0),
+      has_live_texas_data: false,
+    };
+    const mtd: MtdLedgerMetricsResult = {
+      ...emptyMtdResult(),
+      currentSnapshotFound: true,
+      baselineSnapshotFound: true,
+      isEmptyFallback: false,
+    };
+    const resolved = resolveSubAgentRowMetrics(agent, mtd);
+    assert.equal(resolved.metrics_source, "empty_no_data");
+    assert.equal(resolved.metrics.tebat, 0);
+  });
+
   it("daily rows fallback: uses summed daily ledger rows", () => {
     const agent = liveAgent(50_000);
     const mtd: MtdLedgerMetricsResult = {

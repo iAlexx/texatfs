@@ -168,31 +168,6 @@ export async function POST(request: Request) {
       excludedViewerSelf = 0;
     }
 
-    if (dbChildren.length > 0) {
-      try {
-        const persistResult = await persistDirectChildrenMtd(
-          supabase,
-          user.id,
-          dbChildren,
-          ledgerDate,
-          client,
-          { force: Boolean(body.forceRefresh) }
-        );
-        console.info("[sub-agents] child MTD persistence", {
-          viewerId: user.id,
-          ledgerDate,
-          forceRefresh: Boolean(body.forceRefresh),
-          ...persistResult,
-        });
-      } catch (persistErr) {
-        console.warn("[sub-agents] child MTD persistence failed", {
-          viewerId: user.id,
-          error:
-            persistErr instanceof Error ? persistErr.message : String(persistErr),
-        });
-      }
-    }
-
     const { data: parentRow } = await supabase
       .from("users")
       .select("whatsapp_phone, onboarding_status")
@@ -225,6 +200,8 @@ export async function POST(request: Request) {
       rowsUsingDailyRowsFallback,
       rowsUsingLiveTexasFallback,
       rowsEmptyNoData,
+      rowsRejectedInvalidMtdSnapshot,
+      rowsPreventedZeroOverwrite,
       whatsappGroupStatusCount,
       commissionStatusCount,
     } = await enrichSubAgentsWithPerAgentData(
@@ -234,6 +211,46 @@ export async function POST(request: Request) {
       ledgerDate,
       { parentWhatsappVerified }
     );
+
+    if (dbChildren.length > 0) {
+      const liveTotalsByAffiliateId = new Map<
+        string,
+        { totalDeposit: number; totalWithdraw: number }
+      >();
+      for (const agent of mergedAgents) {
+        const aid = normalizeAffiliateId(agent.affiliateId);
+        if (!aid) continue;
+        liveTotalsByAffiliateId.set(aid, {
+          totalDeposit: agent.metrics.tebat,
+          totalWithdraw: agent.metrics.suhoubat,
+        });
+      }
+      try {
+        const persistResult = await persistDirectChildrenMtd(
+          supabase,
+          user.id,
+          dbChildren,
+          ledgerDate,
+          client,
+          {
+            force: Boolean(body.forceRefresh),
+            liveTotalsByAffiliateId,
+          }
+        );
+        console.info("[sub-agents] child MTD persistence", {
+          viewerId: user.id,
+          ledgerDate,
+          forceRefresh: Boolean(body.forceRefresh),
+          ...persistResult,
+        });
+      } catch (persistErr) {
+        console.warn("[sub-agents] child MTD persistence failed", {
+          viewerId: user.id,
+          error:
+            persistErr instanceof Error ? persistErr.message : String(persistErr),
+        });
+      }
+    }
 
     const stats = computeSubAgentStats(enrichedAgents);
 
@@ -283,12 +300,13 @@ export async function POST(request: Request) {
       texasChildrenCount: texasLive.allChildrenRecords.length,
       dbDirectChildrenCount: dbChildren.length,
       directChildrenReturned: enrichedAgents.length,
-      missingDbUsers: linkResult.created,
       matchedEnriched: mergeDiagnostics.matchedEnriched,
       rowsUsingMtdSnapshot,
       rowsUsingDailyRowsFallback,
       rowsUsingLiveTexasFallback,
       rowsEmptyNoData,
+      rowsRejectedInvalidMtdSnapshot,
+      rowsPreventedZeroOverwrite,
     });
 
     console.info("[sub-agents] visibility merge", {

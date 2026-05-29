@@ -4,6 +4,14 @@ import {
   isMtdEmptyFallback,
   type MtdLedgerMetricsResult,
 } from "@/lib/accounting/mtd-ledger-metrics";
+import {
+  isValidMtdDailyRowsForDisplay,
+  isValidMtdSnapshotForDisplay,
+  liveTotalsFromAgent,
+  liveTotalsHaveMoney,
+  metricsFromLiveTotals,
+  mtdTransferTotalsZero,
+} from "@/lib/accounting/mtd-snapshot-validation";
 import { resolvePreviousMonthKey } from "@/lib/accounting/monthly-agent-settlement";
 import type { MonthlyCommissionRow } from "@/lib/accounting/monthly-commission-repository";
 import type { TexasSubAgentRow } from "@/lib/texas/texas-live-sub-agents";
@@ -16,7 +24,10 @@ import type {
   SubAgentMtdMetrics,
   SubAgentWhatsAppStatus,
 } from "@/lib/texas/sub-agents-types";
-import { roundMoney } from "@/lib/accounting/formulas";
+import { computeAlNihai, roundMoney } from "@/lib/accounting/formulas";
+import { createLogger } from "@/lib/observability/logger";
+
+const log = createLogger("agent:metrics-source");
 
 export type {
   SubAgentCommissionDisplayStatus,
@@ -39,6 +50,8 @@ export interface SubAgentEnrichmentStats {
   rowsUsingDailyRowsFallback: number;
   rowsUsingLiveTexasFallback: number;
   rowsEmptyNoData: number;
+  rowsRejectedInvalidMtdSnapshot: number;
+  rowsPreventedZeroOverwrite: number;
   whatsappGroupStatusCount: { exists: number; missing: number };
   commissionStatusCount: Record<SubAgentCommissionDisplayStatus, number>;
 }
@@ -77,7 +90,8 @@ export function metricsFromMtdShape(mtd: SubAgentMtdMetrics): TexasLiveLedgerMet
 }
 
 export function liveMetricsToMtdShape(
-  agent: TexasSubAgentRow
+  agent: TexasSubAgentRow,
+  mtd?: MtdLedgerMetricsResult | null
 ): SubAgentMtdMetrics {
   const m = agent.metrics;
   return {
@@ -85,9 +99,9 @@ export function liveMetricsToMtdShape(
     suhoubat_mtd: m.suhoubat,
     al_farq_mtd: m.al_farq,
     al_harq_mtd: m.al_harq,
-    wasel_menho_mtd: m.wasel_menho,
-    wasel_eleih_mtd: m.wasel_eleih,
-    baqi_qadim: m.baqi_qadim,
+    wasel_menho_mtd: mtd?.waselMenhoMtd ?? m.wasel_menho,
+    wasel_eleih_mtd: mtd?.waselEleihMtd ?? m.wasel_eleih,
+    baqi_qadim: mtd?.baqiQadimMtd ?? m.baqi_qadim,
     al_nihai_mtd: m.al_nihai,
     texas_strategy: "sum_daily_ledger_rows",
     current_snapshot_found: false,
@@ -100,21 +114,15 @@ export function liveMetricsToMtdShape(
 /** True when Texas live enrichment has any non-zero financial field. */
 export function liveMetricsHaveData(agent: TexasSubAgentRow): boolean {
   if (agent.has_live_texas_data === false) return false;
-  const m = agent.metrics;
-  return (
-    m.tebat !== 0 ||
-    m.suhoubat !== 0 ||
-    m.al_farq !== 0 ||
-    m.al_harq !== 0 ||
-    m.wasel_menho !== 0 ||
-    m.wasel_eleih !== 0 ||
-    m.baqi_qadim !== 0 ||
-    m.al_nihai !== 0
-  );
+  return liveTotalsHaveMoney(liveTotalsFromAgent(agent));
 }
 
 /**
- * Choose displayed metrics: MTD when DB has data, else keep Texas live numbers.
+ * Display priority:
+ * A) Valid mtd_snapshot
+ * B) Valid mtd_daily_rows
+ * C) Live Texas (never replaced by broken zero MTD)
+ * D) empty_no_data only when all sources empty
  */
 export function resolveSubAgentRowMetrics(
   agent: TexasSubAgentRow,
@@ -123,8 +131,10 @@ export function resolveSubAgentRowMetrics(
   metrics: TexasLiveLedgerMetrics;
   mtd: SubAgentMtdMetrics;
   metrics_source: SubAgentMetricsSource;
+  rejectReason?: string;
 } {
-  const liveHas = liveMetricsHaveData(agent);
+  const live = liveTotalsFromAgent(agent);
+  const liveHas = liveTotalsHaveMoney(live);
 
   if (!mtdResult) {
     if (liveHas) {
@@ -143,38 +153,79 @@ export function resolveSubAgentRowMetrics(
 
   const mtdShape = mtdMetricsToSubAgentShape(mtdResult);
 
-  if (mtdResult.currentSnapshotFound && mtdResult.baselineSnapshotFound) {
+  const snapshotCheck = isValidMtdSnapshotForDisplay(mtdResult, live);
+  if (snapshotCheck.valid && !mtdTransferTotalsZero(mtdResult)) {
+    const fromMtd = metricsFromMtdShape(mtdShape);
     return {
-      metrics: metricsFromMtdShape(mtdShape),
+      metrics: {
+        ...fromMtd,
+        wasel_menho: mtdResult.waselMenhoMtd,
+        wasel_eleih: mtdResult.waselEleihMtd,
+        baqi_qadim: mtdResult.baqiQadimMtd,
+        al_nihai: mtdResult.alNihaiMtd,
+      },
       mtd: mtdShape,
       metrics_source: "mtd_snapshot",
     };
   }
 
+  const dailyCheck = isValidMtdDailyRowsForDisplay(mtdResult, live);
   if (
     mtdResult.dailyRowsCount > 0 &&
-    mtdResult.texasStrategy === "sum_daily_ledger_rows"
+    mtdResult.texasStrategy === "sum_daily_ledger_rows" &&
+    dailyCheck.valid
   ) {
+    const fromMtd = metricsFromMtdShape(mtdShape);
     return {
-      metrics: metricsFromMtdShape(mtdShape),
+      metrics: {
+        ...fromMtd,
+        wasel_menho: mtdResult.waselMenhoMtd,
+        wasel_eleih: mtdResult.waselEleihMtd,
+        baqi_qadim: mtdResult.baqiQadimMtd,
+        al_nihai: mtdResult.alNihaiMtd,
+      },
       mtd: mtdShape,
       metrics_source: "mtd_daily_rows",
     };
   }
 
-  if (isMtdEmptyFallback(mtdResult) && liveHas) {
+  const rejectReason =
+    snapshotCheck.reason ||
+    dailyCheck.reason ||
+    (mtdTransferTotalsZero(mtdResult) && liveHas
+      ? "mtd_zero_live_nonempty"
+      : "mtd_not_usable");
+
+  if (liveHas) {
+    const fromLive = metricsFromLiveTotals(live, mtdResult.waselMenhoMtd, mtdResult.waselEleihMtd, mtdResult.baqiQadimMtd);
     return {
-      metrics: { ...agent.metrics },
-      mtd: liveMetricsToMtdShape(agent),
+      metrics: {
+        tebat: fromLive.tebat,
+        suhoubat: fromLive.suhoubat,
+        al_farq: fromLive.al_farq,
+        al_harq: fromLive.al_harq,
+        wasel_menho: mtdResult.waselMenhoMtd,
+        wasel_eleih: mtdResult.waselEleihMtd,
+        baqi_qadim: mtdResult.baqiQadimMtd,
+        al_nihai: computeAlNihai({
+          al_farq: fromLive.al_farq,
+          wasel_menho: mtdResult.waselMenhoMtd,
+          wasel_eleih: mtdResult.waselEleihMtd,
+          baqi_qadim: mtdResult.baqiQadimMtd,
+        }),
+      },
+      mtd: liveMetricsToMtdShape(agent, mtdResult),
       metrics_source: "live_texas_fallback",
+      rejectReason,
     };
   }
 
-  if (liveHas) {
+  if (isMtdEmptyFallback(mtdResult)) {
     return {
-      metrics: { ...agent.metrics },
-      mtd: liveMetricsToMtdShape(agent),
-      metrics_source: "live_texas_fallback",
+      metrics: metricsFromMtdShape(mtdShape),
+      mtd: mtdShape,
+      metrics_source: "empty_no_data",
+      rejectReason,
     };
   }
 
@@ -182,6 +233,7 @@ export function resolveSubAgentRowMetrics(
     metrics: metricsFromMtdShape(mtdShape),
     mtd: mtdShape,
     metrics_source: "empty_no_data",
+    rejectReason,
   };
 }
 
@@ -219,7 +271,7 @@ const EMPTY_COMMISSION: SubAgentCommissionStatus = {
 
 /**
  * Batch-enrich direct sub-agent rows with per-child MTD (never master ledger).
- * Never overwrites valid Texas live metrics with empty MTD zeros.
+ * Never overwrites valid Texas live metrics with broken zero MTD from bad snapshots.
  */
 export async function enrichSubAgentsWithPerAgentData(
   supabase: SupabaseClient,
@@ -294,11 +346,14 @@ export async function enrichSubAgentsWithPerAgentData(
   let rowsUsingDailyRowsFallback = 0;
   let rowsUsingLiveTexasFallback = 0;
   let rowsEmptyNoData = 0;
+  let rowsRejectedInvalidMtdSnapshot = 0;
+  let rowsPreventedZeroOverwrite = 0;
 
   const enriched = await Promise.all(
     agents.map(async (agent) => {
       const aid = normalizeAffiliateId(agent.affiliateId);
       const agentUserId = agent.user_id;
+      const live = liveTotalsFromAgent(agent);
 
       let mtdResult: MtdLedgerMetricsResult | null = null;
       if (agentUserId) {
@@ -311,6 +366,29 @@ export async function enrichSubAgentsWithPerAgentData(
       }
 
       const resolved = resolveSubAgentRowMetrics(agent, mtdResult);
+
+      if (
+        resolved.metrics_source === "live_texas_fallback" &&
+        mtdResult &&
+        (mtdResult.currentSnapshotFound || mtdResult.baselineSnapshotFound) &&
+        resolved.rejectReason
+      ) {
+        rowsRejectedInvalidMtdSnapshot += 1;
+        rowsPreventedZeroOverwrite += 1;
+      }
+
+      log.info("[agent:metrics-source]", {
+        affiliateId: aid,
+        username: agent.username,
+        liveDeposit: live.totalDeposit,
+        liveWithdraw: live.totalWithdraw,
+        mtdDeposit: mtdResult?.tebatMtd ?? null,
+        mtdWithdraw: mtdResult?.suhoubatMtd ?? null,
+        dailyRowsDeposit: mtdResult?.tebatMtd ?? null,
+        dailyRowsWithdraw: mtdResult?.suhoubatMtd ?? null,
+        chosenSource: resolved.metrics_source,
+        reason: resolved.rejectReason ?? resolved.metrics_source,
+      });
 
       switch (resolved.metrics_source) {
         case "mtd_snapshot":
@@ -372,6 +450,8 @@ export async function enrichSubAgentsWithPerAgentData(
     rowsUsingDailyRowsFallback,
     rowsUsingLiveTexasFallback,
     rowsEmptyNoData,
+    rowsRejectedInvalidMtdSnapshot,
+    rowsPreventedZeroOverwrite,
     whatsappGroupStatusCount,
     commissionStatusCount,
   };

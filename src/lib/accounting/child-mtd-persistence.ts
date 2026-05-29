@@ -4,6 +4,10 @@ import {
   computeMtdLedgerMetricsForUser,
   type MtdLedgerMetricsResult,
 } from "@/lib/accounting/mtd-ledger-metrics";
+import {
+  shouldSkipZeroPersistence,
+  validateTexasDateFilterForAffiliate,
+} from "@/lib/accounting/mtd-snapshot-validation";
 import { resolveMonthStart } from "@/lib/accounting/monthly-ledger-view";
 import { SupabaseAccountingRepository } from "@/lib/accounting/SupabaseAccountingRepository";
 import {
@@ -143,8 +147,23 @@ async function ensureBaselineSnapshot(
   userId: string,
   affiliateId: string,
   dayBeforeMonth: string,
-  totalsThroughBaseline: { totalDeposit: number; totalWithdraw: number }
+  totalsThroughBaseline: { totalDeposit: number; totalWithdraw: number },
+  liveTotals: { totalDeposit: number; totalWithdraw: number }
 ): Promise<boolean> {
+  const skip = shouldSkipZeroPersistence(totalsThroughBaseline, liveTotals);
+  if (skip.skip) {
+    log.warn("[sync:child-ledger] skip baseline zero overwrite", {
+      affiliateId,
+      dayBeforeMonth,
+      reason: skip.reason,
+      baselineDeposit: totalsThroughBaseline.totalDeposit,
+      baselineWithdraw: totalsThroughBaseline.totalWithdraw,
+      liveDeposit: liveTotals.totalDeposit,
+      liveWithdraw: liveTotals.totalWithdraw,
+    });
+    return false;
+  }
+
   const has = await hasSnapshotOnOrBefore(supabase, userId, dayBeforeMonth);
   if (has) return false;
 
@@ -176,11 +195,14 @@ export async function persistChildMtdFromTexasClient(
   childUserId: string,
   affiliateId: string,
   ledgerDate: string,
-  client: TexasHttpClient
+  client: TexasHttpClient,
+  liveTotals: { totalDeposit: number; totalWithdraw: number }
 ): Promise<{
   snapshotCreated: boolean;
   baselineSnapshotCreated: boolean;
   ledgerUpserted: boolean;
+  skipped: boolean;
+  skipReason?: string;
   totalDeposit: number;
   totalWithdraw: number;
   tebat: number;
@@ -195,10 +217,78 @@ export async function persistChildMtdFromTexasClient(
   const monthStart = resolveMonthStart(ledgerDate);
   const dayBeforeMonth = previousCalendarDay(monthStart);
 
-  const [totalsCurrent, totalsBaseline] = await Promise.all([
-    fetchAffiliateCumulativeTransferTotals(client, aid, ledgerDate),
-    fetchAffiliateCumulativeTransferTotals(client, aid, dayBeforeMonth),
-  ]);
+  const dateValidation = await validateTexasDateFilterForAffiliate(
+    client,
+    aid,
+    ledgerDate,
+    liveTotals
+  );
+
+  if (!dateValidation.dateFilterTrusted) {
+    log.warn("[sync:child-ledger] skip persist — date filters not trusted", {
+      childUserId,
+      affiliateId: aid,
+      reasons: dateValidation.reasons,
+      liveDeposit: liveTotals.totalDeposit,
+      liveWithdraw: liveTotals.totalWithdraw,
+    });
+    const mtd = await computeMtdLedgerMetricsForUser(
+      supabase,
+      childUserId,
+      ledgerDate
+    );
+    return {
+      snapshotCreated: false,
+      baselineSnapshotCreated: false,
+      ledgerUpserted: false,
+      skipped: true,
+      skipReason: "date_filter_untrusted",
+      totalDeposit: 0,
+      totalWithdraw: 0,
+      tebat: 0,
+      suhoubat: 0,
+      mtdSourceAfterRefresh: classifyMtdSource(mtd),
+    };
+  }
+
+  const totalsCurrent = {
+    totalDeposit: dateValidation.noDateDeposit,
+    totalWithdraw: dateValidation.noDateWithdraw,
+    recordCount: dateValidation.noDateRecordCount,
+  };
+  const totalsBaseline = {
+    totalDeposit: dateValidation.baselineDeposit,
+    totalWithdraw: dateValidation.baselineWithdraw,
+    recordCount: dateValidation.baselineRecordCount,
+  };
+
+  const skipCurrent = shouldSkipZeroPersistence(totalsCurrent, liveTotals);
+  if (skipCurrent.skip) {
+    log.warn("[sync:child-ledger] skip persist — would write zero snapshot", {
+      childUserId,
+      affiliateId: aid,
+      reason: skipCurrent.reason,
+      liveDeposit: liveTotals.totalDeposit,
+      liveWithdraw: liveTotals.totalWithdraw,
+    });
+    const mtd = await computeMtdLedgerMetricsForUser(
+      supabase,
+      childUserId,
+      ledgerDate
+    );
+    return {
+      snapshotCreated: false,
+      baselineSnapshotCreated: false,
+      ledgerUpserted: false,
+      skipped: true,
+      skipReason: skipCurrent.reason,
+      totalDeposit: 0,
+      totalWithdraw: 0,
+      tebat: 0,
+      suhoubat: 0,
+      mtdSourceAfterRefresh: classifyMtdSource(mtd),
+    };
+  }
 
   const repository = new SupabaseAccountingRepository(supabase);
   const accounting = new AccountingService(repository);
@@ -209,7 +299,8 @@ export async function persistChildMtdFromTexasClient(
     childUserId,
     aid,
     dayBeforeMonth,
-    totalsBaseline
+    totalsBaseline,
+    liveTotals
   );
 
   const currentSnap: NormalizedTexasSnapshot = {
@@ -224,6 +315,7 @@ export async function persistChildMtdFromTexasClient(
       affiliateId: aid,
       throughDate: ledgerDate,
       transferRecords: totalsCurrent.recordCount,
+      dateFilterTrusted: true,
     },
   };
 
@@ -264,12 +356,14 @@ export async function persistChildMtdFromTexasClient(
     mtdTexasStrategy: mtd.texasStrategy,
     baselineSnapshotFound: mtd.baselineSnapshotFound,
     currentSnapshotFound: mtd.currentSnapshotFound,
+    dateFilterTrusted: true,
   });
 
   return {
     snapshotCreated: true,
     baselineSnapshotCreated,
     ledgerUpserted: true,
+    skipped: false,
     totalDeposit: totalsCurrent.totalDeposit,
     totalWithdraw: totalsCurrent.totalWithdraw,
     tebat: report.tebat,
@@ -283,6 +377,8 @@ export interface PersistDirectChildrenResult {
   persistedOwnCredentials: number;
   persistedMasterDerived: number;
   skippedFresh: number;
+  skippedUntrustedDateFilter: number;
+  preventedZeroOverwrite: number;
   failed: number;
   perChild: Array<{
     childUserId: string;
@@ -290,12 +386,13 @@ export interface PersistDirectChildrenResult {
     strategy: string;
     mtdSourceAfterRefresh?: MtdSourceLabel;
     error?: string;
+    skipReason?: string;
   }>;
 }
 
 /**
- * Ensure each direct child has api_snapshot + baseline + daily_ledger so MTD is not live-only.
- * Uses viewer's Texas session (same client as sub-agents live fetch).
+ * Ensure each direct child has api_snapshot + baseline + daily_ledger when Texas date filters are trusted.
+ * Never persists zero snapshots when live Texas has non-zero transfer totals.
  */
 export async function persistDirectChildrenMtd(
   supabase: SupabaseClient,
@@ -303,14 +400,20 @@ export async function persistDirectChildrenMtd(
   children: DirectChildDbRow[],
   ledgerDate: string,
   client: TexasHttpClient,
-  options?: { force?: boolean }
+  options?: {
+    force?: boolean;
+    liveTotalsByAffiliateId?: Map<string, { totalDeposit: number; totalWithdraw: number }>;
+  }
 ): Promise<PersistDirectChildrenResult> {
   const force = Boolean(options?.force);
+  const liveByAffiliate = options?.liveTotalsByAffiliateId ?? new Map();
   const result: PersistDirectChildrenResult = {
     attempted: children.length,
     persistedOwnCredentials: 0,
     persistedMasterDerived: 0,
     skippedFresh: 0,
+    skippedUntrustedDateFilter: 0,
+    preventedZeroOverwrite: 0,
     failed: 0,
     perChild: [],
   };
@@ -328,6 +431,11 @@ export async function persistDirectChildrenMtd(
       });
       continue;
     }
+
+    const liveTotals = liveByAffiliate.get(affiliateId) ?? {
+      totalDeposit: 0,
+      totalWithdraw: 0,
+    };
 
     const { needed, reasons } = await childNeedsPersistence(
       supabase,
@@ -395,8 +503,24 @@ export async function persistDirectChildrenMtd(
         childUserId,
         affiliateId,
         ledgerDate,
-        client
+        client,
+        liveTotals
       );
+      if (persisted.skipped) {
+        if (persisted.skipReason === "date_filter_untrusted") {
+          result.skippedUntrustedDateFilter += 1;
+        } else {
+          result.preventedZeroOverwrite += 1;
+        }
+        result.perChild.push({
+          childUserId,
+          affiliateId,
+          strategy: "skipped_untrusted",
+          mtdSourceAfterRefresh: persisted.mtdSourceAfterRefresh,
+          skipReason: persisted.skipReason,
+        });
+        continue;
+      }
       result.persistedMasterDerived += 1;
       result.perChild.push({
         childUserId,
@@ -432,6 +556,7 @@ export async function persistDirectChildrenMtd(
       strategy: c.strategy,
       mtd: c.mtdSourceAfterRefresh,
       error: c.error,
+      skipReason: c.skipReason,
     })),
   });
 
