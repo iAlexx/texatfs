@@ -11,20 +11,35 @@ export function LedgerTabBar({
   onChange,
   showAgentsTab,
   hideAccountTab = false,
+  agentsOnly = false,
 }: {
   active: LedgerTabId;
   onChange: (tab: LedgerTabId) => void;
   showAgentsTab: boolean;
-  /** Hide "حسابي" when master workflow focuses on sub-agents (account still reachable via agent drill-down / history). */
+  /** Hide "حسابي" — product default is sub-agents only. */
   hideAccountTab?: boolean;
+  /** Sub-agents primary: no حسابي tab; history optional secondary. */
+  agentsOnly?: boolean;
 }) {
   const tabs: { id: LedgerTabId; label: string }[] = [
-    ...(!hideAccountTab ? [{ id: "account" as const, label: ar.tabMyAccount }] : []),
-    ...(showAgentsTab
+    ...(!hideAccountTab && !agentsOnly
+      ? [{ id: "account" as const, label: ar.tabMyAccount }]
+      : []),
+    ...(showAgentsTab || agentsOnly
       ? [{ id: "agents" as const, label: ar.tabSubAgents }]
       : []),
-    { id: "history", label: ar.tabLedgerHistory },
+    ...(!agentsOnly || showAgentsTab
+      ? [{ id: "history" as const, label: ar.tabLedgerHistory }]
+      : []),
   ];
+
+  if (agentsOnly && tabs.length === 1) {
+    return (
+      <div className="mb-4 rounded-xl border border-gold/20 bg-gold/5 px-3 py-2 text-center text-[11px] font-semibold text-gold">
+        {ar.tabSubAgents}
+      </div>
+    );
+  }
 
   return (
     <div className="mb-4 flex gap-1 rounded-xl border border-white/[0.06] bg-obsidian/60 p-1 backdrop-blur-md">

@@ -1,14 +1,12 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
+import { motion } from "framer-motion";
+import { Loader2, RefreshCw } from "lucide-react";
 import { LedgerHistoryNav } from "@/components/ledger/LedgerHistoryNav";
-import { ExecutiveLedgerReport } from "@/components/ledger/ExecutiveLedgerReport";
 import { LedgerTabBar, type LedgerTabId } from "@/components/ledger/LedgerTabBar";
 import { SubAgentsTabPanel } from "@/components/ledger/SubAgentsTabPanel";
 import { SubscriptionExpiredOverlay } from "@/components/ledger/SubscriptionExpiredOverlay";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useTelegram } from "@/components/providers/TelegramProvider";
 import {
@@ -16,10 +14,7 @@ import {
   useLedgerSession,
   todayIsoDate,
 } from "@/hooks/use-ledger-api";
-import {
-  useTexasSubAgents,
-  useTexasAgentDetail,
-} from "@/hooks/use-texas-agents-api";
+import { useTexasSubAgents } from "@/hooks/use-texas-agents-api";
 import { canManageNetwork } from "@/lib/hierarchy/subtree-rules";
 import { ar } from "@/lib/i18n/ar";
 import { formatLedgerDate } from "@/lib/utils/format";
@@ -27,42 +22,33 @@ import { cn } from "@/lib/utils/cn";
 
 export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const [selectedDate, setSelectedDate] = useState(todayIsoDate);
-  const [ledgerViewMode, setLedgerViewMode] = useState<"daily" | "monthly">(
-    "monthly"
-  );
-  const [viewTexasAffiliateId, setViewTexasAffiliateId] = useState<
-    string | null
-  >(null);
-  const [viewAgentLabel, setViewAgentLabel] = useState<string | null>(null);
-  const [viewAgentCurrency, setViewAgentCurrency] = useState("NSP");
-  const [activeTab, setActiveTab] = useState<LedgerTabId>("account");
+  const [activeTab, setActiveTab] = useState<LedgerTabId>("agents");
+  const [forceRefreshSubAgents, setForceRefreshSubAgents] = useState(false);
   const telegram = useTelegram();
   const history = useLedgerHistory();
-  const viewingTexasAgent = Boolean(viewTexasAffiliateId);
   const isToday = selectedDate === todayIsoDate();
-  const session = useLedgerSession(
-    selectedDate,
-    null,
-    viewingTexasAgent
-      ? { viewMode: "daily" }
-      : { forceSync: isToday, viewMode: ledgerViewMode }
-  );
+
+  const session = useLedgerSession(selectedDate, null, {
+    forceSync: false,
+    viewMode: "monthly",
+  });
+
   const showAgentsTab = session.data?.user
     ? canManageNetwork(session.data.user.role)
     : false;
 
   const subAgentsQuery = useTexasSubAgents(
     selectedDate,
-    telegram.isReady &&
-      telegram.canAuthenticate &&
-      !viewingTexasAgent &&
-      (showAgentsTab || activeTab === "agents")
+    telegram.isReady && telegram.canAuthenticate && showAgentsTab,
+    forceRefreshSubAgents
   );
-  const texasAgentDetail = useTexasAgentDetail(
-    viewTexasAffiliateId,
-    selectedDate,
-    viewAgentCurrency
-  );
+
+  function handleRefresh() {
+    if (showAgentsTab) {
+      setForceRefreshSubAgents(true);
+      void subAgentsQuery.refetch().finally(() => setForceRefreshSubAgents(false));
+    }
+  }
 
   if (!telegram.isReady) {
     return (
@@ -107,14 +93,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
           transition={{ repeat: Infinity, duration: 1.6 }}
         >
           <Loader2 className="h-5 w-5 animate-spin text-gold" strokeWidth={1.5} />
-          <span className="text-sm">{ar.loadingLedger}</span>
-          {(viewingTexasAgent || activeTab === "agents") && (
-            <span className="text-[10px] text-lime/80">
-              {activeTab === "agents" && !viewingTexasAgent
-                ? ar.loadingSubAgents
-                : ar.syncingTexas}
-            </span>
-          )}
+          <span className="text-sm">{ar.loadingSubAgents}</span>
         </motion.div>
       </ExecutiveShell>
     );
@@ -151,90 +130,18 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   }
 
   const user = session.data?.user;
-  const ledger = viewingTexasAgent
-    ? texasAgentDetail.data?.ledger ?? null
-    : session.data?.ledger;
-  const accountLoading =
-    viewingTexasAgent &&
-    (texasAgentDetail.isLoading || !texasAgentDetail.data) &&
-    !texasAgentDetail.error;
-  const accountError = viewingTexasAgent ? texasAgentDetail.error : null;
-
-  function selectTexasAgent(
-    affiliateId: string,
-    label: string,
-    currency: string
-  ) {
-    setViewTexasAffiliateId(affiliateId);
-    setViewAgentLabel(label);
-    setViewAgentCurrency(currency);
-    setActiveTab("account");
-  }
-
-
-  function returnToMaster() {
-    setViewTexasAffiliateId(null);
-    setViewAgentLabel(null);
-    setActiveTab("agents");
-  }
-  const viewingSubAgent = viewingTexasAgent;
 
   return (
     <ExecutiveShell
-      title={ar.dailyLedger}
-      subtitle={
-        viewingSubAgent && viewAgentLabel
-          ? `${viewAgentLabel} · ${formatLedgerDate(selectedDate)}`
-          : ledger
-            ? formatLedgerDate(ledger.ledger_date)
-            : formatLedgerDate(selectedDate)
-      }
-      badge={
-        ledger?.status === "open"
-          ? ar.statusOpen
-          : ledger
-            ? ar.statusClosed
-            : undefined
-      }
-      onRefresh={isToday && !viewingSubAgent ? () => void session.refresh() : undefined}
-      refreshing={session.isLoading}
+      title={ar.subAgentsTitle}
+      subtitle={`${ar.subAgentsMtdSubtitle} · ${formatLedgerDate(selectedDate)}`}
+      onRefresh={isToday && showAgentsTab ? handleRefresh : undefined}
+      refreshing={subAgentsQuery.isFetching}
       embedded={embedded}
     >
-      {viewingSubAgent && viewAgentLabel ? (
-        <motion.div
-          className="mb-4 space-y-3"
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="glass-inner flex items-center justify-between gap-2 rounded-xl border border-lime/25 bg-lime/5 px-3 py-2">
-            <span className="text-[10px] uppercase tracking-wider text-lime/80">
-              {ar.viewingAgentData}
-            </span>
-            <span className="truncate text-sm font-semibold text-lime">
-              {viewAgentLabel}
-            </span>
-          </div>
-          <motion.button
-            type="button"
-            className="flex items-center gap-2 text-sm text-gold"
-            onClick={returnToMaster}
-            whileTap={{ scale: 0.97 }}
-          >
-            <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
-            {ar.backToMaster}
-          </motion.button>
-        </motion.div>
-      ) : null}
-
       <LedgerHistoryNav
         selectedDate={selectedDate}
-        onSelectDate={(d) => {
-          setSelectedDate(d);
-          if (!viewingSubAgent) {
-            setViewTexasAffiliateId(null);
-            setViewAgentLabel(null);
-          }
-        }}
+        onSelectDate={setSelectedDate}
         history={history.data?.dates ?? []}
         isLoading={history.isLoading}
       />
@@ -243,16 +150,27 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         active={activeTab}
         onChange={setActiveTab}
         showAgentsTab={showAgentsTab}
+        hideAccountTab
+        agentsOnly
       />
 
-      {activeTab === "agents" && showAgentsTab ? (
-        <SubAgentsTabPanel
-          data={subAgentsQuery.data}
-          isLoading={subAgentsQuery.isLoading}
-          error={subAgentsQuery.error}
-          onRetry={() => void subAgentsQuery.refetch()}
-          onSelectAgent={selectTexasAgent}
-        />
+      {activeTab === "agents" ? (
+        showAgentsTab ? (
+          <SubAgentsTabPanel
+            data={subAgentsQuery.data}
+            isLoading={subAgentsQuery.isLoading}
+            error={subAgentsQuery.error}
+            onRetry={() => void subAgentsQuery.refetch()}
+          />
+        ) : (
+          <motion.div
+            className="glass-panel mb-4 px-4 py-12 text-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <p className="text-sm text-steel-400">{ar.noSubAgents}</p>
+          </motion.div>
+        )
       ) : null}
 
       {activeTab === "history" ? (
@@ -268,10 +186,7 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
                 <li key={entry.ledger_date}>
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedDate(entry.ledger_date);
-                      setActiveTab("account");
-                    }}
+                    onClick={() => setSelectedDate(entry.ledger_date)}
                     className={cn(
                       "w-full rounded-lg border px-3 py-2 text-sm transition-colors",
                       entry.ledger_date === selectedDate
@@ -286,101 +201,6 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
             </ul>
           ) : null}
         </motion.div>
-      ) : null}
-
-      {activeTab === "account" ? (
-        <AnimatePresence mode="wait">
-          {accountLoading ? (
-            <motion.div
-              key="loading-agent"
-              className="glass-panel px-6 py-14 text-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            >
-              <Loader2 className="mx-auto h-6 w-6 animate-spin text-gold" />
-              <p className="mt-3 text-sm text-steel-400">{ar.syncingTexas}</p>
-            </motion.div>
-          ) : accountError ? (
-            <motion.div
-              key="agent-error"
-              className="glass-panel px-6 py-10 text-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            >
-              <p className="text-sm text-accent-negative">
-                {accountError.message}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-4 border-gold/30 text-gold"
-                onClick={() => void texasAgentDetail.refetch()}
-              >
-                {ar.retry}
-              </Button>
-            </motion.div>
-          ) : !ledger ? (
-            <motion.div
-              key="empty"
-              className="glass-panel px-6 py-14 text-center"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <p className="text-sm text-steel-400">{ar.noReportForDate}</p>
-              {isToday && !viewingSubAgent && (
-                <p className="mt-4 text-xs text-steel-500">
-                  {ar.reportPendingSync}
-                </p>
-              )}
-            </motion.div>
-          ) : (
-            <motion.div
-              key={ledger.id}
-              initial={{ opacity: 0, x: viewingSubAgent ? 12 : 0 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -8 }}
-              transition={{ type: "spring", stiffness: 200, damping: 24 }}
-            >
-              {!viewingSubAgent && (
-                <div className="mb-4 flex rounded-xl border border-white/[0.08] bg-obsidian/50 p-1">
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex-1 rounded-lg py-2 text-xs font-semibold transition-colors",
-                      ledgerViewMode === "daily"
-                        ? "bg-gold/20 text-gold"
-                        : "text-steel-500"
-                    )}
-                    onClick={() => setLedgerViewMode("daily")}
-                  >
-                    {ar.ledgerViewDaily}
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex-1 rounded-lg py-2 text-xs font-semibold transition-colors",
-                      ledgerViewMode === "monthly"
-                        ? "bg-gold/20 text-gold"
-                        : "text-steel-500"
-                    )}
-                    onClick={() => setLedgerViewMode("monthly")}
-                  >
-                    {ar.ledgerViewMonthly}
-                  </button>
-                </div>
-              )}
-              <ExecutiveLedgerReport
-                ledger={ledger}
-                targetUserId={viewingSubAgent ? undefined : user?.id}
-                disableShare={viewingSubAgent}
-                viewMode={viewingSubAgent ? "daily" : ledgerViewMode}
-                monthlyCommission={session.data?.monthly_commission}
-                texasPanel={session.data?.texas_panel}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
       ) : null}
 
       {user && (
@@ -404,7 +224,6 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
 function ExecutiveShell({
   title,
   subtitle,
-  badge,
   onRefresh,
   refreshing,
   embedded,
@@ -412,7 +231,6 @@ function ExecutiveShell({
 }: {
   title: string;
   subtitle?: string;
-  badge?: string;
   onRefresh?: () => void;
   refreshing?: boolean;
   embedded?: boolean;
@@ -457,31 +275,21 @@ function ExecutiveShell({
               <p className="mt-1 text-xs text-steel-600">{subtitle}</p>
             )}
           </div>
-          <div className="flex flex-col items-end gap-2">
-            {badge && (
-              <Badge
-                variant={badge === ar.statusOpen ? "success" : "muted"}
-                className="text-[10px]"
-              >
-                {badge}
-              </Badge>
-            )}
-            {onRefresh && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-steel-500 hover:text-gold"
-                onClick={onRefresh}
-                disabled={refreshing}
-              >
-                <RefreshCw
-                  className={cn("h-4 w-4", refreshing && "animate-spin")}
-                  strokeWidth={1.5}
-                />
-              </Button>
-            )}
-          </div>
+          {onRefresh && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-steel-500 hover:text-gold"
+              onClick={onRefresh}
+              disabled={refreshing}
+            >
+              <RefreshCw
+                className={cn("h-4 w-4", refreshing && "animate-spin")}
+                strokeWidth={1.5}
+              />
+            </Button>
+          )}
         </div>
       </motion.header>
       {children}

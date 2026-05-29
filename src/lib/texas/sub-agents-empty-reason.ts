@@ -45,9 +45,9 @@ export interface SubAgentsEmptyContext {
 
 const EMPTY_REASON_MESSAGES: Record<SubAgentsEmptyReasonCode, string> = {
   MISSING_CREDENTIALS:
-    "لا توجد بيانات دخول تكساس مخزّنة — افتح «حسابي» وأعد ربط حساب تكساس.",
+    "لا توجد بيانات دخول تكساس مخزّنة — افتح الملف الشخصي وأعد ربط حساب تكساس.",
   TEXAS_AUTH_FAILED:
-    "تعذر تسجيل الدخول إلى لوحة تكساس. تحقق من بيانات الدخول في «حسابي».",
+    "تعذر تسجيل الدخول إلى لوحة تكساس. تحقق من بيانات الدخول في الملف الشخصي.",
   TEXAS_RETURNED_ZERO:
     "لوحة تكساس لم تُرجع وكلاء فرعيين لهذا الحساب. تحقق من حساب تكساس أو حاول لاحقاً.",
   DB_DIRECT_CHILDREN_ZERO:

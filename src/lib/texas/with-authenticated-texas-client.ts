@@ -118,7 +118,7 @@ export async function withAuthenticatedTexasClient(
     return texasJsonResponse(
       {
         error: isTexasAuth
-          ? "تعذر تسجيل الدخول إلى لوحة تكساس. افتح «حسابي» وأعد ربط حساب تكساس."
+          ? "تعذر تسجيل الدخول إلى لوحة تكساس. افتح الملف الشخصي وأعد ربط حساب تكساس."
           : message,
         empty_reason: isTexasAuth ? "TEXAS_AUTH_FAILED" : undefined,
       },

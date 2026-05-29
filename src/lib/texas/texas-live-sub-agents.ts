@@ -28,6 +28,12 @@ import {
 
 const log = createLogger("texas/live-sub-agents");
 
+import type {
+  SubAgentCommissionStatus,
+  SubAgentMtdMetrics,
+  SubAgentWhatsAppStatus,
+} from "@/lib/texas/sub-agents-types";
+
 export interface TexasSubAgentRow {
   affiliateId: string;
   /** App user id when row is built from DB direct-child merge */
@@ -40,6 +46,10 @@ export interface TexasSubAgentRow {
   metrics: TexasLiveLedgerMetrics;
   /** True when tebat/suhoubat/balance came from Texas live APIs */
   has_live_texas_data?: boolean;
+  /** Month-to-date cumulative (per child user_id — not master). */
+  mtd?: SubAgentMtdMetrics;
+  whatsapp?: SubAgentWhatsAppStatus;
+  commission?: SubAgentCommissionStatus;
 }
 
 export interface TexasSubAgentsPayload {

@@ -6,8 +6,9 @@ import {
   type TexasSubAgentsPayload,
   type TexasSubAgentRow,
 } from "@/lib/texas/texas-live-sub-agents";
-import { computeAlNihai, roundMoney } from "@/lib/accounting/formulas";
+import { enrichSubAgentsWithPerAgentData } from "@/lib/accounting/sub-agents-row-enrichment";
 import { resolveLedgerDate } from "@/lib/cron/ledger-date";
+import { refreshStaleSubtreeLedgers } from "@/lib/scraper/ensure-user-ledger-sync";
 import { withAuthenticatedTexasClient, texasJsonResponse } from "@/lib/texas/with-authenticated-texas-client";
 import { serverCacheGet, serverCacheSet } from "@/lib/texas/server-cache";
 import {
@@ -58,18 +59,6 @@ function todayLedgerDate(): string {
   return resolveLedgerDate();
 }
 
-function previousDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
-interface DbEnrichment {
-  wasel_menho: number;
-  wasel_eleih: number;
-  baqi_qadim: number;
-}
-
 async function loadDirectChildren(
   supabase: SupabaseClient,
   viewerId: string
@@ -84,118 +73,13 @@ async function loadDirectChildren(
   return (data ?? []) as DirectChildDbRow[];
 }
 
-async function loadDbEnrichment(
-  supabase: SupabaseClient,
-  masterId: string,
-  affiliateIds: string[],
-  ledgerDate: string
-): Promise<Map<string, DbEnrichment>> {
-  const result = new Map<string, DbEnrichment>();
-  if (!affiliateIds.length) return result;
-
-  for (const aid of affiliateIds) {
-    result.set(aid, { wasel_menho: 0, wasel_eleih: 0, baqi_qadim: 0 });
-  }
-
-  const { data: masterLedger } = await supabase
-    .from("daily_ledgers")
-    .select("id")
-    .eq("user_id", masterId)
-    .eq("ledger_date", ledgerDate)
-    .maybeSingle();
-
-  if (masterLedger) {
-    const { data: txns } = await supabase
-      .from("transactions")
-      .select("target_affiliate_id, type, amount")
-      .eq("daily_ledger_id", masterLedger.id)
-      .eq("is_confirmed", true)
-      .not("target_affiliate_id", "is", null);
-
-    for (const tx of txns ?? []) {
-      const aid = tx.target_affiliate_id as string;
-      const entry = result.get(aid);
-      if (!entry) continue;
-      const amt = Number(tx.amount);
-      if (tx.type === "wasel_menho") entry.wasel_menho += amt;
-      else if (tx.type === "wasel_eleih") entry.wasel_eleih += amt;
-    }
-  }
-
-  const yesterday = previousDate(ledgerDate);
-
-  const { data: linkedUsers } = await supabase
-    .from("users")
-    .select("id, texas_affiliate_id")
-    .in("texas_affiliate_id", affiliateIds);
-
-  const userIdToAffiliate = new Map<string, string>();
-  for (const u of linkedUsers ?? []) {
-    if (u.texas_affiliate_id) {
-      userIdToAffiliate.set(u.id, u.texas_affiliate_id);
-    }
-  }
-
-  if (userIdToAffiliate.size > 0) {
-    const userIds = Array.from(userIdToAffiliate.keys());
-    const { data: prevLedgers } = await supabase
-      .from("daily_ledgers")
-      .select("user_id, al_nihai")
-      .in("user_id", userIds)
-      .eq("ledger_date", yesterday);
-
-    for (const pl of prevLedgers ?? []) {
-      const aid = userIdToAffiliate.get(pl.user_id as string);
-      if (!aid) continue;
-      const entry = result.get(aid);
-      if (entry) entry.baqi_qadim = Number(pl.al_nihai);
-    }
-  }
-
-  for (const entry of result.values()) {
-    entry.wasel_menho = roundMoney(entry.wasel_menho);
-    entry.wasel_eleih = roundMoney(entry.wasel_eleih);
-    entry.baqi_qadim = roundMoney(entry.baqi_qadim);
-  }
-
-  return result;
-}
-
-function enrichAgents(
-  agents: TexasSubAgentRow[],
-  enrichment: Map<string, DbEnrichment>
-): TexasSubAgentRow[] {
-  return agents.map((agent) => {
-    if (!agent.has_live_texas_data) return agent;
-
-    const db = enrichment.get(agent.affiliateId);
-    if (!db) return agent;
-
-    const m = agent.metrics;
-    const wasel_menho = db.wasel_menho;
-    const wasel_eleih = db.wasel_eleih;
-    const baqi_qadim = db.baqi_qadim;
-    const al_nihai = computeAlNihai({
-      al_farq: m.al_farq,
-      wasel_menho,
-      wasel_eleih,
-      baqi_qadim,
-    });
-
-    return {
-      ...agent,
-      metrics: { ...m, wasel_menho, wasel_eleih, baqi_qadim, al_nihai },
-    };
-  });
-}
-
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Body;
   const ledgerDate = body.ledgerDate ?? todayLedgerDate();
   const supabase = getSupabaseServiceClient();
 
   return withAuthenticatedTexasClient(supabase, body, async ({ user, client, creds }) => {
-    const cacheKey = `sub-agents:v3:${user.id}:${ledgerDate}`;
+    const cacheKey = `sub-agents:v4:${user.id}:${ledgerDate}`;
 
     if (!body.forceRefresh) {
       const cached = serverCacheGet<
@@ -283,11 +167,27 @@ export async function POST(request: Request) {
       excludedViewerSelf = 0;
     }
 
+    if (body.forceRefresh && dbChildren.length > 0) {
+      const childIds = dbChildren.map((c) => c.id);
+      try {
+        await refreshStaleSubtreeLedgers(supabase, childIds, ledgerDate);
+      } catch (syncErr) {
+        console.warn("[sub-agents] child ledger refresh on forceRefresh failed", {
+          viewerId: user.id,
+          error:
+            syncErr instanceof Error ? syncErr.message : String(syncErr),
+        });
+      }
+    }
+
     const { data: parentRow } = await supabase
       .from("users")
-      .select("whatsapp_phone")
+      .select("whatsapp_phone, onboarding_status")
       .eq("id", user.id)
       .maybeSingle();
+
+    const parentWhatsappVerified =
+      parentRow?.onboarding_status === "VERIFIED_COMPLETED";
 
     const whatsappSchedule = await scheduleMissingGroupsForParent(
       supabase,
@@ -305,11 +205,18 @@ export async function POST(request: Request) {
 
     const audit = auditDirectChildVisibility(user.id, dbChildren, texasPayload);
 
-    const affiliateIds = mergedAgents
-      .filter((a) => a.has_live_texas_data)
-      .map((a) => a.affiliateId);
-    const dbData = await loadDbEnrichment(supabase, user.id, affiliateIds, ledgerDate);
-    const enrichedAgents = enrichAgents(mergedAgents, dbData);
+    const {
+      agents: enrichedAgents,
+      agentRowsWithMtdMetrics,
+      whatsappGroupStatusCount,
+      commissionStatusCount,
+    } = await enrichSubAgentsWithPerAgentData(
+      supabase,
+      user.id,
+      mergedAgents,
+      ledgerDate,
+      { parentWhatsappVerified }
+    );
 
     const credCheck = await resolveUserCredentials(supabase, user.id);
 
@@ -354,6 +261,10 @@ export async function POST(request: Request) {
     console.info("[sub-agents] visibility merge", {
       viewerId: user.id,
       ledgerDate,
+      directChildrenReturned: enrichedAgents.length,
+      agentRowsWithMtdMetrics,
+      whatsappGroupStatusCount,
+      commissionStatusCount,
       viewerAffiliateId,
       viewerAffiliateSource: creds.texas_affiliate_id
         ? "creds"
@@ -367,7 +278,6 @@ export async function POST(request: Request) {
       dbDirectChildrenRaw: dbChildrenRaw.length,
       excludedViewerSelf,
       afterSelfFilter: dbChildren.length,
-      directChildrenReturned: enrichedAgents.length,
       matchedEnriched: routeDiagnostics.matchedEnriched,
       stubCount: routeDiagnostics.stubCount,
       droppedTexasRows: routeDiagnostics.droppedTexasRows,
