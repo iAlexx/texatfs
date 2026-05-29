@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { LedgerHistoryNav } from "@/components/ledger/LedgerHistoryNav";
@@ -39,26 +39,17 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
   const telegram = useTelegram();
   const history = useLedgerHistory();
   const viewingTexasAgent = Boolean(viewTexasAffiliateId);
+  const isToday = selectedDate === todayIsoDate();
   const session = useLedgerSession(
     selectedDate,
     null,
     viewingTexasAgent
       ? { viewMode: "daily" }
-      : { forceSync: false, viewMode: ledgerViewMode }
+      : { forceSync: isToday, viewMode: ledgerViewMode }
   );
   const showAgentsTab = session.data?.user
     ? canManageNetwork(session.data.user.role)
     : false;
-
-  const hideAccountTab = showAgentsTab && !viewingTexasAgent;
-  const [agentsTabDefaulted, setAgentsTabDefaulted] = useState(false);
-
-  useEffect(() => {
-    if (showAgentsTab && !viewingTexasAgent && !agentsTabDefaulted) {
-      setActiveTab("agents");
-      setAgentsTabDefaulted(true);
-    }
-  }, [showAgentsTab, viewingTexasAgent, agentsTabDefaulted]);
 
   const subAgentsQuery = useTexasSubAgents(
     selectedDate,
@@ -186,7 +177,6 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
     setViewAgentLabel(null);
     setActiveTab("agents");
   }
-  const isToday = selectedDate === todayIsoDate();
   const viewingSubAgent = viewingTexasAgent;
 
   return (
@@ -253,7 +243,6 @@ export function DailyLedgerView({ embedded = false }: { embedded?: boolean }) {
         active={activeTab}
         onChange={setActiveTab}
         showAgentsTab={showAgentsTab}
-        hideAccountTab={hideAccountTab}
       />
 
       {activeTab === "agents" && showAgentsTab ? (

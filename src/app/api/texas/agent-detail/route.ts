@@ -6,6 +6,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import type { LedgerAuthInput } from "@/lib/ledger/types";
 import { texasMetricsToDailyLedger } from "@/lib/texas/texas-live-ledger";
 import { fetchTexasAgentDetailLive } from "@/lib/texas/texas-live-sub-agents";
+import { mapLedgerRow } from "@/lib/supabase/client";
 import {
   texasJsonResponse,
   withAuthenticatedTexasClient,
@@ -60,6 +61,37 @@ export async function POST(request: Request) {
       return Response.json(
         { error: "غير مسموح بعرض بيانات هذا الوكيل" },
         { status: 403 }
+      );
+    }
+
+    const { data: persistedLedger } = await supabase
+      .from("daily_ledgers")
+      .select("*")
+      .eq("user_id", directChild.id)
+      .eq("ledger_date", ledgerDate)
+      .maybeSingle();
+
+    if (persistedLedger) {
+      const ledger = mapLedgerRow(persistedLedger);
+      const { data: childProfile } = await supabase
+        .from("users")
+        .select("display_name, texas_username")
+        .eq("id", directChild.id)
+        .maybeSingle();
+
+      return texasJsonResponse(
+        {
+          affiliate_id: affiliateId,
+          username:
+            childProfile?.texas_username ??
+            childProfile?.display_name ??
+            null,
+          email: null,
+          main_currency: currencyCode,
+          ledger,
+          source: "daily_ledgers" as const,
+        },
+        200
       );
     }
 

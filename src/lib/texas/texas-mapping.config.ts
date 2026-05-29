@@ -65,6 +65,7 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
       affiliateId: ["affiliateId", "agentId", "id"],
       totalDeposit: [
         "totalDeposit",
+        "Deposits",
         "depositsTotal",
         "depositTotal",
         "total_deposit",
@@ -78,6 +79,8 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
       ],
       totalWithdraw: [
         "totalWithdraw",
+        "Withdrawal",
+        "Withdrawals",
         "withdrawTotal",
         "withdrawalsTotal",
         "total_withdraw",
@@ -107,6 +110,7 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         // Tree-grid layout fallback
         "left",
         "totalDeposit",
+        "Deposits",
         "depositsTotal",
         "depositTotal",
         "total_deposit",
@@ -120,6 +124,8 @@ export const TEXAS_FIELD_MAPPING: TexasFieldMappingConfig = {
         // Tree-grid layout fallback
         "right",
         "totalWithdraw",
+        "Withdrawal",
+        "Withdrawals",
         "withdrawTotal",
         "withdrawalsTotal",
         "total_withdraw",

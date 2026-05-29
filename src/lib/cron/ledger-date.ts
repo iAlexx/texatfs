@@ -19,3 +19,19 @@ export function resolveLedgerDate(now = new Date()): string {
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/** Last calendar day of month in LEDGER_TIMEZONE (for monthly WhatsApp dispatch). */
+export function isLastDayOfMonthInLedgerTz(now = new Date()): boolean {
+  const tz = process.env.LEDGER_TIMEZONE?.trim() || "Asia/Damascus";
+  const today = resolveLedgerDate(now);
+  const tomorrow = resolveLedgerDate(
+    new Date(now.getTime() + 24 * 60 * 60 * 1000)
+  );
+  return tomorrow.slice(0, 7) !== today.slice(0, 7);
+}
+
+export function resolveReportScreenshotMode(
+  now = new Date()
+): "daily" | "monthly" {
+  return isLastDayOfMonthInLedgerTz(now) ? "monthly" : "daily";
+}

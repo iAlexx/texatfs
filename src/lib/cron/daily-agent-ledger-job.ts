@@ -1,10 +1,13 @@
 import { createLogger } from "@/lib/observability/logger";
+import { SupabaseAccountingRepository } from "@/lib/accounting/SupabaseAccountingRepository";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { resolveLedgerDate, sleep } from "@/lib/cron/ledger-date";
+import { resolveLedgerDate, resolveReportScreenshotMode, sleep } from "@/lib/cron/ledger-date";
 import { captureDailyReportImage } from "@/lib/report/report-screenshot";
 import { formatLedgerDate } from "@/lib/utils/format";
 import { sendWhatsAppImage } from "@/lib/whatsapp/client";
 import { retryAsync } from "@/lib/utils/async-retry";
+import { DailyReportOrchestrator } from "@/lib/services/DailyReportOrchestrator";
+import { runStableRegisteredUserSync } from "@/lib/scraper/stable-scraper-wrapper";
 
 const log = createLogger("cron/daily-agent-ledger");
 
@@ -39,6 +42,40 @@ export function shouldSkipDailyLedgerDispatch(params: {
   return false;
 }
 
+/** Refresh agent ledger via master's Texas session when the row is missing at dispatch time. */
+export async function refreshAgentLedgerViaMaster(
+  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  orchestrator: DailyReportOrchestrator,
+  parentUserId: string,
+  ledgerDate: string
+): Promise<boolean> {
+  const { data: master } = await supabase
+    .from("users")
+    .select("texas_affiliate_id")
+    .eq("id", parentUserId)
+    .maybeSingle();
+
+  const result = await runStableRegisteredUserSync(
+    orchestrator,
+    parentUserId,
+    ledgerDate,
+    master?.texas_affiliate_id ?? null,
+    "master"
+  );
+
+  if ("skipped" in result && result.skipped) return false;
+
+  if ("sync" in result && result.sync.childSnapshots?.length > 0) {
+    await orchestrator.syncChildrenFromMasterData(
+      parentUserId,
+      ledgerDate,
+      result.sync.childSnapshots
+    );
+  }
+
+  return true;
+}
+
 export async function runDailyAgentLedgerDispatchJob(): Promise<{
   ledgerDate: string;
   totalGroups: number;
@@ -48,7 +85,10 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
   failed: number;
 }> {
   const ledgerDate = resolveLedgerDate();
+  const reportMode = resolveReportScreenshotMode();
   const supabase = getSupabaseServiceClient();
+  const repository = new SupabaseAccountingRepository(supabase);
+  const orchestrator = new DailyReportOrchestrator(repository, supabase);
 
   const { data: groups } = await supabase
     .from("whatsapp_agent_groups")
@@ -108,7 +148,7 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
       continue;
     }
 
-    const { data: ledgerRow } = await supabase
+    let { data: ledgerRow } = await supabase
       .from("daily_ledgers")
       .select("id,status")
       .eq("user_id", agent.id)
@@ -116,7 +156,42 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
       .maybeSingle();
 
     if (!ledgerRow?.id) {
-      log.warn("daily ledger row missing", {
+      log.warn("daily ledger row missing — refreshing via master sync", {
+        ledgerDate,
+        groupId,
+        agentId: agent.id,
+        parentUserId,
+      });
+
+      try {
+        await refreshAgentLedgerViaMaster(
+          supabase,
+          orchestrator,
+          parentUserId,
+          ledgerDate
+        );
+      } catch (refreshErr) {
+        const msg =
+          refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+        log.warn("master refresh failed before WhatsApp dispatch", {
+          ledgerDate,
+          groupId,
+          agentId: agent.id,
+          error: msg,
+        });
+        continue;
+      }
+
+      ({ data: ledgerRow } = await supabase
+        .from("daily_ledgers")
+        .select("id,status")
+        .eq("user_id", agent.id)
+        .eq("ledger_date", ledgerDate)
+        .maybeSingle());
+    }
+
+    if (!ledgerRow?.id) {
+      log.warn("daily ledger row still missing after master refresh", {
         ledgerDate,
         groupId,
         agentId: agent.id,
@@ -187,7 +262,7 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
 
     try {
       const image = await retryAsync(
-        () => captureDailyReportImage(ledgerRow.id, { mode: "monthly" }),
+        () => captureDailyReportImage(ledgerRow.id, { mode: reportMode }),
         {
           maxAttempts: 2,
           baseDelayMs: 1500,
@@ -195,7 +270,10 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
         }
       );
 
-      const caption = `📊 ${formatLedgerDate(ledgerDate)} · TEXAS FUNDS`;
+      const caption =
+        reportMode === "monthly"
+          ? `📊 تقرير شهري · ${formatLedgerDate(ledgerDate)} · TEXAS FUNDS`
+          : `📊 ${formatLedgerDate(ledgerDate)} · TEXAS FUNDS`;
 
       const sendResult = await retryAsync(
         () => sendWhatsAppImage(groupId, image, caption),

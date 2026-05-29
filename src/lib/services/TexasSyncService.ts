@@ -9,10 +9,7 @@ import type {
   NormalizedTexasSnapshot,
 } from "@/lib/texas/types";
 import { fetchAllSubAgentStatistics } from "@/lib/texas/fetch-sub-agent-statistics";
-import {
-  fetchAgentTransfers,
-  fetchHierarchicalTransfers,
-} from "@/lib/texas/fetch-agent-transfers";
+import { fetchAgentTransfers } from "@/lib/texas/fetch-agent-transfers";
 import {
   mapSubAgentStatistics,
   mapWalletBalance,
@@ -125,10 +122,10 @@ export class TexasSyncService {
         transactionCount: transfers.transactionCount,
       });
     } else {
-      log.warn("deposit/withdraw totals unavailable — getAgentsTransfers failed or returned null", {
+      log.warn("deposit/withdraw totals unavailable — using statistics row fallback", {
         userId: context.userId,
-        totalDeposit: 0,
-        totalWithdraw: 0,
+        totalDeposit: snapshot.totalDeposit,
+        totalWithdraw: snapshot.totalWithdraw,
       });
     }
 
@@ -148,10 +145,14 @@ export class TexasSyncService {
       role: context.role,
     });
 
-    const childSnapshots = this.extractChildSnapshots(
+    const rawChildSnapshots = this.extractChildSnapshots(
       statistics.response,
       context,
       client
+    );
+    const childSnapshots = await this.enrichChildSnapshotsWithTransfers(
+      client,
+      rawChildSnapshots
     );
 
     if (childSnapshots.length > 0) {
@@ -173,8 +174,8 @@ export class TexasSyncService {
   }
 
   /**
-   * Fetches transfer totals with hierarchical scoping. Returns null on failure
-   * so the sync can still proceed with statistics-based totals as a fallback.
+   * Fetches transfer totals for this user's own affiliate (matches Texas General report).
+   * Does NOT aggregate the master's entire subtree — children have their own user rows.
    */
   private async fetchTransfersSafe(
     client: TexasHttpClient,
@@ -185,16 +186,42 @@ export class TexasSyncService {
     }
   ): Promise<AgentTransfersTotals | null> {
     try {
-      const result = await fetchHierarchicalTransfers(
-        client,
-        { affiliateId: options.affiliateId, role: options.role },
-        { pageSize: options.pageSize }
-      );
+      if (options.role === "super_master") {
+        const result = await fetchAgentTransfers(client, {
+          pageSize: options.pageSize,
+          paginate: true,
+        });
+        return result.totals;
+      }
+
+      if (!options.affiliateId?.trim()) {
+        log.warn("getAgentsTransfers skipped — texas_affiliate_id missing", {
+          role: options.role,
+        });
+        return null;
+      }
+
+      const result = await fetchAgentTransfers(client, {
+        pageSize: options.pageSize,
+        affiliateId: options.affiliateId.trim(),
+        paginate: true,
+      });
+
+      log.info("getAgentsTransfers scoped to own affiliate", {
+        affiliateId: options.affiliateId,
+        role: options.role,
+        totalDeposit: result.totals.totalDeposit,
+        totalWithdraw: result.totals.totalWithdraw,
+        transactionCount: result.totals.transactionCount,
+      });
+
       return result.totals;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.warn("getAgentsTransfers failed, falling back to statistics totals", {
+      log.warn("getAgentsTransfers failed, using statistics fallback totals", {
         error: message,
+        affiliateId: options.affiliateId,
+        role: options.role,
       });
       return null;
     }
@@ -255,6 +282,33 @@ export class TexasSyncService {
     return children;
   }
 
+  /** Overlays per-child transfer totals from getAgentsTransfers (Transaction tab). */
+  private async enrichChildSnapshotsWithTransfers(
+    client: TexasHttpClient,
+    children: ChildSnapshot[]
+  ): Promise<ChildSnapshot[]> {
+    if (!children.length) return children;
+
+    return Promise.all(
+      children.map(async (child) => {
+        const transfers = await this.fetchChildTransfersSafe(
+          client,
+          child.affiliateId
+        );
+        if (!transfers) return child;
+
+        return {
+          ...child,
+          snapshot: {
+            ...child.snapshot,
+            totalDeposit: transfers.totalDeposit,
+            totalWithdraw: transfers.totalWithdraw,
+          },
+        };
+      })
+    );
+  }
+
   /**
    * Fetches per-child transfer totals for a single affiliate using the Master's session.
    * Returns null on failure so the sync can continue with statistics-based values.
@@ -268,6 +322,7 @@ export class TexasSyncService {
       const result = await fetchAgentTransfers(client, {
         affiliateId,
         pageSize,
+        paginate: true,
       });
       return result.totals;
     } catch (err) {
