@@ -8,7 +8,7 @@ import {
 } from "@/lib/texas/texas-live-sub-agents";
 import { enrichSubAgentsWithPerAgentData } from "@/lib/accounting/sub-agents-row-enrichment";
 import { resolveLedgerDate } from "@/lib/cron/ledger-date";
-import { refreshStaleSubtreeLedgers } from "@/lib/scraper/ensure-user-ledger-sync";
+import { persistDirectChildrenMtd } from "@/lib/accounting/child-mtd-persistence";
 import { withAuthenticatedTexasClient, texasJsonResponse } from "@/lib/texas/with-authenticated-texas-client";
 import { serverCacheGet, serverCacheSet } from "@/lib/texas/server-cache";
 import {
@@ -169,26 +169,26 @@ export async function POST(request: Request) {
     }
 
     if (dbChildren.length > 0) {
-      const childIds = dbChildren.map((c) => c.id);
       try {
-        const syncResult = await refreshStaleSubtreeLedgers(
+        const persistResult = await persistDirectChildrenMtd(
           supabase,
           user.id,
-          childIds,
+          dbChildren,
           ledgerDate,
+          client,
           { force: Boolean(body.forceRefresh) }
         );
-        console.info("[sub-agents] child ledger refresh", {
+        console.info("[sub-agents] child MTD persistence", {
           viewerId: user.id,
           ledgerDate,
           forceRefresh: Boolean(body.forceRefresh),
-          ...syncResult,
+          ...persistResult,
         });
-      } catch (syncErr) {
-        console.warn("[sub-agents] child ledger refresh failed", {
+      } catch (persistErr) {
+        console.warn("[sub-agents] child MTD persistence failed", {
           viewerId: user.id,
           error:
-            syncErr instanceof Error ? syncErr.message : String(syncErr),
+            persistErr instanceof Error ? persistErr.message : String(persistErr),
         });
       }
     }

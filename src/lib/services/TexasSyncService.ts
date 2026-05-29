@@ -299,7 +299,7 @@ export class TexasSyncService {
     context: TexasSyncUserContext,
     _client: TexasHttpClient
   ): ChildSnapshot[] {
-    if (context.role !== "master") return [];
+    if (context.role !== "master" && context.role !== "super_master") return [];
 
     const records = response.result?.records ?? [];
     const masterAffiliateId = context.texasAffiliateId?.trim() ?? "";
