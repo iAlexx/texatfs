@@ -221,26 +221,24 @@ function groupTransfersByAffiliate(
     const amount = resolveTransferAmount(bag);
     const t = resolveTransferType(bag);
 
-    if (t === "2" || t === "deposit") {
-      if (toId && childAffiliateIds.has(toId)) {
-        ensure(toId).tebat += amount;
-        matched++;
-      } else if (fromId && childAffiliateIds.has(fromId)) {
-        ensure(fromId).tebat += amount;
-        matched++;
-      } else {
-        skipped++;
-      }
+    const rowId = resolveId(bag, "affiliateId", "agentId", "userId", "id");
+    const matchedId =
+      toId && childAffiliateIds.has(toId)
+        ? toId
+        : fromId && childAffiliateIds.has(fromId)
+          ? fromId
+          : rowId && childAffiliateIds.has(rowId)
+            ? rowId
+            : "";
+
+    if (!matchedId) {
+      skipped++;
+    } else if (t === "2" || t === "deposit") {
+      ensure(matchedId).tebat += amount;
+      matched++;
     } else if (t === "3" || t === "withdraw") {
-      if (fromId && childAffiliateIds.has(fromId)) {
-        ensure(fromId).suhoubat += amount;
-        matched++;
-      } else if (toId && childAffiliateIds.has(toId)) {
-        ensure(toId).suhoubat += amount;
-        matched++;
-      } else {
-        skipped++;
-      }
+      ensure(matchedId).suhoubat += amount;
+      matched++;
     } else {
       skipped++;
     }
