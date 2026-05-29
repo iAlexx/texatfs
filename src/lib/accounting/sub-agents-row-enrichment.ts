@@ -143,7 +143,7 @@ export function resolveSubAgentRowMetrics(
 
   const mtdShape = mtdMetricsToSubAgentShape(mtdResult);
 
-  if (mtdResult.currentSnapshotFound) {
+  if (mtdResult.currentSnapshotFound && mtdResult.baselineSnapshotFound) {
     return {
       metrics: metricsFromMtdShape(mtdShape),
       mtd: mtdShape,

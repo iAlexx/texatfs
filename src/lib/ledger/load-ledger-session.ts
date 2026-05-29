@@ -157,8 +157,10 @@ export async function buildLedgerSession(
     );
     const batch = await refreshStaleSubtreeLedgers(
       supabase,
+      user.id,
       memberIds,
-      ledgerDate
+      ledgerDate,
+      { force: options?.forceSync }
     );
     networkSynced = batch.synced;
   }

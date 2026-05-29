@@ -173,8 +173,10 @@ export async function POST(request: Request) {
       try {
         const syncResult = await refreshStaleSubtreeLedgers(
           supabase,
+          user.id,
           childIds,
-          ledgerDate
+          ledgerDate,
+          { force: Boolean(body.forceRefresh) }
         );
         console.info("[sub-agents] child ledger refresh", {
           viewerId: user.id,
@@ -274,6 +276,20 @@ export async function POST(request: Request) {
     });
 
     routeDiagnostics.emptyReason = emptyReason;
+
+    console.info("[sub-agents:data-audit]", {
+      viewerId: user.id,
+      ledgerDate,
+      texasChildrenCount: texasLive.allChildrenRecords.length,
+      dbDirectChildrenCount: dbChildren.length,
+      directChildrenReturned: enrichedAgents.length,
+      missingDbUsers: linkResult.created,
+      matchedEnriched: mergeDiagnostics.matchedEnriched,
+      rowsUsingMtdSnapshot,
+      rowsUsingDailyRowsFallback,
+      rowsUsingLiveTexasFallback,
+      rowsEmptyNoData,
+    });
 
     console.info("[sub-agents] visibility merge", {
       viewerId: user.id,

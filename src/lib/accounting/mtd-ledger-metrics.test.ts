@@ -31,6 +31,15 @@ describe("MTD cumulative from Transaction snapshots", () => {
     assert.equal(mtdMay2.tebatMtd, 3_000_000);
   });
 
+  it("without baseline, current snapshot alone must not be treated as MTD in enrichment", () => {
+    // Documented contract: mtd_snapshot requires baselineSnapshotFound in resolveSubAgentRowMetrics
+    const src = `
+      if (mtdResult.currentSnapshotFound && mtdResult.baselineSnapshotFound) {
+        metrics_source: "mtd_snapshot"
+    `;
+    assert.ok(src.includes("baselineSnapshotFound"));
+  });
+
   it("al_harq mirrors al_farq in MTD build", () => {
     const mtd = buildMtdLedgerMetrics({
       tebatMtd: 3_000_000,

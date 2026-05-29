@@ -48,7 +48,7 @@ export async function POST(request: Request) {
         .eq("parent_id", user.id)
         .eq("is_active", true);
       const memberIds = (directChildren ?? []).map((r) => r.id as string);
-      await refreshStaleSubtreeLedgers(supabase, memberIds, ledgerDate);
+      await refreshStaleSubtreeLedgers(supabase, user.id, memberIds, ledgerDate);
     }
 
     console.info("[get-network] fetching", {

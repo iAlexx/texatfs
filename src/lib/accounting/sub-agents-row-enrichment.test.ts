@@ -86,7 +86,26 @@ describe("sub-agents-row-enrichment", () => {
     assert.notEqual(resolved.metrics.tebat, 0);
   });
 
-  it("MTD snapshot: uses child snapshot metrics when available", () => {
+  it("snapshot without baseline uses live Texas not inflated lifetime MTD", () => {
+    const agent = liveAgent(2_000_000, 100_000);
+    const mtd: MtdLedgerMetricsResult = {
+      ...emptyMtdResult(),
+      tebatMtd: 99_000_000,
+      suhoubatMtd: 50_000_000,
+      alFarqMtd: 49_000_000,
+      alHarqMtd: 49_000_000,
+      alNihaiMtd: 49_000_000,
+      texasStrategy: "transaction_snapshot_delta",
+      currentSnapshotFound: true,
+      baselineSnapshotFound: false,
+      isEmptyFallback: true,
+    };
+    const resolved = resolveSubAgentRowMetrics(agent, mtd);
+    assert.equal(resolved.metrics_source, "live_texas_fallback");
+    assert.equal(resolved.metrics.tebat, 2_000_000);
+  });
+
+  it("MTD snapshot requires baseline snapshot", () => {
     const agent = liveAgent(999, 1);
     const resolved = resolveSubAgentRowMetrics(agent, snapshotMtdResult());
 

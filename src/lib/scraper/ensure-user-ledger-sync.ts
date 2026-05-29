@@ -8,13 +8,16 @@ import {
   toTexasSyncRole,
 } from "@/lib/scraper/resolve-user-credentials";
 import { runStableRegisteredUserSync } from "@/lib/scraper/stable-scraper-wrapper";
+import { createLogger } from "@/lib/observability/logger";
+import { normalizeAffiliateId } from "@/lib/texas/sub-agents-direct-merge";
 
 export type EnsureSyncReason =
   | "FRESH"
   | "NO_CREDENTIALS"
   | "SYNCED"
   | "SKIPPED_SUBSCRIPTION"
-  | "SYNC_FAILED";
+  | "SYNC_FAILED"
+  | "MASTER_DERIVED";
 
 export interface EnsureSyncResult {
   synced: boolean;
@@ -22,9 +25,19 @@ export interface EnsureSyncResult {
   error?: string;
 }
 
+const log = createLogger("sync/child-ledger");
+
 export function getLedgerStaleMs(): number {
   const minutes = Number(process.env.LEDGER_STALE_MINUTES ?? 15);
   return Math.max(1, minutes) * 60 * 1000;
+}
+
+export function getNetworkSyncMax(forceRefresh = false): number {
+  const configured = Number(process.env.LEDGER_NETWORK_SYNC_MAX ?? 50);
+  if (forceRefresh) {
+    return Math.max(configured, Number(process.env.LEDGER_NETWORK_SYNC_FORCE_MAX ?? 200));
+  }
+  return Math.max(1, configured);
 }
 
 export async function isLedgerStale(
@@ -116,11 +129,11 @@ export async function ensureFreshLedgerForUser(
       durationMs: Date.now() - started,
     });
 
-    console.info("[ensure-user-ledger-sync] synced", {
-      userId,
+    log.info("child ledger synced via own credentials", {
+      childUserId: userId,
       ledgerDate: date,
       al_nihai: result.report.al_nihai,
-      texasLogin: creds.username.slice(0, 3) + "***",
+      strategy: "own_credentials",
     });
 
     return { synced: true, reason: "SYNCED" };
@@ -133,31 +146,183 @@ export async function ensureFreshLedgerForUser(
       ledgerDate: date,
       durationMs: Date.now() - started,
     });
-    console.error("[ensure-user-ledger-sync] failed", { userId, error: msg });
+    log.error("child ledger sync failed", { userId, error: msg });
     return { synced: false, reason: "SYNC_FAILED", error: msg };
   }
 }
 
-const NETWORK_SYNC_MAX = Number(process.env.LEDGER_NETWORK_SYNC_MAX ?? 8);
-
 /**
- * Refresh stale/missing ledgers for subtree members (bounded concurrency).
+ * Sync direct children via master's Texas session when child has no credentials.
  */
-export async function refreshStaleSubtreeLedgers(
+export async function syncDirectChildrenViaMasterSession(
   supabase: SupabaseClient,
-  memberIds: string[],
-  ledgerDate: string
-): Promise<{ attempted: number; synced: number }> {
-  const ids = memberIds.slice(0, NETWORK_SYNC_MAX);
-  let synced = 0;
+  viewerUserId: string,
+  ledgerDate: string,
+  targetAffiliateIds?: string[]
+): Promise<{ synced: number; attempted: number; failed: string[] }> {
+  const creds = await requireUserCredentials(supabase, viewerUserId);
+  const repository = new SupabaseAccountingRepository(supabase);
+  const orchestrator = new DailyReportOrchestrator(repository, supabase);
 
-  for (const id of ids) {
-    const stale = await isLedgerStale(supabase, id, ledgerDate);
-    if (!stale) continue;
+  const result = await runStableRegisteredUserSync(
+    orchestrator,
+    viewerUserId,
+    ledgerDate,
+    creds.texas_affiliate_id,
+    toTexasSyncRole(creds.role)
+  );
 
-    const result = await ensureFreshLedgerForUser(supabase, id, ledgerDate);
-    if (result.synced) synced += 1;
+  if ("skipped" in result && result.skipped) {
+    return { synced: 0, attempted: 0, failed: [] };
   }
 
-  return { attempted: ids.length, synced };
+  if (!("sync" in result)) {
+    return { synced: 0, attempted: 0, failed: [] };
+  }
+
+  const targetSet = targetAffiliateIds?.length
+    ? new Set(targetAffiliateIds.map((id) => normalizeAffiliateId(id)).filter(Boolean) as string[])
+    : null;
+
+  const childSnapshots = (result.sync.childSnapshots ?? []).filter(
+    (c: { affiliateId: string }) =>
+      targetSet ? targetSet.has(normalizeAffiliateId(c.affiliateId) ?? "") : true
+  );
+
+  if (!childSnapshots.length) {
+    log.warn("master session sync returned no child snapshots", {
+      viewerUserId,
+      ledgerDate,
+      targetAffiliateIds,
+    });
+    return { synced: 0, attempted: 0, failed: [] };
+  }
+
+  const childResult = await orchestrator.syncChildrenFromMasterData(
+    viewerUserId,
+    ledgerDate,
+    childSnapshots
+  );
+
+  log.info("direct children synced via master session", {
+    viewerUserId,
+    ledgerDate,
+    attempted: childResult.attempted,
+    synced: childResult.persisted,
+    failed: childResult.failed,
+    strategy: "master_derived",
+  });
+
+  return {
+    synced: childResult.persisted,
+    attempted: childResult.attempted,
+    failed: childResult.failed,
+  };
+}
+
+export interface RefreshDirectChildrenResult {
+  attempted: number;
+  syncedOwnCredentials: number;
+  syncedMasterDerived: number;
+  noCredentialsQueued: number;
+  failed: number;
+}
+
+/**
+ * Refresh stale/missing ledgers for direct children.
+ * Uses own credentials when available; falls back to master session sync.
+ */
+export async function refreshDirectChildrenLedgers(
+  supabase: SupabaseClient,
+  viewerUserId: string,
+  memberIds: string[],
+  ledgerDate: string,
+  options?: { force?: boolean }
+): Promise<RefreshDirectChildrenResult> {
+  const max = getNetworkSyncMax(Boolean(options?.force));
+  const ids = memberIds.slice(0, max);
+
+  let syncedOwnCredentials = 0;
+  let noCredentialsQueued = 0;
+  let failed = 0;
+  const needsMasterAffiliateIds: string[] = [];
+
+  for (const id of ids) {
+    const stale = options?.force ? true : await isLedgerStale(supabase, id, ledgerDate);
+    if (!stale) continue;
+
+    const result = await ensureFreshLedgerForUser(supabase, id, ledgerDate, {
+      force: options?.force,
+    });
+
+    if (result.synced) {
+      syncedOwnCredentials += 1;
+      continue;
+    }
+
+    if (result.reason === "NO_CREDENTIALS") {
+      const { data: childRow } = await supabase
+        .from("users")
+        .select("texas_affiliate_id")
+        .eq("id", id)
+        .maybeSingle();
+      const aid = normalizeAffiliateId(childRow?.texas_affiliate_id ?? "");
+      if (aid) needsMasterAffiliateIds.push(aid);
+      noCredentialsQueued += 1;
+      continue;
+    }
+
+    if (result.reason === "SYNC_FAILED") failed += 1;
+  }
+
+  let syncedMasterDerived = 0;
+  if (needsMasterAffiliateIds.length > 0) {
+    try {
+      const masterResult = await syncDirectChildrenViaMasterSession(
+        supabase,
+        viewerUserId,
+        ledgerDate,
+        needsMasterAffiliateIds
+      );
+      syncedMasterDerived = masterResult.synced;
+      failed += masterResult.failed.length;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error("master session child sync failed", {
+        viewerUserId,
+        ledgerDate,
+        error: msg,
+      });
+      failed += needsMasterAffiliateIds.length;
+    }
+  }
+
+  return {
+    attempted: ids.length,
+    syncedOwnCredentials,
+    syncedMasterDerived,
+    noCredentialsQueued,
+    failed,
+  };
+}
+
+/** Refresh stale/missing ledgers for subtree members (master fallback when no child creds). */
+export async function refreshStaleSubtreeLedgers(
+  supabase: SupabaseClient,
+  viewerUserId: string,
+  memberIds: string[],
+  ledgerDate: string,
+  options?: { force?: boolean }
+): Promise<{ attempted: number; synced: number }> {
+  const result = await refreshDirectChildrenLedgers(
+    supabase,
+    viewerUserId,
+    memberIds,
+    ledgerDate,
+    options
+  );
+  return {
+    attempted: result.attempted,
+    synced: result.syncedOwnCredentials + result.syncedMasterDerived,
+  };
 }

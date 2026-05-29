@@ -217,11 +217,20 @@ export class DailyReportOrchestrator {
       };
     }
 
-    const userByAffiliate = new Map(
-      (existingUsers ?? [])
-        .filter((u) => u.texas_affiliate_id)
-        .map((u) => [u.texas_affiliate_id as string, u.id as string])
-    );
+    const userByAffiliate = new Map<string, { id: string; parent_id: string | null }>();
+    for (const u of existingUsers ?? []) {
+      if (!u.texas_affiliate_id) continue;
+      const aid = u.texas_affiliate_id as string;
+      const existing = userByAffiliate.get(aid);
+      if (!existing) {
+        userByAffiliate.set(aid, { id: u.id as string, parent_id: u.parent_id as string | null });
+        continue;
+      }
+      // Prefer user already linked to this master
+      if (u.parent_id === masterUserId) {
+        userByAffiliate.set(aid, { id: u.id as string, parent_id: u.parent_id as string | null });
+      }
+    }
 
     let persisted = 0;
     let created = 0;
@@ -229,9 +238,21 @@ export class DailyReportOrchestrator {
     const failed: string[] = [];
 
     for (const child of childSnapshots) {
-      let childUserId = userByAffiliate.get(child.affiliateId);
+      const existing = userByAffiliate.get(child.affiliateId);
+      let childUserId = existing?.id;
 
       try {
+        if (childUserId && existing?.parent_id && existing.parent_id !== masterUserId) {
+          log.warn("child affiliate linked to different parent — skipping master sync", {
+            masterUserId,
+            affiliateId: child.affiliateId,
+            existingParentId: existing.parent_id,
+            existingUserId: childUserId,
+          });
+          failed.push(child.affiliateId);
+          continue;
+        }
+
         if (!childUserId) {
           childUserId = await this.ensureChildUser(
             masterUserId,
@@ -239,6 +260,10 @@ export class DailyReportOrchestrator {
             child.username
           );
           created += 1;
+          userByAffiliate.set(child.affiliateId, {
+            id: childUserId,
+            parent_id: masterUserId,
+          });
         }
 
         const snapshotInsert = await this.repository.insertSnapshot(
@@ -255,15 +280,19 @@ export class DailyReportOrchestrator {
           { closingSnapshotId: snapshotInsert.id }
         );
 
+        updated += 1;
         persisted += 1;
 
-        log.info("child ledger synced from master data", {
-          masterUserId,
+        log.info("[sync:child-ledger]", {
           childUserId,
           affiliateId: child.affiliateId,
-          username: child.username,
-          ngr: child.snapshot.ngr,
-          balance: child.snapshot.balance,
+          snapshotCreated: true,
+          ledgerUpserted: true,
+          tebat: child.snapshot.totalDeposit,
+          suhoubat: child.snapshot.totalWithdraw,
+          al_nihai: null,
+          strategy: "master_derived",
+          masterUserId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

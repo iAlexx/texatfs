@@ -400,6 +400,13 @@ export class TexasSyncService {
         pageSize,
         paginate: true,
       });
+      console.info("[texas:transfers:child]", {
+        affiliateId,
+        depositTotal: result.totals.totalDeposit,
+        withdrawTotal: result.totals.totalWithdraw,
+        recordsFetched: result.records.length,
+        transactionCount: result.totals.transactionCount,
+      });
       return result.totals;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

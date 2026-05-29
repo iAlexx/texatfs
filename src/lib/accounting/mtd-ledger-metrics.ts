@@ -256,7 +256,7 @@ export async function computeMtdLedgerMetricsForUser(
   const currentSnapshotFound = Boolean(currentSnap);
   const baselineSnapshotFound = Boolean(baselineSnap);
 
-  if (currentSnap) {
+  if (currentSnap && baselineSnap) {
     const { tebatMtd, suhoubatMtd } = computeMtdFromTransactionSnapshots(
       currentSnap,
       baselineSnap
@@ -286,28 +286,48 @@ export async function computeMtdLedgerMetricsForUser(
 
   const dailyRowsCount = mtdRows?.length ?? 0;
 
-  const monthly = computeMonthlyCumulativeLedgerView({
-    ledgerDate,
-    rowsFromMonthStartInclusive: (mtdRows ?? []) as LedgerRowLike[],
-    baqiQadimFixedCarry: baqiQadimMtd,
-  });
+  if (dailyRowsCount > 0) {
+    const monthly = computeMonthlyCumulativeLedgerView({
+      ledgerDate,
+      rowsFromMonthStartInclusive: (mtdRows ?? []) as LedgerRowLike[],
+      baqiQadimFixedCarry: baqiQadimMtd,
+    });
 
-  const isEmptyFallback = dailyRowsCount === 0;
+    return {
+      tebatMtd: monthly.tebatMtd,
+      suhoubatMtd: monthly.suhoubatMtd,
+      waselMenhoMtd: wasel.wasel_menho,
+      waselEleihMtd: wasel.wasel_eleih,
+      baqiQadimMtd,
+      alFarqMtd: monthly.alFarqMtd,
+      alHarqMtd: monthly.alHarqMtd,
+      alNihaiMtd: monthly.alNihaiMtd,
+      discrepancyFlag: monthly.discrepancyFlag,
+      texasStrategy: "sum_daily_ledger_rows",
+      currentSnapshotFound,
+      baselineSnapshotFound,
+      dailyRowsCount,
+      isEmptyFallback: false,
+    };
+  }
+
+  // Snapshot exists but no month baseline — never treat lifetime cumulative as MTD.
+  const isEmptyFallback = true;
 
   return {
-    tebatMtd: monthly.tebatMtd,
-    suhoubatMtd: monthly.suhoubatMtd,
-    waselMenhoMtd: wasel.wasel_menho,
-    waselEleihMtd: wasel.wasel_eleih,
-    baqiQadimMtd,
-    alFarqMtd: monthly.alFarqMtd,
-    alHarqMtd: monthly.alHarqMtd,
-    alNihaiMtd: monthly.alNihaiMtd,
-    discrepancyFlag: monthly.discrepancyFlag,
-    texasStrategy: "sum_daily_ledger_rows",
-    currentSnapshotFound: false,
+    ...buildMtdLedgerMetrics({
+      tebatMtd: 0,
+      suhoubatMtd: 0,
+      waselMenhoMtd: wasel.wasel_menho,
+      waselEleihMtd: wasel.wasel_eleih,
+      baqiQadimMtd,
+    }),
+    texasStrategy: currentSnap
+      ? "transaction_snapshot_delta"
+      : "sum_daily_ledger_rows",
+    currentSnapshotFound,
     baselineSnapshotFound,
-    dailyRowsCount,
+    dailyRowsCount: 0,
     isEmptyFallback,
   };
 }

@@ -160,17 +160,23 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
 
     let { data: ledgerRow } = await supabase
       .from("daily_ledgers")
-      .select("id,status")
+      .select("id,status,tebat,suhoubat")
       .eq("user_id", agent.id)
       .eq("ledger_date", ledgerDate)
       .maybeSingle();
 
-    if (!ledgerRow?.id) {
-      log.warn("daily ledger row missing — refreshing via master sync", {
+    const ledgerIsEmpty =
+      ledgerRow &&
+      Number(ledgerRow.tebat) === 0 &&
+      Number(ledgerRow.suhoubat) === 0;
+
+    if (!ledgerRow?.id || ledgerIsEmpty) {
+      log.warn("daily ledger missing or all-zero — refreshing via master sync", {
         ledgerDate,
         groupId,
         agentId: agent.id,
         parentUserId,
+        ledgerIsEmpty,
       });
 
       try {
@@ -194,7 +200,7 @@ export async function runDailyAgentLedgerDispatchJob(): Promise<{
 
       ({ data: ledgerRow } = await supabase
         .from("daily_ledgers")
-        .select("id,status")
+        .select("id,status,tebat,suhoubat")
         .eq("user_id", agent.id)
         .eq("ledger_date", ledgerDate)
         .maybeSingle());
