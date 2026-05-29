@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { TmaBottomNav } from "@/components/tma/TmaBottomNav";
 import { OnboardingGuide } from "@/components/tma/OnboardingGuide";
+import { ChannelGateOverlay } from "@/components/tma/ChannelGateOverlay";
 
 const slide = {
   initial: { opacity: 0, x: 24 },
@@ -17,6 +18,7 @@ export function TmaShell({ children }: { children: ReactNode }) {
 
   return (
     <motion.div className="executive-bg min-h-screen pb-28">
+      <ChannelGateOverlay />
       <OnboardingGuide />
       <AnimatePresence mode="wait">
         <motion.main

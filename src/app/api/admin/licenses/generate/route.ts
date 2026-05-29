@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const duration = body.durationMonths;
     if (!LICENSE_DURATIONS.includes(duration)) {
       return NextResponse.json(
-        { error: "durationMonths must be 1, 3, 6, or 12" },
+        { error: "durationMonths must be week, 1, 3, 6, or 12" },
         { status: 400 }
       );
     }

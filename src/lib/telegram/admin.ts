@@ -2,15 +2,30 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { botAr } from "@/lib/i18n/bot-ar";
 import { sendTelegramMessage } from "@/lib/telegram/bot-api";
 
-export type LicenseDuration = "1" | "3" | "6" | "12";
+/** DB enum value for generate_license_key RPC */
+export type LicenseDuration = "week" | "1" | "3" | "6" | "12";
 
-const VALID_DURATIONS = new Set<LicenseDuration>(["1", "3", "6", "12"]);
+const VALID_MONTHS = new Set<LicenseDuration>(["1", "3", "6", "12"]);
 
 export function parseGenkeyArgs(text: string): LicenseDuration | null {
   const parts = text.trim().split(/\s+/);
-  const duration = parts[1] as LicenseDuration | undefined;
-  if (!duration || !VALID_DURATIONS.has(duration)) return null;
-  return duration;
+  const raw = (parts[1] ?? "").toLowerCase();
+  if (!raw) return null;
+
+  if (raw === "week" || raw === "1w" || raw === "7d" || raw === "w") {
+    return "week";
+  }
+
+  if (VALID_MONTHS.has(raw as LicenseDuration)) {
+    return raw as LicenseDuration;
+  }
+
+  return null;
+}
+
+export function licenseDurationLabel(duration: LicenseDuration): string {
+  if (duration === "week") return "أسبوع";
+  return `${duration} شهر`;
 }
 
 export async function handleGenkeyCommand(
@@ -37,7 +52,7 @@ export async function handleGenkeyCommand(
 
   await sendTelegramMessage(
     chatId,
-    botAr.genkeySuccess(duration, String(data)),
+    botAr.genkeySuccess(licenseDurationLabel(duration), String(data)),
     { parse_mode: "HTML" }
   );
 }

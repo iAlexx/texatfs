@@ -4,9 +4,15 @@ import {
   validateTelegramInitData,
 } from "@/lib/telegram/validate-init-data";
 
-export type LicenseDurationMonths = "1" | "3" | "6" | "12";
+export type LicenseDurationMonths = "week" | "1" | "3" | "6" | "12";
 
-export const LICENSE_DURATIONS: LicenseDurationMonths[] = ["1", "3", "6", "12"];
+export const LICENSE_DURATIONS: LicenseDurationMonths[] = [
+  "week",
+  "1",
+  "3",
+  "6",
+  "12",
+];
 
 export interface AdminAuthInput {
   initData?: string;

@@ -8,7 +8,9 @@ export interface TelegramMessage {
 }
 
 export interface TelegramInlineKeyboard {
-  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  inline_keyboard: Array<
+    Array<{ text: string; callback_data?: string; url?: string }>
+  >;
 }
 
 export interface TelegramCallbackQuery {
@@ -137,6 +139,31 @@ export async function answerCallbackQuery(
       show_alert: text ? text.length > 60 : false,
     }),
   });
+}
+
+export interface ChatMemberResult {
+  status: string;
+  user?: { id: number };
+}
+
+/** POST getChatMember — channel subscription gate */
+export async function getChatMember(
+  chatId: string | number,
+  userId: number
+): Promise<ChatMemberResult> {
+  const res = await fetch(`${TELEGRAM_API}/bot${botToken()}/getChatMember`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, user_id: userId }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`getChatMember failed: ${res.status} ${body.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as { result?: ChatMemberResult };
+  return json.result ?? { status: "unknown" };
 }
 
 export function parseAdminIds(): Set<number> {

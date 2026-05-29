@@ -9,7 +9,7 @@ import { ar } from "@/lib/i18n/ar";
 
 const tabs = [
   { href: "/home", label: ar.navHome, icon: Home },
-  { href: "/ledger", label: ar.navLedger, icon: BookOpen },
+  { href: "/ledger", label: ar.navAgents, icon: BookOpen },
   { href: "/profile", label: ar.navProfile, icon: User },
 ] as const;
 

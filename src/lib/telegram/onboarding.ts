@@ -11,10 +11,14 @@ import {
   RegistrationError,
 } from "@/lib/services/RegistrationService";
 import { getCredentialVault } from "@/lib/security/CredentialVault";
-import { sendTelegramMessage } from "@/lib/telegram/bot-api";
+import { sendTelegramMessage, isAdmin } from "@/lib/telegram/bot-api";
 import type { TelegramMessage } from "@/lib/telegram/bot-api";
 import { SubscriptionService } from "@/lib/subscription/SubscriptionService";
-import { botAr, miniAppHint } from "@/lib/i18n/bot-ar";
+import { botAr } from "@/lib/i18n/bot-ar";
+import {
+  checkTelegramChannelMembership,
+  sendChannelGateMessage,
+} from "@/lib/telegram/channel-gate";
 
 type OnboardingStep =
   | "choose_mode"
@@ -31,8 +35,15 @@ function displayName(msg: TelegramMessage): string {
   return [from.first_name, from.last_name].filter(Boolean).join(" ") || "ماستر";
 }
 
-function appUrl(): string | undefined {
-  return process.env.TELEGRAM_MINI_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+async function ensureChannelOrGate(
+  chatId: number,
+  telegramId: number
+): Promise<boolean> {
+  if (isAdmin(telegramId)) return true;
+  const check = await checkTelegramChannelMembership(telegramId);
+  if (check.ok) return true;
+  await sendChannelGateMessage(chatId, botAr.channelGateRequired);
+  return false;
 }
 
 function normalizeStep(raw: string): OnboardingStep | null {
@@ -53,8 +64,8 @@ async function finishAuthSuccess(
   });
 
   const text = result.relinked
-    ? botAr.relinkSuccess(end) + miniAppHint(appUrl())
-    : botAr.registrationComplete(end) + miniAppHint(appUrl());
+    ? botAr.relinkSuccess(end)
+    : botAr.registrationComplete(end);
 
   await sendTelegramMessage(chatId, text);
 }
@@ -103,13 +114,15 @@ export async function handleOnboardingMessage(
   const vault = getCredentialVault();
 
   if (text === "/start") {
+    if (!(await ensureChannelOrGate(chatId, telegramId))) return;
+
     const existing = await registration.findUserByTelegramId(telegramId);
     if (existing) {
       const active = await subscription.isActive(existing.id);
       if (active) {
         await sendTelegramMessage(
           chatId,
-          botAr.welcomeBackActive(existing.display_name ?? "ماستر", appUrl())
+          botAr.welcomeBackActive(existing.display_name ?? "ماستر")
         );
       } else {
         await sendTelegramMessage(chatId, botAr.subscriptionExpiredRenewal);

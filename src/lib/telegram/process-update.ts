@@ -1,12 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { handleGenkeyCommand } from "@/lib/telegram/admin";
+import { handleBroadcastCommand } from "@/lib/telegram/broadcast";
 import {
   handleAdminCallback,
   handleAnnounceCommand,
   sendAdminPanel,
 } from "@/lib/telegram/admin-panel";
-import { isAdmin, type TelegramUpdate } from "@/lib/telegram/bot-api";
+import { isAdmin, sendTelegramMessage, type TelegramUpdate } from "@/lib/telegram/bot-api";
+import {
+  checkTelegramChannelMembership,
+  handleChannelVerifyCallback,
+  sendChannelGateMessage,
+} from "@/lib/telegram/channel-gate";
 import { handleOnboardingMessage } from "@/lib/telegram/onboarding";
+import { botAr } from "@/lib/i18n/bot-ar";
 
 function devLog(phase: string, data?: Record<string, unknown>): void {
   if (
@@ -33,6 +40,21 @@ export async function processTelegramUpdate(
   if (update.callback_query) {
     const cq   = update.callback_query;
     const data = cq.data ?? "";
+
+    if (data === "ch:verify") {
+      const chatId = cq.message?.chat.id;
+      if (chatId) {
+        await handleChannelVerifyCallback(
+          chatId,
+          cq.from.id,
+          cq.id,
+          async () => {
+            await sendTelegramMessage(chatId, botAr.channelGateVerified);
+          }
+        );
+      }
+      return;
+    }
 
     if (data.startsWith("adm:")) {
       if (!isAdmin(cq.from.id)) {
@@ -78,6 +100,12 @@ export async function processTelegramUpdate(
     return;
   }
 
+  if (text.startsWith("/broadcast")) {
+    if (!isAdmin(telegramUserId)) return;
+    await handleBroadcastCommand(supabase, chatId, telegramUserId, text);
+    return;
+  }
+
   if (text.startsWith("/genkey")) {
     if (!isAdmin(telegramUserId)) {
       devLog("genkeyDenied", { telegramUserId });
@@ -85,6 +113,14 @@ export async function processTelegramUpdate(
     }
     await handleGenkeyCommand(supabase, chatId, text);
     return;
+  }
+
+  if (!isAdmin(telegramUserId)) {
+    const channel = await checkTelegramChannelMembership(telegramUserId);
+    if (!channel.ok) {
+      await sendChannelGateMessage(chatId, botAr.channelGateRequired);
+      return;
+    }
   }
 
   await handleOnboardingMessage(supabase, message);

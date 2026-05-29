@@ -17,8 +17,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const DURATIONS: { months: LicenseDurationMonths; label: string }[] = [
+  { months: "week", label: "1 Week" },
   { months: "1", label: "1 Month" },
   { months: "3", label: "3 Months" },
+  { months: "6", label: "6 Months" },
   { months: "12", label: "12 Months" },
 ];
 

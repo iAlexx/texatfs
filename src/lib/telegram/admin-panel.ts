@@ -50,13 +50,14 @@ function genkeyKeyboard(): TelegramInlineKeyboard {
   return {
     inline_keyboard: [
       [
+        { text: "أسبوع", callback_data: CB.genkey("week") },
         { text: "1 شهر", callback_data: CB.genkey("1") },
-        { text: "3 أشهر", callback_data: CB.genkey("3") },
       ],
       [
+        { text: "3 أشهر", callback_data: CB.genkey("3") },
         { text: "6 أشهر", callback_data: CB.genkey("6") },
-        { text: "12 شهر", callback_data: CB.genkey("12") },
       ],
+      [{ text: "12 شهر", callback_data: CB.genkey("12") }],
       [{ text: "◀️ رجوع", callback_data: CB.menu }],
     ],
   };

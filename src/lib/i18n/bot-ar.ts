@@ -1,76 +1,77 @@
-/** رسائل البوت بالعربية — الأوامر تبقى بالإنجليزي (/start, /genkey). */
+/** رسائل البوت — أسلوب شامي مختصر. الأوامر بالإنجليزي (/start, /genkey). */
 
-export function miniAppHint(url?: string): string {
-  const link = url?.trim();
-  return link
-    ? `\n\nافتح لوحة التحكم:\n${link}`
-    : "\n\nافتح تكساس فاندز من قائمة البوت.";
+export function miniAppReadyLine(): string {
+  return "\n\nجاهز ✅\nافتح التطبيق من زر القائمة بالأسفل.";
 }
 
 export const botAr = {
-  welcomeBackActive: (name: string, url?: string) =>
-    `أهلاً بعودتك ${name}! اشتراكك فعّال.${miniAppHint(url)}`,
+  welcomeBackActive: (name: string) =>
+    `أهلاً ${name}! اشتراكك شغّال.${miniAppReadyLine()}`,
   subscriptionExpired:
-    "انتهى اشتراكك. تواصل مع المسؤول للحصول على مفتاح ترخيص جديد.",
+    "اشتراكك خلص. تواصل مع الإدارة لتحصل على مفتاح تجديد.",
   sessionDbError:
-    "تعذر بدء التسجيل (خطأ قاعدة بيانات). تواصل مع الدعم أو أعد المحاولة.",
+    "ما قدرنا نبدأ التسجيل. جرّب /start مرة تانية أو تواصل مع الدعم.",
   chooseMode:
-    "أهلاً بك في تكساس فاندز.\n\nهل تريد:\n1️⃣ تسجيل الدخول لحساب موجود\n2️⃣ إنشاء حساب جديد\n\nأرسل 1 أو 2 (أو اكتب: تسجيل الدخول / إنشاء حساب)",
-  chooseModeInvalid:
-    "اختر 1 لتسجيل الدخول لحساب موجود، أو 2 لإنشاء حساب جديد.",
+    "أهلاً بك بتكساس فاندز 👋\n\n1️⃣ عندي حساب — بدي سجّل دخول\n2️⃣ حساب جديد\n\nأرسل 1 أو 2",
+  chooseModeInvalid: "اختار 1 لتسجيل الدخول أو 2 لحساب جديد.",
   stepLoginExisting:
-    "تسجيل الدخول — أرسل اسم المستخدم أو البريد من لوحة تكساس (لا يهم حالة الأحرف):",
-  stepLoginNew:
-    "حساب جديد — أرسل اسم المستخدم أو البريد من لوحة تكساس:",
+    "أرسل اسم المستخدم أو الإيميل تبع لوحة تكساس:",
+  stepLoginNew: "أرسل اسم المستخدم أو الإيميل لحسابك الجديد:",
   welcomeNew:
-    "أهلاً بك في تكساس فاندز.\n\nالخطوة ١ من ٣ — أرسل اسم المستخدم أو البريد كما يظهر في agents.texas4win.com:",
-  sessionFetchError: "خطأ في جلسة التسجيل. أرسل /start للمحاولة من جديد.",
-  sendStart: "أرسل /start لبدء التسجيل.",
-  sessionInvalid: "الجلسة غير صالحة. أرسل /start للبدء من جديد.",
+    "أهلاً بك 👋\n\nالخطوة ١ — أرسل اسم المستخدم أو الإيميل من لوحة تكساس:",
+  sessionFetchError: "صار خطأ بالجلسة. أرسل /start من جديد.",
+  sendStart: "أرسل /start للبدء.",
+  sessionInvalid: "الجلسة انتهت. أرسل /start من جديد.",
   loginInvalid:
-    "بيانات دخول غير صالحة. أرسل اسم المستخدم أو البريد (٣–١٢٨ حرفاً، بدون مسافات).",
-  loginSaveError: "تعذر حفظ بيانات الدخول. أرسل /start وأعد المحاولة.",
+    "بيانات الدخول مو صح. أرسل اسم مستخدم أو إيميل (٣–١٢٨ حرف).",
+  loginSaveError: "ما انحفظت البيانات. أرسل /start وجرّب مرة تانية.",
   stepPassword:
-    "الخطوة ٢ من ٣ — أرسل كلمة مرور لوحة تكساس.\n\n(تُشفّر الرسالة قبل التخزين.)",
-  passwordShort: "كلمة المرور قصيرة جداً. أعد الإرسال.",
-  passwordSaveError: "تعذر حفظ كلمة المرور. أرسل /start وأعد المحاولة.",
+    "الخطوة ٢ — أرسل كلمة مرور لوحة تكساس.\n(بتتشفّر قبل التخزين.)",
+  passwordShort: "كلمة المرور قصيرة. أعد الإرسال.",
+  passwordSaveError: "ما انحفظت كلمة المرور. أرسل /start وجرّب مرة تانية.",
   stepLicense:
-    "الخطوة ٣ من ٣ — أرسل مفتاح الترخيص (مثال: TEXAS-XXXX-XXXX-XXXX):",
+    "الخطوة ٣ — أرسل مفتاح الترخيص:\nمثال: TEXAS-XXXX-XXXX-XXXX",
   stepRenewalLicense:
-    "انتهى اشتراك هذا الحساب. أرسل مفتاح تجديد صالح (مثال: TEXAS-XXXX-XXXX-XXXX):",
-  sessionExpired: "انتهت الجلسة. أرسل /start للتسجيل من جديد.",
-  validating: "جاري التحقق من حساب تكساس ومفتاح الترخيص…",
+    "اشتراك الحساب خلص. أرسل مفتاح تجديد صالح:",
+  sessionExpired: "انتهت الجلسة. أرسل /start من جديد.",
+  validating: "عم نتحقق من حساب تكساس والمفتاح…",
   registrationComplete: (endDate: string) =>
-    `اكتمل التسجيل.\n\nالاشتراك فعّال حتى: ${endDate}${miniAppHint()}`,
+    `تم التسجيل ✅\n\nالاشتراك شغّال لحد: ${endDate}${miniAppReadyLine()}`,
   relinkSuccess: (endDate: string) =>
-    `تم تسجيل الدخول إلى حسابك الموجود بنجاح. اشتراكك وبياناتك محفوظة.\n\nالاشتراك فعّال حتى: ${endDate}`,
+    `رجّعت على حسابك ✅\n\nالاشتراك شغّال لحد: ${endDate}${miniAppReadyLine()}`,
   relinkNoLicenseNeeded:
-    "تم العثور على حسابك واشتراكك فعّال، لا تحتاج مفتاح ترخيص جديد.",
-  licenseInvalidNew:
-    "مفتاح الترخيص غير صالح أو مستخدم مسبقاً. تحقق من المفتاح وأعد الإرسال.",
-  renewalLicenseInvalid:
-    "مفتاح التجديد غير صالح أو مستخدم مسبقاً.",
+    "حسابك موجود واشتراكك شغّال — ما بتحتاج مفتاح جديد.",
+  licenseInvalidNew: "المفتاح مو صالح أو مستخدم. تحقق وأعد الإرسال.",
+  renewalLicenseInvalid: "مفتاح التجديد مو صالح أو مستخدم.",
   renewalLicenseAlreadyOnAccount:
-    "هذا مفتاح الحساب الأصلي وهو مستخدم مسبقاً. لا يمكن إعادة إدخاله للتجديد. أرسل مفتاح تجديد جديد (غير مستخدم).",
-  licenseInvalid:
-    "مفتاح ترخيص غير صالح أو مستخدم مسبقاً. تحقق من المفتاح وأعد الإرسال.",
+    "هاد مفتاح الحساب الأصلي ومستخدم مسبقاً. أرسل مفتاح تجديد جديد.",
+  licenseInvalid: "مفتاح الترخيص مو صالح أو مستخدم.",
   accountLinkedOtherTelegram:
-    "هذا الحساب مربوط بمستخدم تيليغرام آخر. تواصل مع الدعم.",
+    "هاد الحساب مربوط بتيليغرام تاني. تواصل مع الدعم.",
   accountNotFoundUseNew:
-    "لم يُعثر على حساب بهذا الاسم. اختر «إنشاء حساب جديد» من /start أو تحقق من الاسم.",
+    "ما لقينا حساب بهالاسم. اختار «حساب جديد» من /start.",
   accountExistsUseLogin:
-    "يوجد حساب بهذا الاسم مسبقاً. اختر «تسجيل الدخول لحساب موجود» من /start.",
+    "في حساب بهالاسم. اختار «تسجيل دخول» من /start.",
   subscriptionExpiredRenewal:
-    "انتهى اشتراك هذا الحساب. أرسل مفتاح تجديد صالح للمتابعة.",
-  telegramAlreadyRegistered:
-    "هذا حساب تيليغرام مسجّل مسبقاً. أرسل /start.",
+    "اشتراك الحساب خلص. أرسل مفتاح تجديد للمتابعة.",
+  telegramAlreadyRegistered: "هاد التيليغرام مسجّل مسبقاً. أرسل /start.",
   texasLoginFailed: (detail: string) =>
-    `فشل دخول تكساس. استخدم اسم المستخدم وكلمة المرور من agents.texas4win.com (حساسة لحالة الأحرف).${detail}\n\nأرسل /start للمحاولة من جديد.`,
+    `فشل دخول تكساس. تأكد من الاسم وكلمة المرور.${detail}\n\nأرسل /start وجرّب مرة تانية.`,
   registrationFailed: (msg: string) =>
-    `فشل التسجيل: ${msg}\n\nأرسل /start للمحاولة من جديد.`,
+    `فشل التسجيل: ${msg}\n\nأرسل /start وجرّب مرة تانية.`,
   genkeyUsage:
-    "الاستخدام: /genkey [1|3|6|12]\nمثال: /genkey 12",
-  genkeyFailed: (msg: string) => `تعذر إنشاء المفتاح: ${msg}`,
-  genkeySuccess: (duration: string, key: string) =>
-    `مفتاح ترخيص جديد (${duration} شهر):\n\n<code>${key}</code>\n\nشاركه مع الماستر أثناء التسجيل.`,
+    "الاستخدام:\n/genkey week | 1 | 3 | 6 | 12\nأو: /genkey 1w | 7d",
+  genkeyFailed: (msg: string) => `ما انعمل المفتاح: ${msg}`,
+  genkeySuccess: (label: string, key: string) =>
+    `مفتاح جديد (${label}):\n\n<code>${key}</code>\n\nشاركه مع الماستر.`,
+  channelGateRequired:
+    "قبل ما نكمل، اشترك بقناة التحديثات الرسمية 👇\n\n@Texas0NEWS",
+  channelGateVerified: `تمام ✅${miniAppReadyLine()}`,
+  channelGateNotMember:
+    "لسا ما اشتركت بالقناة. اشترك بـ @Texas0NEWS واضغط «تحققت».",
+  broadcastUsage: "الاستخدام: /broadcast رسالتك هون",
+  broadcastStarted: (total: number) =>
+    `📢 بلّش الإرسال لـ ${total} مستخدم…`,
+  broadcastDone: (sent: number, failed: number, skipped: number) =>
+    `📢 انتهى البث\n✅ ${sent} | ❌ ${failed} | ⏭ ${skipped}`,
 } as const;

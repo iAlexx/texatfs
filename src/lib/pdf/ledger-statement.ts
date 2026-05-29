@@ -27,7 +27,7 @@ export function buildLedgerStatementPdf(
   y += 10;
 
   const rows: [string, string][] = [
-    ["تبات", formatMoney(ledger.tebat)],
+    ["تعبئات", formatMoney(ledger.tebat)],
     ["سحوبات", formatMoney(ledger.suhoubat)],
     ["الفرق", formatMoney(ledger.al_farq)],
     ["الحرق", formatMoney(ledger.al_harq)],
